@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tracing::warn;
+use tracing::{instrument, warn};
 
 /// Maps application binary names to their desktop entry display names and icon paths.
 ///
@@ -15,6 +15,7 @@ pub struct AppResolver {
 
 impl AppResolver {
     /// Scan all desktop entries from the standard XDG paths and build the cache.
+    #[instrument]
     pub fn new() -> Self {
         let mut cache = HashMap::new();
 
@@ -65,6 +66,7 @@ impl AppResolver {
     /// 1. Exact binary name match in the desktop entry cache.
     /// 2. `pa_app_name` match (PulseAudio sometimes reports a different name).
     /// 3. Capitalize the binary name as a fallback display name.
+    #[instrument(skip(self))]
     pub fn resolve(
         &self,
         binary: &str,

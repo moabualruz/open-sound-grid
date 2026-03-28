@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
+use tracing::instrument;
+
 use crate::error::{OsgError, Result};
 use crate::plugin::api::AudioApplication;
 
@@ -33,6 +35,7 @@ impl AppDetector {
     /// `app.id` is a stable internal counter independent of the PA sink-input
     /// index. The same sink-input gets the same stable id across refreshes;
     /// new sink-inputs receive a fresh incrementing id.
+    #[instrument(skip(self, conn))]
     pub fn list_applications(
         &mut self,
         conn: Option<&mut PulseConnection>,

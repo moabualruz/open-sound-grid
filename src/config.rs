@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::instrument;
 
 use crate::ui::theme::ThemeMode;
 
@@ -26,6 +27,10 @@ pub struct RouteConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelConfig {
     pub name: String,
+    #[serde(default)]
+    pub effects: crate::effects::EffectsParams,
+    #[serde(default)]
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -34,6 +39,14 @@ pub struct MixConfig {
     pub icon: String,
     pub color: [u8; 3],
     pub output_device: Option<String>,
+    #[serde(default = "default_volume")]
+    pub master_volume: f32,
+    #[serde(default)]
+    pub muted: bool,
+}
+
+fn default_volume() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,10 +68,10 @@ impl Default for AppConfig {
         tracing::debug!("creating default AppConfig");
         Self {
             channels: vec![
-                ChannelConfig { name: "Music".into() },
-                ChannelConfig { name: "Game".into() },
-                ChannelConfig { name: "Voice".into() },
-                ChannelConfig { name: "System".into() },
+                ChannelConfig { name: "Music".into(), effects: Default::default(), muted: false },
+                ChannelConfig { name: "Game".into(), effects: Default::default(), muted: false },
+                ChannelConfig { name: "Voice".into(), effects: Default::default(), muted: false },
+                ChannelConfig { name: "System".into(), effects: Default::default(), muted: false },
             ],
             mixes: vec![
                 MixConfig {
@@ -66,12 +79,16 @@ impl Default for AppConfig {
                     icon: "🎧".into(),
                     color: [100, 149, 237],
                     output_device: None,
+                    master_volume: 1.0,
+                    muted: false,
                 },
                 MixConfig {
                     name: "Stream".into(),
                     icon: "📡".into(),
                     color: [255, 99, 71],
                     output_device: None,
+                    master_volume: 1.0,
+                    muted: false,
                 },
             ],
             audio: AudioConfig {
@@ -90,6 +107,7 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    #[instrument]
     pub fn load() -> Self {
         match confy::load::<Self>("open-sound-grid", None) {
             Ok(config) => {
@@ -123,6 +141,7 @@ impl AppConfig {
         }
     }
 
+    #[instrument(skip(self))]
     pub fn save(&self) -> anyhow::Result<()> {
         confy::store("open-sound-grid", None, self)?;
         let path = confy::get_configuration_file_path("open-sound-grid", None)

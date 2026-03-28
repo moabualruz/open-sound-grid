@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use tracing::instrument;
+
 use crate::plugin::api::{
     AudioApplication, ChannelInfo, HardwareInput, HardwareOutput, MixInfo, MixerSnapshot, RouteState,
     SourceId,
@@ -25,6 +27,7 @@ pub struct MixerState {
 
 impl MixerState {
     /// Apply a plugin snapshot, replacing all state.
+    #[instrument(skip(self, snap))]
     pub fn apply_snapshot(&mut self, snap: MixerSnapshot) {
         let prev_channel_count = self.channels.len();
         let prev_mix_count = self.mixes.len();
@@ -60,6 +63,7 @@ impl MixerState {
     }
 
     /// Update peak levels without replacing everything else.
+    #[instrument(skip(self, levels))]
     pub fn update_peaks(&mut self, levels: HashMap<SourceId, f32>) {
         let nonzero = levels.values().filter(|&&v| v > 0.0).count();
         tracing::trace!(count = levels.len(), nonzero, "updating peak levels");
@@ -70,6 +74,7 @@ impl MixerState {
     }
 
     /// Update application list.
+    #[instrument(skip(self, apps))]
     pub fn update_applications(&mut self, apps: Vec<AudioApplication>) {
         let names: Vec<&str> = apps.iter().map(|a| a.name.as_str()).collect();
         tracing::debug!(count = apps.len(), ?names, "updating application list");

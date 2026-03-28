@@ -7,6 +7,8 @@
 use std::collections::HashMap;
 use std::process::Command;
 
+use tracing::instrument;
+
 use crate::plugin::api::SourceId;
 
 /// Poll-based peak level monitor that reads sink volumes via `pactl`.
@@ -25,6 +27,7 @@ impl PeakMonitor {
     /// parse its `Volume:` line, and store the percentage as 0.0..1.0.
     ///
     /// If the sink is not found or the command fails, stores 0.0.
+    #[instrument(skip(self))]
     pub fn update_level(&mut self, sink_name: &str, source_id: SourceId) {
         let level = read_sink_volume(sink_name).unwrap_or(0.0);
         tracing::trace!(sink_name = %sink_name, source_id = ?source_id, level = level, "peak level updated");

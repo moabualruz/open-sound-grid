@@ -65,26 +65,17 @@ pub const STATUS_ERROR: Color = Color::from_rgb(0.957, 0.263, 0.212); // red
 
 // --- Light Theme ---
 
-#[allow(dead_code)]
 pub const LIGHT_BG_PRIMARY: Color = Color::from_rgb(0.980, 0.976, 0.969);   // #faf9f7
-#[allow(dead_code)]
 pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(0.941, 0.933, 0.922); // #f0eeeb
-#[allow(dead_code)]
 pub const LIGHT_BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0);        // #ffffff
-#[allow(dead_code)]
 pub const LIGHT_BG_HOVER: Color = Color::from_rgb(0.918, 0.910, 0.898);     // #eae8e5
-#[allow(dead_code)]
 pub const LIGHT_TEXT_PRIMARY: Color = Color::from_rgb(0.102, 0.102, 0.102); // #1a1a1a
-#[allow(dead_code)]
 pub const LIGHT_TEXT_SECONDARY: Color = Color::from_rgb(0.420, 0.400, 0.376); // #6b6660
-#[allow(dead_code)]
 pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb(0.600, 0.580, 0.557);   // #99948e
-#[allow(dead_code)]
 pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875);       // #e5e3df
 
 // --- Theme-aware helpers ---
 
-#[allow(dead_code)]
 pub fn bg_primary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_PRIMARY,
@@ -92,7 +83,6 @@ pub fn bg_primary(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn bg_secondary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_SECONDARY,
@@ -100,7 +90,6 @@ pub fn bg_secondary(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn bg_elevated(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_ELEVATED,
@@ -108,7 +97,6 @@ pub fn bg_elevated(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn bg_hover(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_HOVER,
@@ -116,7 +104,6 @@ pub fn bg_hover(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn text_primary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_PRIMARY,
@@ -124,7 +111,6 @@ pub fn text_primary(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn text_secondary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_SECONDARY,
@@ -132,7 +118,6 @@ pub fn text_secondary(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
 pub fn text_muted(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_MUTED,
@@ -140,8 +125,7 @@ pub fn text_muted(mode: ThemeMode) -> Color {
     }
 }
 
-#[allow(dead_code)]
-pub fn border(mode: ThemeMode) -> Color {
+pub fn border_color(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BORDER,
         ThemeMode::Light => LIGHT_BORDER,

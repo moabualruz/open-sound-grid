@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use libpulse_binding::context::{self, Context, FlagSet as ContextFlagSet};
 use libpulse_binding::mainloop::threaded::Mainloop;
+use tracing::instrument;
 
 use crate::error::{OsgError, Result};
 
@@ -24,6 +25,7 @@ pub struct PulseConnection {
 
 impl PulseConnection {
     /// Connect to the default PulseAudio server.
+    #[instrument]
     pub fn connect() -> Result<Self> {
         tracing::debug!("attempting PulseAudio connection");
 
@@ -110,6 +112,7 @@ impl PulseConnection {
     }
 
     /// Disconnect and stop the mainloop. Safe to call multiple times.
+    #[instrument(skip(self))]
     pub fn disconnect(&mut self) {
         if !self.connected {
             tracing::debug!("disconnect called but already disconnected");

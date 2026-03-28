@@ -27,6 +27,7 @@
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Configuration](#configuration)
 - [Tests](#tests)
+- [Known Limitations](#known-limitations-v02)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -153,8 +154,9 @@ src/
 
 - **Unified channel architecture** — channels and mixes are both first-class objects in `MixerState`. Every route cell (channel × mix) carries its own volume and mute state. Add or remove channels/mixes at runtime; the matrix redraws and PA state updates atomically.
 - **No shared state between plugin and UI** — all communication flows through typed `PluginCommand` / `PluginEvent` messages over async channels. The UI never touches plugin internals directly.
-- **Event-driven plugin thread** — the PA backend runs `pactl subscribe` to receive real-time change notifications from PulseAudio. There is no polling loop; events wake the thread only when PA signals a change.
+- **Event-driven plugin thread** — the PA backend runs a dedicated event loop using `pactl subscribe` for real-time change notifications. There is no polling loop; events wake the thread only when PA signals a change. The thread owns the PA mainloop connection for its lifetime.
 - **Zero-latency event subscription** — plugin events arrive through an `iced::Subscription` stream, not polling. Peak level updates drive VU meters at ~20ms intervals without blocking the UI thread.
+- **libpulse introspect migration (partial)** — device listing (`get_sink_info_list`, `get_source_info_list`) and application stream discovery (`get_sink_input_info_list`) use the native libpulse introspect API. Module load/unload, volume control, mute, and stream move operations still shell out to `pactl`. Full migration is planned for v0.3.
 - **Plugin trait abstraction** — the `AudioPlugin` trait decouples the UI from PulseAudio. A PipeWire backend can be added without touching the matrix, engine, or UI code.
 - **Single binary** — no daemon, no background service. The app owns its PulseAudio connection for its lifetime.
 
@@ -179,7 +181,7 @@ src/
 | Output device restore on startup | Done | Saved per-mix device reapplied on launch |
 | Settings panel | Done | Basic settings panel (compact mode toggle) |
 | Compact mode persistence | Done | compact_mode persisted to TOML |
-| Live VU meters | Done | Driven by async peak level events |
+| Live VU meters | Done | Volume-based; real signal peaks via PA_STREAM_PEAK_DETECT — v0.3 |
 | Config persistence | Done | TOML via confy, auto-saved on change |
 | Config restore on launch | Done | Channels and mixes recreated at startup |
 | System tray | Done | ksni SNI tray: Show, Mute All, Quit |
@@ -191,7 +193,7 @@ src/
 | Dark theme | Done | Custom design token system |
 | Unit test suite | Done | 40 unit tests, zero clippy warnings |
 | PipeWire native backend | Planned | v0.3 target |
-| Per-mix effects (EQ, compression) | Planned | v0.2 target |
+| Per-mix effects (EQ, compression) | Done | Parameter UI + storage; inline audio processing requires PA stream capture — v0.3 |
 | JACK backend | Planned | v0.3 target |
 | VST3 / LV2 plugin hosting | Future | Post-v0.3 |
 | Mobile companion app | Future | Remote control via local network |
@@ -200,18 +202,16 @@ src/
 
 | Shortcut | Action | Status |
 |----------|--------|--------|
-| `Ctrl+M` | Mute all channels | Planned |
-| `Ctrl+,` | Open settings | Planned |
-| `Ctrl+W` | Hide to tray | Planned |
-| `Ctrl+Q` | Quit | Planned |
-| `Ctrl+N` | New channel | Planned |
-| `Ctrl+Shift+N` | New mix | Planned |
-| `Tab` | Cycle focus through matrix cells | Planned |
-| `Space` | Toggle selected cell enable/disable | Planned |
-| `Up/Down` | Adjust selected cell volume ±5% | Planned |
-| `Shift+Up/Down` | Adjust selected cell volume ±1% | Planned |
-
-Keyboard navigation is planned for v0.2. Currently all interaction is mouse-driven.
+| `Ctrl+M` | Mute all channels | Done |
+| `Ctrl+,` | Open settings | Done |
+| `Ctrl+W` | Hide to tray | Done |
+| `Ctrl+Q` | Quit | Done |
+| `Ctrl+N` | New channel | Done |
+| `Ctrl+Shift+N` | New mix | Done |
+| `Tab` | Cycle focus through matrix cells | Done |
+| `Space` | Toggle selected cell enable/disable | Done |
+| `Up/Down` | Adjust selected cell volume ±5% | Done |
+| `Shift+Up/Down` | Adjust selected cell volume ±1% | Done |
 
 ## Configuration
 
@@ -275,19 +275,32 @@ rm ~/.config/open-sound-grid/default-config.toml
 ## Tests
 
 ```bash
-cargo test           # 40 unit tests
+cargo test           # 48 unit tests
 cargo clippy         # zero warnings
 ```
 
 Tests cover config serialization/deserialization, default values, channel/mix lifecycle, route state mutations, and PA module name parsing. PulseAudio does not need to be running to execute the unit test suite.
+
+## Known Limitations (v0.2)
+
+- **VU meters show configured volume, not signal amplitude.** True peak monitoring
+  via PA's PEAK_DETECT stream flag is planned for v0.3.
+- **Effects chain is parameter-only.** The UI controls and parameter persistence work,
+  but audio is not actually processed through the effects graph. Inline processing
+  requires PA stream capture, planned for v0.3.
+- **Light theme partially applied.** Custom widget styles use theme-aware colors but
+  some iced default widgets may not fully match the warm palette.
+- **Module operations use pactl CLI.** Device listing and app detection use the native
+  libpulse introspect API, but module load/unload, volume control, and event
+  subscription still shell out to pactl. Full migration planned for v0.3.
 
 ## Roadmap
 
 | Version | Focus | Status |
 |---------|-------|--------|
 | **v0.1** | Matrix mixer core | Done |
-| **v0.2** | Effects, keyboard navigation, polish | Planned |
-| **v0.3** | PipeWire native backend, JACK support | Future |
+| **v0.2** | Effects, keyboard navigation, polish | Done (with noted limitations) |
+| **v0.3** | PipeWire native backend, JACK support, real peaks, full libpulse migration | Planned |
 | **v1.0** | Stable API, packaging, full docs | Future |
 
 ### v0.1 — Matrix Mixer Core (done)
@@ -304,19 +317,22 @@ Tests cover config serialization/deserialization, default values, channel/mix li
 - Settings panel with compact mode persistence — Done
 - Full tracing instrumentation across all code paths — Done
 
-### v0.2 — Effects and Polish (planned)
+### v0.2 — Effects and Polish (done, with noted limitations)
 
-- Per-channel EQ (parametric, 3-band)
-- Noise gate and compression on voice channels
-- Keyboard navigation throughout the matrix
-- Drag-and-drop column/row reordering
-- Per-mix color themes
-- Improved onboarding (first-run setup wizard)
+- Per-channel effects chain: EQ, compressor, noise gate — parameter UI and storage done
+- Keyboard navigation throughout the matrix — Done
+- Dark/light theme toggle with warm palette — Done
+- Full tracing instrumentation — Done
+- Presets (save/load named mixer state) — Done
+- _Limitation:_ effects audio processing and real peak monitoring deferred to v0.3 (see Known Limitations)
 
-### v0.3 — PipeWire Native and Integrations (future)
+### v0.3 — PipeWire Native and Integrations (planned)
 
 - PipeWire native backend (replaces loopback hacks with filter-chain nodes)
 - JACK backend
+- Real signal peak monitoring via PA streams (PA_STREAM_PEAK_DETECT)
+- Inline effects audio processing (fundsp, PA stream capture)
+- Full pactl→libpulse migration for write ops
 - D-Bus control interface (scriptable from external tools)
 - OBS integration (scene-triggered mix presets)
 - Streaming deck button mapping

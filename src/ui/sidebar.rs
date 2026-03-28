@@ -3,19 +3,22 @@ use iced::{Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
 use crate::plugin::api::HardwareInput;
-use crate::ui::theme::{ACCENT, BG_HOVER, BG_SECONDARY, BORDER, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::ui::theme::{
+    bg_hover, bg_secondary, border_color, text_muted, text_primary, text_secondary, ThemeMode,
+    ACCENT,
+};
 
 const EXPANDED_WIDTH: f32 = 200.0;
 const COLLAPSED_WIDTH: f32 = 48.0;
 
-pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {
+pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!(collapsed = collapsed, input_count = hardware_inputs.len(), "rendering sidebar");
     let width = if collapsed { COLLAPSED_WIDTH } else { EXPANDED_WIDTH };
 
     let content = if collapsed {
-        collapsed_view()
+        collapsed_view(theme_mode)
     } else {
-        expanded_view(hardware_inputs)
+        expanded_view(hardware_inputs, theme_mode)
     };
 
     // Sidebar container with right border baked in (no separate rule widget)
@@ -23,10 +26,10 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Ele
         .width(width)
         .height(Length::Fill)
         .padding([12, 12])
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(BG_SECONDARY)),
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(bg_secondary(theme_mode))),
             border: Border {
-                color: BORDER,
+                color: border_color(theme_mode),
                 width: 0.0,
                 radius: 0.0.into(),
             },
@@ -35,32 +38,32 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Ele
         .into()
 }
 
-fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {
+fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!(input_count = hardware_inputs.len(), "rendering expanded sidebar");
     let collapse_btn = button(text("«").size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
-        .style(|_: &Theme, status| button::Style {
+        .style(move |_: &Theme, status| button::Style {
             background: match status {
-                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
                 _ => None,
             },
-            text_color: TEXT_SECONDARY,
+            text_color: text_secondary(theme_mode),
             ..Default::default()
         });
 
-    let header = text("DEVICES").size(11).color(TEXT_SECONDARY);
+    let header = text("DEVICES").size(11).color(text_secondary(theme_mode));
 
     let mut devices = column![header].spacing(4);
     for input in hardware_inputs {
-        devices = devices.push(text(&input.name).size(13).color(TEXT_PRIMARY));
+        devices = devices.push(text(&input.name).size(13).color(text_primary(theme_mode)));
     }
     if hardware_inputs.is_empty() {
-        devices = devices.push(text("No devices").size(12).color(TEXT_MUTED));
+        devices = devices.push(text("No devices").size(12).color(text_muted(theme_mode)));
     }
 
     // Active mix item with left accent border
-    let mix_item = container(text("Mixes").size(13).color(TEXT_PRIMARY))
+    let mix_item = container(text("Mixes").size(13).color(text_primary(theme_mode)))
         .padding([4, 8])
         .style(|_: &Theme| container::Style {
             border: Border {
@@ -71,23 +74,23 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Messag
             ..Default::default()
         });
 
-    let settings_btn = button(text("Settings").size(13).color(TEXT_SECONDARY))
+    let settings_btn = button(text("Settings").size(13).color(text_secondary(theme_mode)))
         .on_press(Message::SettingsToggled)
         .padding([6, 8])
-        .style(|_: &Theme, status| button::Style {
+        .style(move |_: &Theme, status| button::Style {
             background: match status {
-                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
                 _ => None,
             },
-            text_color: TEXT_SECONDARY,
+            text_color: text_secondary(theme_mode),
             ..Default::default()
         });
 
     column![
         collapse_btn,
         devices,
-        rule::horizontal(1).style(|_: &Theme| rule::Style {
-            color: BORDER,
+        rule::horizontal(1).style(move |_: &Theme| rule::Style {
+            color: border_color(theme_mode),
             radius: 0.0.into(),
             fill_mode: rule::FillMode::Full,
             snap: true,
@@ -101,35 +104,35 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Messag
     .into()
 }
 
-fn collapsed_view<'a>() -> Element<'a, Message> {
+fn collapsed_view<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!("rendering collapsed sidebar");
     let settings_btn = button(text("*").size(16).center())
         .width(32)
         .on_press(Message::SettingsToggled)
-        .style(|_: &Theme, status| button::Style {
+        .style(move |_: &Theme, status| button::Style {
             background: match status {
-                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
                 _ => None,
             },
-            text_color: TEXT_SECONDARY,
+            text_color: text_secondary(theme_mode),
             ..Default::default()
         });
 
     let expand_btn = button(text("»").size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
-        .style(|_: &Theme, status| button::Style {
+        .style(move |_: &Theme, status| button::Style {
             background: match status {
-                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
                 _ => None,
             },
-            text_color: TEXT_SECONDARY,
+            text_color: text_secondary(theme_mode),
             ..Default::default()
         });
 
     column![
         expand_btn,
-        text("#").size(16).color(TEXT_PRIMARY).center(),
+        text("#").size(16).color(text_primary(theme_mode)).center(),
         Space::new().width(Length::Fill).height(Length::Fill),
         settings_btn,
     ]

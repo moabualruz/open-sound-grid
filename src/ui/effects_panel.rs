@@ -10,36 +10,38 @@ use iced::{Background, Element, Length, Theme};
 use crate::app::Message;
 use crate::effects::EffectsParams;
 use crate::plugin::api::ChannelInfo;
-use crate::ui::theme;
+use crate::ui::theme::{
+    bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary, ThemeMode,
+};
 
 /// Render the effects panel for a selected channel.
-pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
+pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
     tracing::trace!(channel_id = ch_id, name = %channel.name, effects_enabled = params.enabled, "rendering effects panel");
 
     let close_btn = button(
-        text("×").size(13).color(theme::TEXT_MUTED).center(),
+        text("×").size(13).color(text_muted(theme_mode)).center(),
     )
     .width(20)
     .height(20)
     .on_press(Message::SelectedChannel(None))
     .padding(0)
-    .style(|_: &Theme, status| button::Style {
+    .style(move |_: &Theme, status| button::Style {
         background: match status {
             button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(theme::BG_HOVER))
+                Some(Background::Color(bg_hover(theme_mode)))
             }
             _ => None,
         },
-        text_color: theme::TEXT_MUTED,
+        text_color: text_muted(theme_mode),
         ..Default::default()
     });
 
     tracing::trace!(channel_id = ch_id, "rendering effects panel close button");
 
     let header = row![
-        text("Effects").size(13).color(theme::TEXT_PRIMARY),
+        text("Effects").size(13).color(text_primary(theme_mode)),
         Space::new().width(Length::Fill),
         toggler(params.enabled)
             .on_toggle(move |enabled| Message::EffectsToggled { channel: ch_id, enabled })
@@ -49,22 +51,22 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
     .align_y(iced::Alignment::Center)
     .spacing(8);
 
-    let sep = || {
+    let sep = move || {
         container(Space::new())
             .width(Length::Fill)
             .height(Length::Fixed(1.0))
-            .style(|_: &Theme| container::Style {
-                background: Some(iced::Background::Color(theme::BORDER)),
+            .style(move |_: &Theme| container::Style {
+                background: Some(iced::Background::Color(border_color(theme_mode))),
                 ..Default::default()
             })
     };
 
     // --- EQ section ---
-    let eq_label = text("Parametric EQ").size(11).color(theme::TEXT_SECONDARY);
+    let eq_label = text("Parametric EQ").size(11).color(text_secondary(theme_mode));
 
     let eq_freq_label = text(format!("Freq: {:.0} Hz", params.eq_freq_hz))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let eq_freq = {
         let id = ch_id;
         slider(20.0_f32..=20000.0, params.eq_freq_hz, move |v| {
@@ -75,7 +77,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let eq_q_label = text(format!("Q: {:.2}", params.eq_q))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let eq_q = {
         let id = ch_id;
         slider(0.1_f32..=10.0, params.eq_q, move |v| {
@@ -86,7 +88,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let eq_gain_label = text(format!("Gain: {:.1} dB", params.eq_gain_db))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let eq_gain = {
         let id = ch_id;
         slider(-24.0_f32..=24.0, params.eq_gain_db, move |v| {
@@ -96,11 +98,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
     };
 
     // --- Compressor section ---
-    let comp_label = text("Compressor").size(11).color(theme::TEXT_SECONDARY);
+    let comp_label = text("Compressor").size(11).color(text_secondary(theme_mode));
 
     let comp_thresh_label = text(format!("Threshold: {:.1} dB", params.comp_threshold_db))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let comp_thresh = {
         let id = ch_id;
         slider(-60.0_f32..=0.0, params.comp_threshold_db, move |v| {
@@ -111,7 +113,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let comp_ratio_label = text(format!("Ratio: {:.1}:1", params.comp_ratio))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let comp_ratio = {
         let id = ch_id;
         slider(1.0_f32..=20.0, params.comp_ratio, move |v| {
@@ -122,7 +124,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let comp_attack_label = text(format!("Attack: {:.1} ms", params.comp_attack_ms))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let comp_attack = {
         let id = ch_id;
         slider(0.1_f32..=100.0, params.comp_attack_ms, move |v| {
@@ -133,7 +135,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let comp_release_label = text(format!("Release: {:.0} ms", params.comp_release_ms))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let comp_release = {
         let id = ch_id;
         slider(10.0_f32..=1000.0, params.comp_release_ms, move |v| {
@@ -143,11 +145,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
     };
 
     // --- Noise gate section ---
-    let gate_label = text("Noise Gate").size(11).color(theme::TEXT_SECONDARY);
+    let gate_label = text("Noise Gate").size(11).color(text_secondary(theme_mode));
 
     let gate_thresh_label = text(format!("Threshold: {:.1} dB", params.gate_threshold_db))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let gate_thresh = {
         let id = ch_id;
         slider(-80.0_f32..=0.0, params.gate_threshold_db, move |v| {
@@ -158,7 +160,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let gate_hold_label = text(format!("Hold: {:.0} ms", params.gate_hold_ms))
         .size(11)
-        .color(theme::TEXT_MUTED);
+        .color(text_muted(theme_mode));
     let gate_hold = {
         let id = ch_id;
         slider(1.0_f32..=500.0, params.gate_hold_ms, move |v| {
@@ -169,7 +171,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     let channel_label = text(format!("Channel: {}", channel.name))
         .size(12)
-        .color(theme::TEXT_PRIMARY);
+        .color(text_primary(theme_mode));
 
     let panel = column![
         channel_label,
@@ -210,10 +212,10 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
 
     container(panel)
         .width(Length::Fill)
-        .style(|_: &Theme| container::Style {
-            background: Some(iced::Background::Color(theme::BG_ELEVATED)),
+        .style(move |_: &Theme| container::Style {
+            background: Some(iced::Background::Color(bg_elevated(theme_mode))),
             border: iced::Border {
-                color: theme::BORDER,
+                color: border_color(theme_mode),
                 width: 1.0,
                 radius: 4.0.into(),
             },

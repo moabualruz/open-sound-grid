@@ -6,6 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Tray, TrayMethods};
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 /// Global slot for the tray command receiver.
 /// Set once during boot in `spawn_tray`, consumed once by the subscription stream.
@@ -93,6 +94,7 @@ impl Tray for OsgTray {
 /// **not** called (BUG-004 fix).
 ///
 /// If the tray fails to start the app continues without it (logs a warning).
+#[instrument]
 pub fn spawn_tray() {
     tracing::info!("Spawning system tray");
     let (tx, rx) = mpsc::unbounded_channel::<TrayCommand>();

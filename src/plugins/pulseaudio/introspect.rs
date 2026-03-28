@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use libpulse_binding::callbacks::ListResult;
 use libpulse_binding::mainloop::threaded::Mainloop;
 use libpulse_binding::proplist::properties;
+use tracing::instrument;
 
 use crate::plugin::api::{HardwareInput, HardwareOutput};
 
@@ -62,6 +63,7 @@ struct RawSinkInput {
 ///
 /// Must be called from the plugin thread.  The mainloop must NOT be locked
 /// by the caller — this function handles the lock/wait/unlock cycle internally.
+#[instrument(skip(conn))]
 pub fn list_sinks_sync(conn: &mut PulseConnection) -> Vec<HardwareOutput> {
     tracing::debug!("listing sinks via libpulse introspect API");
 
@@ -122,6 +124,7 @@ pub fn list_sinks_sync(conn: &mut PulseConnection) -> Vec<HardwareOutput> {
 ///
 /// Monitor sources (those whose `monitor_of_sink` is `Some`) are excluded —
 /// this is more reliable than the previous `.monitor` suffix check.
+#[instrument(skip(conn))]
 pub fn list_sources_sync(conn: &mut PulseConnection) -> Vec<HardwareInput> {
     tracing::debug!("listing sources via libpulse introspect API");
 
@@ -192,6 +195,7 @@ pub fn list_sources_sync(conn: &mut PulseConnection) -> Vec<HardwareInput> {
 ///
 /// Returns raw entries; stable-ID assignment is left to `AppDetector` so the
 /// existing ID-continuity logic is unchanged.
+#[instrument(skip(conn))]
 pub fn list_sink_inputs_sync(conn: &mut PulseConnection) -> Vec<RawSinkInputResult> {
     tracing::debug!("listing sink-inputs via libpulse introspect API");
 

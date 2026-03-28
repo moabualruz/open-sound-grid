@@ -7,7 +7,10 @@ use iced::{Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
 use crate::plugin::api::{AudioApplication, ChannelInfo};
-use crate::ui::theme::{ACCENT, BG_ELEVATED, BG_HOVER, BORDER, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY};
+use crate::ui::theme::{
+    bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary, ThemeMode,
+    ACCENT,
+};
 
 /// Panel showing detected audio applications.
 ///
@@ -15,22 +18,23 @@ use crate::ui::theme::{ACCENT, BG_ELEVATED, BG_HOVER, BORDER, TEXT_MUTED, TEXT_P
 pub fn app_list_panel<'a>(
     apps: &'a [AudioApplication],
     channels: &'a [ChannelInfo],
+    theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(app_count = apps.len(), channel_count = channels.len(), "rendering app list panel");
 
-    let header = text("Applications").size(12).color(TEXT_SECONDARY);
+    let header = text("Applications").size(12).color(text_secondary(theme_mode));
 
     let content = if apps.is_empty() {
         column![
             header,
             Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
-            text("No audio apps detected").size(11).color(TEXT_MUTED),
+            text("No audio apps detected").size(11).color(text_muted(theme_mode)),
         ]
         .spacing(4)
     } else {
         let mut col = column![header].spacing(4);
         for app in apps {
-            let app_row = app_entry(app, channels);
+            let app_row = app_entry(app, channels, theme_mode);
             col = col.push(app_row);
         }
         col
@@ -39,10 +43,10 @@ pub fn app_list_panel<'a>(
     container(content)
         .padding(8)
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(BG_ELEVATED)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(bg_elevated(theme_mode))),
             border: Border {
-                color: BORDER,
+                color: border_color(theme_mode),
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -55,9 +59,10 @@ pub fn app_list_panel<'a>(
 fn app_entry<'a>(
     app: &'a AudioApplication,
     channels: &'a [ChannelInfo],
+    theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(app_name = %app.name, stream_index = app.stream_index, "rendering app entry");
-    let name = text(&app.name).size(11).color(TEXT_PRIMARY);
+    let name = text(&app.name).size(11).color(text_primary(theme_mode));
     let stream_idx = app.stream_index;
 
     let mut entry_row = row![name, Space::new().width(Length::Fill)].spacing(4)
@@ -82,12 +87,12 @@ fn app_entry<'a>(
             .style(move |_: &Theme, status| button::Style {
                 background: match (is_routed, status) {
                     (true, _) => Some(Background::Color(ACCENT)),
-                    (false, button::Status::Hovered) => Some(Background::Color(BG_HOVER)),
+                    (false, button::Status::Hovered) => Some(Background::Color(bg_hover(theme_mode))),
                     _ => None,
                 },
-                text_color: if is_routed { TEXT_PRIMARY } else { TEXT_SECONDARY },
+                text_color: if is_routed { text_primary(theme_mode) } else { text_secondary(theme_mode) },
                 border: Border {
-                    color: BORDER,
+                    color: border_color(theme_mode),
                     width: 1.0,
                     radius: 2.0.into(),
                 },

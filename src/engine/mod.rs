@@ -9,6 +9,7 @@ pub mod state;
 pub use state::*;
 
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 use crate::plugin::api::{MixerSnapshot, PluginCommand, PluginEvent};
 use crate::plugin::manager::PluginBridge;
@@ -28,6 +29,7 @@ impl MixerEngine {
     }
 
     /// Attach a plugin bridge. Returns the event receiver for use in subscriptions.
+    #[instrument(skip(self, bridge))]
     pub fn attach(&mut self, bridge: PluginBridge) -> mpsc::UnboundedReceiver<PluginEvent> {
         tracing::info!(
             command_tx_capacity = "unbounded",
@@ -40,6 +42,7 @@ impl MixerEngine {
     }
 
     /// Send a command to the plugin.
+    #[instrument(skip(self))]
     pub fn send_command(&self, cmd: PluginCommand) {
         tracing::debug!(command = ?cmd, "sending plugin command");
         if let Some(tx) = &self.command_tx {
@@ -52,6 +55,7 @@ impl MixerEngine {
     }
 
     /// Apply a snapshot from the plugin to the engine state.
+    #[instrument(skip(self, snapshot))]
     pub fn apply_snapshot(&mut self, snapshot: MixerSnapshot) {
         tracing::debug!(
             channels = snapshot.channels.len(),

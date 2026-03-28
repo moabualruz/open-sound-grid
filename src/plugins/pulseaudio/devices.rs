@@ -11,6 +11,8 @@
 
 use std::process::Command;
 
+use tracing::instrument;
+
 use crate::plugin::api::{HardwareInput, HardwareOutput};
 
 use super::connection::PulseConnection;
@@ -44,6 +46,7 @@ impl DeviceEnumerator {
     ///
     /// Uses the libpulse introspect API when `conn` is provided.
     /// Falls back to `pactl list sinks` when `conn` is `None` (e.g. in unit tests).
+    #[instrument(skip(conn))]
     pub fn list_outputs(conn: Option<&mut PulseConnection>) -> Vec<HardwareOutput> {
         if let Some(conn) = conn {
             tracing::debug!("enumerating hardware outputs via libpulse introspect");
@@ -62,6 +65,7 @@ impl DeviceEnumerator {
     ///
     /// Uses the libpulse introspect API when `conn` is provided.
     /// Falls back to `pactl list sources` when `conn` is `None`.
+    #[instrument(skip(conn))]
     pub fn list_inputs(conn: Option<&mut PulseConnection>) -> Vec<HardwareInput> {
         if let Some(conn) = conn {
             tracing::debug!("enumerating hardware inputs via libpulse introspect");

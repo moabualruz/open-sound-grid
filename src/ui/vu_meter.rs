@@ -2,14 +2,14 @@ use iced::widget::container;
 use iced::{Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
-use crate::ui::theme::{BG_HOVER, VU_AMBER, VU_GREEN, VU_RED};
+use crate::ui::theme::{bg_hover, ThemeMode, VU_AMBER, VU_GREEN, VU_RED};
 
 /// Horizontal VU meter: a colored bar on a rounded background.
 ///
 /// * `level` - signal level clamped to 0.0..=1.0
 /// * `width` - total meter width in pixels
 /// * `height` - meter height in pixels
-pub fn vu_meter(level: f32, width: f32, height: f32) -> Element<'static, Message> {
+pub fn vu_meter(level: f32, width: f32, height: f32, theme_mode: ThemeMode) -> Element<'static, Message> {
     let level = level.clamp(0.0, 1.0);
     let fill_width = level * width;
 
@@ -46,7 +46,7 @@ pub fn vu_meter(level: f32, width: f32, height: f32) -> Element<'static, Message
     .width(Length::Fixed(width))
     .height(Length::Fixed(height))
     .style(move |_: &Theme| container::Style {
-        background: Some(Background::Color(BG_HOVER)),
+        background: Some(Background::Color(bg_hover(theme_mode))),
         border: Border {
             radius: 2.0.into(),
             ..Border::default()

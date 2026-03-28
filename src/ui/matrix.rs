@@ -12,7 +12,8 @@ use crate::engine::state::MixerState;
 use crate::plugin::api::SourceId;
 use crate::ui::audio_slider::audio_slider;
 use crate::ui::theme::{
-    ACCENT, BG_ELEVATED, BG_HOVER, BG_PRIMARY, BORDER, TEXT_MUTED, TEXT_PRIMARY, TEXT_SECONDARY,
+    bg_elevated, bg_hover, bg_primary, border_color, text_muted, text_primary, text_secondary,
+    ThemeMode, ACCENT,
 };
 use crate::ui::vu_meter::vu_meter;
 
@@ -30,6 +31,7 @@ pub fn matrix_grid<'a>(
     state: &'a MixerState,
     focused_row: Option<usize>,
     focused_col: Option<usize>,
+    theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(
         channels = state.channels.len(),
@@ -40,7 +42,7 @@ pub fn matrix_grid<'a>(
         "rendering matrix grid"
     );
     if state.mixes.is_empty() && state.channels.is_empty() {
-        return empty_matrix();
+        return empty_matrix(theme_mode);
     }
 
     let mut grid = column![].spacing(1);
@@ -64,6 +66,7 @@ pub fn matrix_grid<'a>(
             mix.master_volume,
             mix.muted,
             mix_peak,
+            theme_mode,
         ));
     }
 
@@ -72,19 +75,19 @@ pub fn matrix_grid<'a>(
     let add_mix_btn = button(
         text("+ Add Mix")
             .size(11)
-            .color(TEXT_SECONDARY)
+            .color(text_secondary(theme_mode))
             .center(),
     )
     .on_press(Message::CreateMix(format!("Mix {}", mix_count + 1)))
     .padding([4, 8])
-    .style(|_: &Theme, status| button::Style {
+    .style(move |_: &Theme, status| button::Style {
         background: match status {
-            button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+            button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
             _ => None,
         },
-        text_color: TEXT_SECONDARY,
+        text_color: text_secondary(theme_mode),
         border: Border {
-            color: BORDER,
+            color: border_color(theme_mode),
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -101,8 +104,8 @@ pub fn matrix_grid<'a>(
 
     grid = grid.push(
         container(header_row)
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(BG_PRIMARY)),
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(bg_primary(theme_mode))),
                 ..Default::default()
             }),
     );
@@ -115,17 +118,17 @@ pub fn matrix_grid<'a>(
 
         let mut ch_row = row![
             // Channel name cell
-            channel_label(&channel.name, channel.muted, source),
+            channel_label(&channel.name, channel.muted, source, theme_mode),
         ]
         .spacing(1);
 
         for (col_index, mix) in state.mixes.iter().enumerate() {
             let route = state.routes.get(&(source, mix.id));
             let cell_focused = row_focused && focused_col == Some(col_index);
-            ch_row = ch_row.push(matrix_cell(source, mix.id, route, peak, cell_focused));
+            ch_row = ch_row.push(matrix_cell(source, mix.id, route, peak, cell_focused, theme_mode));
         }
 
-        let row_bg = if row_focused { BG_HOVER } else { BG_PRIMARY };
+        let row_bg = if row_focused { bg_hover(theme_mode) } else { bg_primary(theme_mode) };
         grid = grid.push(
             container(ch_row)
                 .padding([4, 0])
@@ -140,18 +143,18 @@ pub fn matrix_grid<'a>(
     let add_btn = button(
         text("+ Create channel")
             .size(12)
-            .color(TEXT_SECONDARY),
+            .color(text_secondary(theme_mode)),
     )
     .on_press(Message::CreateChannel(format!("Channel {}", state.channels.len() + 1)))
     .padding([6, 12])
-    .style(|_: &Theme, status| button::Style {
+    .style(move |_: &Theme, status| button::Style {
         background: match status {
-            button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+            button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
             _ => None,
         },
-        text_color: TEXT_SECONDARY,
+        text_color: text_secondary(theme_mode),
         border: Border {
-            color: BORDER,
+            color: border_color(theme_mode),
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -164,8 +167,8 @@ pub fn matrix_grid<'a>(
         container(grid)
             .padding([12, 16])
             .width(Length::Fill)
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(BG_PRIMARY)),
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(bg_primary(theme_mode))),
                 ..Default::default()
             }),
     )
@@ -182,6 +185,7 @@ fn mix_header<'a>(
     master_volume: f32,
     muted: bool,
     peak: f32,
+    theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(mix_id, name = %name, volume = master_volume, muted, peak, "rendering mix header");
 
@@ -209,9 +213,9 @@ fn mix_header<'a>(
         } else {
             None
         },
-        text_color: TEXT_PRIMARY,
+        text_color: text_primary(theme_mode),
         border: Border {
-            color: BORDER,
+            color: border_color(theme_mode),
             width: 1.0,
             radius: 2.0.into(),
         },
@@ -228,27 +232,27 @@ fn mix_header<'a>(
     let remove_btn = button(
         text("×")
             .size(10)
-            .color(TEXT_MUTED)
+            .color(text_muted(theme_mode))
             .center(),
     )
     .width(12)
     .height(12)
     .on_press(Message::RemoveMix(mix_id))
     .padding(0)
-    .style(|_: &Theme, status| button::Style {
+    .style(move |_: &Theme, status| button::Style {
         background: match status {
             button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(BG_HOVER))
+                Some(Background::Color(bg_hover(theme_mode)))
             }
             _ => None,
         },
-        text_color: TEXT_MUTED,
+        text_color: text_muted(theme_mode),
         ..Default::default()
     });
 
     tracing::trace!(mix_id, "rendering mix remove button");
 
-    let meter = vu_meter(peak, 120.0, 4.0);
+    let meter = vu_meter(peak, 120.0, 4.0, theme_mode);
 
     container(
         column![
@@ -260,7 +264,7 @@ fn mix_header<'a>(
             .align_y(iced::Alignment::Center),
             text(name.to_string())
                 .size(12)
-                .color(TEXT_PRIMARY)
+                .color(text_primary(theme_mode))
                 .center(),
             row![mute_btn, volume_slider]
                 .spacing(4)
@@ -273,10 +277,10 @@ fn mix_header<'a>(
     .width(Length::Fixed(140.0))
     .height(Length::Fixed(96.0))
     .padding([4, 8])
-    .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(BG_ELEVATED)),
+    .style(move |_: &Theme| container::Style {
+        background: Some(Background::Color(bg_elevated(theme_mode))),
         border: Border {
-            color: BORDER,
+            color: border_color(theme_mode),
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -286,9 +290,9 @@ fn mix_header<'a>(
 }
 
 /// Channel name label on the left side of each row.
-fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, Message> {
+fn channel_label<'a>(name: &str, muted: bool, source: SourceId, theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!(name, muted, source = ?source, "rendering channel label");
-    let name_color = if muted { TEXT_MUTED } else { TEXT_PRIMARY };
+    let name_color = if muted { text_muted(theme_mode) } else { text_primary(theme_mode) };
 
     let channel_id = match source {
         SourceId::Channel(id) => Some(id),
@@ -311,9 +315,9 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
         } else {
             None
         },
-        text_color: TEXT_PRIMARY,
+        text_color: text_primary(theme_mode),
         border: Border {
-            color: BORDER,
+            color: border_color(theme_mode),
             width: 1.0,
             radius: 2.0.into(),
         },
@@ -327,21 +331,21 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
             button(
                 text("×")
                     .size(10)
-                    .color(TEXT_MUTED)
+                    .color(text_muted(theme_mode))
                     .center(),
             )
             .width(12)
             .height(12)
             .on_press(Message::RemoveChannel(cid))
             .padding(0)
-            .style(|_: &Theme, status| button::Style {
+            .style(move |_: &Theme, status| button::Style {
                 background: match status {
                     button::Status::Hovered | button::Status::Pressed => {
-                        Some(Background::Color(BG_HOVER))
+                        Some(Background::Color(bg_hover(theme_mode)))
                     }
                     _ => None,
                 },
-                text_color: TEXT_MUTED,
+                text_color: text_muted(theme_mode),
                 ..Default::default()
             })
             .into(),
@@ -368,10 +372,10 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
         .height(Length::Fixed(96.0))
         .padding([4, 8])
         .center_y(Length::Fixed(96.0))
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(BG_PRIMARY)),
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(bg_primary(theme_mode))),
             border: Border {
-                color: BORDER,
+                color: border_color(theme_mode),
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -403,6 +407,7 @@ fn matrix_cell<'a>(
     route: Option<&'a crate::plugin::api::RouteState>,
     peak: f32,
     focused: bool,
+    theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), peak, focused, "rendering matrix cell");
     let cell_content: Element<'a, Message> = match route {
@@ -424,9 +429,9 @@ fn matrix_cell<'a>(
                 } else {
                     None
                 },
-                text_color: TEXT_PRIMARY,
+                text_color: text_primary(theme_mode),
                 border: Border {
-                    color: BORDER,
+                    color: border_color(theme_mode),
                     width: 1.0,
                     radius: 2.0.into(),
                 },
@@ -439,7 +444,7 @@ fn matrix_cell<'a>(
                 volume: v,
             });
 
-            let meter = vu_meter(peak, 120.0, 4.0);
+            let meter = vu_meter(peak, 120.0, 4.0, theme_mode);
 
             column![mute_btn, fader, meter]
                 .spacing(2)
@@ -451,23 +456,23 @@ fn matrix_cell<'a>(
             button(
                 text("+")
                     .size(16)
-                    .color(TEXT_MUTED)
+                    .color(text_muted(theme_mode))
                     .center(),
             )
             .width(Length::Fill)
             .height(Length::Fill)
             .on_press(Message::RouteToggled { source, mix: mix_id })
             .padding(0)
-            .style(|_: &Theme, status| button::Style {
+            .style(move |_: &Theme, status| button::Style {
                 background: match status {
                     button::Status::Hovered | button::Status::Pressed => {
                         Some(Background::Color(ACCENT))
                     }
-                    _ => Some(Background::Color(BG_ELEVATED)),
+                    _ => Some(Background::Color(bg_elevated(theme_mode))),
                 },
-                text_color: TEXT_MUTED,
+                text_color: text_muted(theme_mode),
                 border: Border {
-                    color: BORDER,
+                    color: border_color(theme_mode),
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -484,9 +489,9 @@ fn matrix_cell<'a>(
         .center_x(Length::Fixed(140.0))
         .center_y(Length::Fixed(96.0))
         .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(BG_ELEVATED)),
+            background: Some(Background::Color(bg_elevated(theme_mode))),
             border: Border {
-                color: if focused { ACCENT } else { BORDER },
+                color: if focused { ACCENT } else { border_color(theme_mode) },
                 width: if focused { 2.0 } else { 1.0 },
                 radius: 0.0.into(),
             },
@@ -496,13 +501,13 @@ fn matrix_cell<'a>(
 }
 
 /// Shown when the matrix is completely empty.
-fn empty_matrix<'a>() -> Element<'a, Message> {
+fn empty_matrix<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!("rendering empty matrix placeholder");
     container(
         column![
-            text("No channels or mixes configured").size(14).color(TEXT_SECONDARY),
+            text("No channels or mixes configured").size(14).color(text_secondary(theme_mode)),
             Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
-            text("Create a channel to get started").size(12).color(TEXT_MUTED),
+            text("Create a channel to get started").size(12).color(text_muted(theme_mode)),
         ]
         .spacing(4)
         .align_x(iced::Alignment::Center),
@@ -512,8 +517,8 @@ fn empty_matrix<'a>() -> Element<'a, Message> {
     .height(Length::Fill)
     .center_x(Length::Fill)
     .center_y(Length::Fill)
-    .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(BG_PRIMARY)),
+    .style(move |_: &Theme| container::Style {
+        background: Some(Background::Color(bg_primary(theme_mode))),
         ..Default::default()
     })
     .into()

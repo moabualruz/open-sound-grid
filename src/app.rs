@@ -5,6 +5,7 @@ use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ChannelConfig, MixConfig, RouteConfig};
+use crate::effects::EffectsParams;
 use crate::engine::MixerEngine;
 use crate::plugin::api::{ChannelId, MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
 use crate::resolve::AppResolver;
@@ -112,6 +113,10 @@ pub struct App {
     pub pending_output_restores: Vec<(String, String)>,
     /// Routes waiting to be replayed after next StateRefreshed (used by LoadPreset).
     pub pending_route_restores: Vec<RouteConfig>,
+    /// (channel_name, effects, muted) restores deferred until after first StateRefreshed.
+    pub pending_effects_restores: Vec<(String, EffectsParams, bool)>,
+    /// (mix_name, master_volume, muted) restores deferred until after first StateRefreshed.
+    pub pending_mix_restores: Vec<(String, f32, bool)>,
     /// Keyboard focus: channel row index.
     pub focused_row: Option<usize>,
     /// Keyboard focus: mix column index.
@@ -141,6 +146,8 @@ impl App {
             sidebar_collapsed,
             pending_output_restores: Vec::new(),
             pending_route_restores: Vec::new(),
+            pending_effects_restores: Vec::new(),
+            pending_mix_restores: Vec::new(),
             focused_row: None,
             focused_col: None,
             preset_name_input: String::new(),
@@ -177,8 +184,9 @@ impl App {
             self.engine.send_command(PluginCommand::GetState);
         }
 
-        // Output device restoration happens after the first StateRefreshed arrives
-        // because mix IDs aren't known until the plugin creates them.
+        // Output device, effects, and mix volume restores happen after the first
+        // StateRefreshed arrives because channel/mix IDs aren't known until the
+        // plugin creates them.
         self.pending_output_restores = self
             .config
             .mixes
@@ -188,6 +196,28 @@ impl App {
         tracing::debug!(
             count = self.pending_output_restores.len(),
             "config restore: queued output devices for restoration after first state refresh"
+        );
+
+        self.pending_effects_restores = self
+            .config
+            .channels
+            .iter()
+            .map(|c| (c.name.clone(), c.effects.clone(), c.muted))
+            .collect();
+        tracing::debug!(
+            count = self.pending_effects_restores.len(),
+            "config restore: queued effects params for restoration after first state refresh"
+        );
+
+        self.pending_mix_restores = self
+            .config
+            .mixes
+            .iter()
+            .map(|m| (m.name.clone(), m.master_volume, m.muted))
+            .collect();
+        tracing::debug!(
+            count = self.pending_mix_restores.len(),
+            "config restore: queued mix volumes for restoration after first state refresh"
         );
     }
 
@@ -320,7 +350,11 @@ impl App {
                 let new_channels: Vec<ChannelConfig> = snapshot
                     .channels
                     .iter()
-                    .map(|c| ChannelConfig { name: c.name.clone() })
+                    .map(|c| ChannelConfig {
+                        name: c.name.clone(),
+                        effects: c.effects.clone(),
+                        muted: c.muted,
+                    })
                     .collect();
                 let new_mixes: Vec<MixConfig> = snapshot
                     .mixes
@@ -333,6 +367,8 @@ impl App {
                             icon: existing.map(|c| c.icon.clone()).unwrap_or_default(),
                             color: existing.map(|c| c.color).unwrap_or([128, 128, 128]),
                             output_device: existing.and_then(|c| c.output_device.clone()),
+                            master_volume: m.master_volume,
+                            muted: m.muted,
                         }
                     })
                     .collect();
@@ -435,6 +471,62 @@ impl App {
                                     "pending route restore: channel or mix not found"
                                 );
                             }
+                        }
+                    }
+                }
+
+                // Apply any pending effects/muted restores from config
+                if !self.pending_effects_restores.is_empty() {
+                    let restores = std::mem::take(&mut self.pending_effects_restores);
+                    tracing::info!(count = restores.len(), "applying pending effects restores");
+                    for (name, effects, muted) in restores {
+                        if let Some(ch) = self.engine.state.channels.iter().find(|c| c.name == name) {
+                            if muted {
+                                tracing::debug!(channel = %name, "restoring channel mute from config");
+                                self.engine.send_command(PluginCommand::SetSourceMuted {
+                                    source: SourceId::Channel(ch.id),
+                                    muted: true,
+                                });
+                            }
+                            if effects.enabled || effects != EffectsParams::default() {
+                                tracing::debug!(
+                                    channel = %name,
+                                    enabled = effects.enabled,
+                                    "restoring effects params from config"
+                                );
+                                self.engine.send_command(PluginCommand::SetEffectsParams {
+                                    channel: ch.id,
+                                    params: effects,
+                                });
+                            }
+                        } else {
+                            tracing::warn!(channel = %name, "pending effects restore: channel not found");
+                        }
+                    }
+                }
+
+                // Apply any pending mix volume/muted restores from config
+                if !self.pending_mix_restores.is_empty() {
+                    let restores = std::mem::take(&mut self.pending_mix_restores);
+                    tracing::info!(count = restores.len(), "applying pending mix volume restores");
+                    for (name, volume, muted) in restores {
+                        if let Some(m) = self.engine.state.mixes.iter().find(|m| m.name == name) {
+                            if (volume - 1.0).abs() > 0.001 {
+                                tracing::debug!(mix = %name, volume, "restoring mix master volume from config");
+                                self.engine.send_command(PluginCommand::SetMixMasterVolume {
+                                    mix: m.id,
+                                    volume,
+                                });
+                            }
+                            if muted {
+                                tracing::debug!(mix = %name, "restoring mix mute from config");
+                                self.engine.send_command(PluginCommand::SetMixMuted {
+                                    mix: m.id,
+                                    muted: true,
+                                });
+                            }
+                        } else {
+                            tracing::warn!(mix = %name, "pending mix restore: mix not found");
                         }
                     }
                 }
@@ -870,6 +962,8 @@ impl App {
     pub fn view(&self) -> Element<'_, Message> {
         tracing::trace!("rendering view");
 
+        let tm = self.config.ui.theme_mode;
+
         // Header — flush, same bg as sidebar for visual continuity
         let header_title = if self.engine.is_connected() {
             "OpenSoundGrid — PulseAudio"
@@ -877,16 +971,16 @@ impl App {
             "OpenSoundGrid"
         };
         let compact_btn = button(
-            text("⊟").size(13).color(ui::theme::TEXT_SECONDARY),
+            text("⊟").size(13).color(ui::theme::text_secondary(tm)),
         )
         .on_press(Message::SettingsToggled)
-        .style(|_theme: &Theme, _status| button::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_HOVER)),
+        .style(move |_theme: &Theme, _status| button::Style {
+            background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
             border: iced::Border {
                 radius: iced::border::Radius::from(4.0),
                 ..Default::default()
             },
-            text_color: ui::theme::TEXT_SECONDARY,
+            text_color: ui::theme::text_secondary(tm),
             ..Default::default()
         })
         .padding([2, 8]);
@@ -896,16 +990,16 @@ impl App {
             ui::theme::ThemeMode::Light => "☾",
         };
         let theme_btn = button(
-            text(theme_icon).size(13).color(ui::theme::TEXT_SECONDARY),
+            text(theme_icon).size(13).color(ui::theme::text_secondary(tm)),
         )
         .on_press(Message::ThemeToggled)
-        .style(|_theme: &Theme, _status| button::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_HOVER)),
+        .style(move |_theme: &Theme, _status| button::Style {
+            background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
             border: iced::Border {
                 radius: iced::border::Radius::from(4.0),
                 ..Default::default()
             },
-            text_color: ui::theme::TEXT_SECONDARY,
+            text_color: ui::theme::text_secondary(tm),
             ..Default::default()
         })
         .padding([2, 8]);
@@ -943,7 +1037,7 @@ impl App {
 
         let header = container(
             row![
-                text(header_title).size(18).color(ui::theme::TEXT_PRIMARY),
+                text(header_title).size(18).color(ui::theme::text_primary(tm)),
                 Space::new().width(Length::Fill),
                 device_picker,
                 Space::new().width(Length::Fixed(8.0)),
@@ -955,18 +1049,18 @@ impl App {
             .align_y(iced::Alignment::Center),
         )
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_SECONDARY)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(ui::theme::bg_secondary(tm))),
             ..Default::default()
         });
 
         // Thin separator line (1px, BORDER color)
-        let sep = || {
+        let sep = move || {
             container(Space::new())
                 .width(Length::Fill)
                 .height(Length::Fixed(1.0))
-                .style(|_: &Theme| container::Style {
-                    background: Some(iced::Background::Color(ui::theme::BORDER)),
+                .style(move |_: &Theme| container::Style {
+                    background: Some(iced::Background::Color(ui::theme::border_color(tm))),
                     ..Default::default()
                 })
         };
@@ -974,13 +1068,15 @@ impl App {
         let sidebar = ui::sidebar::sidebar(
             self.sidebar_collapsed,
             &self.engine.state.hardware_inputs,
+            tm,
         );
 
-        let matrix = ui::matrix::matrix_grid(&self.engine.state, self.focused_row, self.focused_col);
+        let matrix = ui::matrix::matrix_grid(&self.engine.state, self.focused_row, self.focused_col, tm);
 
         let app_panel = ui::app_list::app_list_panel(
             &self.engine.state.applications,
             &self.engine.state.channels,
+            tm,
         );
 
         let connected = self.engine.is_connected();
@@ -1010,18 +1106,18 @@ impl App {
             row![
                 status_dot,
                 Space::new().width(Length::Fixed(6.0)),
-                text(status_text).size(11).color(ui::theme::TEXT_SECONDARY),
+                text(status_text).size(11).color(ui::theme::text_secondary(tm)),
                 Space::new().width(Length::Fill),
                 text(format!("{} channels  ·  {} routes  ·  {}ms latency", channel_count, route_count, self.config.audio.latency_ms))
                     .size(11)
-                    .color(ui::theme::TEXT_MUTED),
+                    .color(ui::theme::text_muted(tm)),
             ]
             .padding([4, 16])
             .align_y(iced::Alignment::Center),
         )
         .width(Length::Fill)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_SECONDARY)),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(ui::theme::bg_secondary(tm))),
             ..Default::default()
         });
 
@@ -1062,17 +1158,17 @@ impl App {
 
             let panel = container(
                 column![
-                    text("Settings").size(14).color(ui::theme::TEXT_PRIMARY),
+                    text("Settings").size(14).color(ui::theme::text_primary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
-                    text(latency_text).size(12).color(ui::theme::TEXT_SECONDARY),
-                    text(format!("Config: ~/.config/open-sound-grid/")).size(11).color(ui::theme::TEXT_MUTED),
+                    text(latency_text).size(12).color(ui::theme::text_secondary(tm)),
+                    text(format!("Config: ~/.config/open-sound-grid/")).size(11).color(ui::theme::text_muted(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
                     text(format!("Plugin: {}", if self.engine.is_connected() { "PulseAudio" } else { "None" }))
-                        .size(12).color(ui::theme::TEXT_SECONDARY),
+                        .size(12).color(ui::theme::text_secondary(tm)),
                     text(format!("Channels: {} / Mixes: {}", self.engine.state.channels.len(), self.engine.state.mixes.len()))
-                        .size(12).color(ui::theme::TEXT_SECONDARY),
+                        .size(12).color(ui::theme::text_secondary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
-                    text("Presets").size(13).color(ui::theme::TEXT_PRIMARY),
+                    text("Presets").size(13).color(ui::theme::text_primary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
                     preset_save_row,
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
@@ -1082,10 +1178,10 @@ impl App {
             )
             .padding(12)
             .width(Length::Fill)
-            .style(|_: &Theme| container::Style {
-                background: Some(iced::Background::Color(ui::theme::BG_ELEVATED)),
+            .style(move |_: &Theme| container::Style {
+                background: Some(iced::Background::Color(ui::theme::bg_elevated(tm))),
                 border: iced::Border {
-                    color: ui::theme::BORDER,
+                    color: ui::theme::border_color(tm),
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -1111,7 +1207,7 @@ impl App {
         if let Some(ch_id) = self.selected_channel {
             if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
                 tracing::trace!(channel_id = ch_id, "rendering effects panel");
-                right_panel = right_panel.push(ui::effects_panel::effects_panel(ch));
+                right_panel = right_panel.push(ui::effects_panel::effects_panel(ch, tm));
             }
         }
 
@@ -1125,8 +1221,8 @@ impl App {
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(ui::theme::BG_PRIMARY)),
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(ui::theme::bg_primary(tm))),
                 border: iced::Border {
                     radius: iced::border::Radius {
                         top_left: 0.0,

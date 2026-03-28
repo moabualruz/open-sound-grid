@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tracing::instrument;
 
 use crate::config::{ChannelConfig, MixConfig};
 
@@ -28,6 +29,7 @@ pub struct PresetRoute {
 
 impl MixerPreset {
     /// Build a preset from current config and engine state.
+    #[instrument(skip(config, state))]
     pub fn from_current(name: &str, config: &crate::config::AppConfig, state: &crate::engine::state::MixerState) -> Self {
         let routes = state.routes.iter().map(|((source, mix_id), route)| {
             let channel_name = match source {
@@ -60,6 +62,7 @@ impl MixerPreset {
     }
 
     /// Save preset to disk.
+    #[instrument(skip(self))]
     pub fn save(&self) -> anyhow::Result<PathBuf> {
         let dir = preset_dir();
         fs::create_dir_all(&dir)?;
@@ -71,6 +74,7 @@ impl MixerPreset {
     }
 
     /// Load a preset by name.
+    #[instrument]
     pub fn load(name: &str) -> anyhow::Result<Self> {
         let path = preset_dir().join(format!("{}.toml", sanitize_filename(name)));
         let content = fs::read_to_string(&path)?;
@@ -80,6 +84,7 @@ impl MixerPreset {
     }
 
     /// List all saved preset names.
+    #[instrument]
     pub fn list() -> Vec<String> {
         let dir = preset_dir();
         if !dir.exists() {
@@ -136,12 +141,18 @@ mod tests {
     fn test_preset_roundtrip() {
         let preset = MixerPreset {
             name: "Test".into(),
-            channels: vec![ChannelConfig { name: "Music".into() }],
+            channels: vec![ChannelConfig {
+                name: "Music".into(),
+                effects: Default::default(),
+                muted: false,
+            }],
             mixes: vec![MixConfig {
                 name: "Monitor".into(),
                 icon: String::new(),
                 color: [128, 128, 128],
                 output_device: None,
+                master_volume: 1.0,
+                muted: false,
             }],
             routes: vec![PresetRoute {
                 channel_name: "Music".into(),
