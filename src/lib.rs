@@ -4,5 +4,6 @@ pub mod engine;
 pub mod error;
 pub mod plugin;
 pub mod plugins;
+pub mod resolve;
 pub mod tray;
 pub mod ui;

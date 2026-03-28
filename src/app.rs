@@ -37,11 +37,16 @@ pub enum Message {
     },
     RefreshApps,
 
+    // Channel/mix creation
+    CreateChannel(String),
+    CreateMix(String),
+
     // Plugin events
     PluginError(String),
 
     // UI
     SettingsToggled,
+    SidebarToggleCollapse,
     Tick,
 }
 
@@ -50,6 +55,7 @@ pub struct App {
     pub config: AppConfig,
     pub engine: MixerEngine,
     pub settings_open: bool,
+    pub sidebar_collapsed: bool,
 }
 
 impl App {
@@ -60,6 +66,7 @@ impl App {
             config,
             engine: MixerEngine::new(),
             settings_open: false,
+            sidebar_collapsed: false,
         }
     }
 
@@ -109,7 +116,7 @@ impl App {
             Message::SourceMuteToggled(source) => {
                 self.engine.send_command(PluginCommand::SetSourceMuted {
                     source,
-                    muted: true, // TODO: toggle
+                    muted: true, // TODO: toggle based on current state
                 });
             }
             Message::AppRouteChanged {
@@ -125,11 +132,22 @@ impl App {
                 self.engine
                     .send_command(PluginCommand::ListApplications);
             }
+            Message::CreateChannel(name) => {
+                self.engine
+                    .send_command(PluginCommand::CreateChannel { name });
+            }
+            Message::CreateMix(name) => {
+                self.engine
+                    .send_command(PluginCommand::CreateMix { name });
+            }
             Message::PluginError(err) => {
                 tracing::error!("Plugin error: {}", err);
             }
             Message::SettingsToggled => {
                 self.settings_open = !self.settings_open;
+            }
+            Message::SidebarToggleCollapse => {
+                self.sidebar_collapsed = !self.sidebar_collapsed;
             }
             Message::Tick => {
                 // TODO: poll events from plugin bridge
@@ -154,9 +172,12 @@ impl App {
             ..Default::default()
         });
 
-        let matrix = ui::matrix::matrix_placeholder();
+        let sidebar = ui::sidebar::sidebar(
+            self.sidebar_collapsed,
+            &self.engine.state.hardware_inputs,
+        );
 
-        let apps = ui::app_list::app_list_panel(&self.engine.state.applications);
+        let matrix = ui::matrix::matrix_grid(&self.engine.state);
 
         let status_text = if self.engine.is_connected() {
             "Connected"
@@ -168,7 +189,7 @@ impl App {
             row![
                 text(status_text).size(11),
                 Space::new().width(Length::Fill),
-                text(format!("{} channels", self.config.channels.len())).size(11),
+                text(format!("{} channels", self.engine.state.channels.len())).size(11),
             ]
             .padding(4),
         )
@@ -178,8 +199,17 @@ impl App {
             ..Default::default()
         });
 
-        let content = column![header, rule::horizontal(1), matrix, rule::horizontal(1), apps, status_bar,]
-            .spacing(0);
+        let right_panel = column![
+            header,
+            rule::horizontal(1),
+            matrix,
+            status_bar,
+        ]
+        .spacing(0)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let content = row![sidebar, right_panel];
 
         container(content)
             .width(Length::Fill)

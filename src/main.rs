@@ -7,6 +7,7 @@ mod engine;
 mod error;
 mod plugin;
 mod plugins;
+mod resolve;
 mod tray;
 mod ui;
 
@@ -29,8 +30,22 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting OpenSoundGrid");
 
-    // Spawn system tray (stub)
-    tray::spawn_tray();
+    // Spawn system tray (returns receiver for tray commands)
+    let _tray_rx = tray::spawn_tray();
+
+    // Create and start the audio plugin before the iced event loop
+    let audio_plugin = plugins::create_default_plugin();
+    let mut plugin_manager = plugin::manager::PluginManager::new();
+    let bridge = match plugin_manager.start(audio_plugin) {
+        Ok(b) => {
+            tracing::info!("Audio plugin started");
+            Some(b)
+        }
+        Err(e) => {
+            tracing::error!("Failed to start audio plugin: {e}");
+            None
+        }
+    };
 
     // Launch iced application
     let cfg = config::AppConfig::load();
@@ -40,10 +55,24 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    iced::application(app::App::new, app::App::update, app::App::view)
-        .theme(app::App::theme)
-        .window(window_settings)
-        .run()?;
+    // Use a Mutex to hand the bridge into the boot closure (Fn, called once)
+    let bridge_cell = std::sync::Mutex::new(bridge);
+
+    iced::application(
+        move || {
+            let mut app = app::App::new();
+            if let Some(bridge) = bridge_cell.lock().unwrap().take() {
+                app.engine.attach(bridge);
+                tracing::info!("Plugin bridge attached to engine");
+            }
+            app
+        },
+        app::App::update,
+        app::App::view,
+    )
+    .theme(app::App::theme)
+    .window(window_settings)
+    .run()?;
 
     tracing::info!("OpenSoundGrid exiting");
     Ok(())

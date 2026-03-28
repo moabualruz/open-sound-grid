@@ -5,38 +5,71 @@
 //! is done via sink-input volume on the loopback instances.
 //!
 //! Architecture:
-//! - Each software channel → null sink (apps route here via move-sink-input)
-//! - Each output mix → null sink (OBS/external apps capture from here)
-//! - Each (channel, mix) pair → module-loopback connecting them
-//! - Volume control → set-sink-input-volume on the loopback's sink-input
+//! - Each software channel -> null sink (apps route here via move-sink-input)
+//! - Each output mix -> null sink (OBS/external apps capture from here)
+//! - Each (channel, mix) pair -> module-loopback connecting them
+//! - Volume control -> set-sink-input-volume on the loopback's sink-input
+
+mod apps;
+mod connection;
+mod devices;
+mod modules;
+mod peaks;
 
 use std::collections::HashMap;
 
 use crate::error::{OsgError, Result};
 use crate::plugin::api::*;
-use crate::plugin::{
-    AudioPlugin, PluginCapabilities, PluginInfo, API_VERSION,
-};
+use crate::plugin::{AudioPlugin, PluginCapabilities, PluginInfo, API_VERSION};
+
+use self::apps::AppDetector;
+use self::connection::PulseConnection;
+use self::devices::DeviceEnumerator;
+use self::modules::ModuleManager;
+use self::peaks::PeakMonitor;
 
 pub struct PulseAudioPlugin {
-    connected: bool,
+    connection: Option<PulseConnection>,
+    modules: ModuleManager,
+    apps: AppDetector,
+    peaks: PeakMonitor,
     next_channel_id: u32,
     next_mix_id: u32,
     channels: Vec<ChannelInfo>,
     mixes: Vec<MixInfo>,
     routes: HashMap<(SourceId, MixId), RouteState>,
+    /// Maps (channel_id) -> PA sink name for the channel's null sink.
+    channel_sinks: HashMap<u32, String>,
+    /// Maps (mix_id) -> PA sink name for the mix's null sink.
+    mix_sinks: HashMap<u32, String>,
+    /// Maps (source, mix) -> loopback module id.
+    loopback_modules: HashMap<(SourceId, MixId), u32>,
+    /// Maps (source, mix) -> sink-input index for volume control.
+    loopback_sink_inputs: HashMap<(SourceId, MixId), u32>,
     pending_events: Vec<PluginEvent>,
 }
+
+// SAFETY: PulseAudioPlugin is moved into the plugin thread and only accessed there.
+// The inner PulseConnection contains Rc<RefCell<>> which is !Send, but since we
+// guarantee single-thread access this is safe.
+unsafe impl Send for PulseAudioPlugin {}
 
 impl PulseAudioPlugin {
     pub fn new() -> Self {
         Self {
-            connected: false,
+            connection: None,
+            modules: ModuleManager::new(),
+            apps: AppDetector::new(),
+            peaks: PeakMonitor::new(),
             next_channel_id: 1,
             next_mix_id: 1,
             channels: Vec::new(),
             mixes: Vec::new(),
             routes: HashMap::new(),
+            channel_sinks: HashMap::new(),
+            mix_sinks: HashMap::new(),
+            loopback_modules: HashMap::new(),
+            loopback_sink_inputs: HashMap::new(),
             pending_events: Vec::new(),
         }
     }
@@ -46,11 +79,21 @@ impl PulseAudioPlugin {
             channels: self.channels.clone(),
             mixes: self.mixes.clone(),
             routes: self.routes.clone(),
-            hardware_inputs: vec![], // TODO: query PA
-            hardware_outputs: vec![], // TODO: query PA
-            applications: vec![], // TODO: query PA
-            peak_levels: HashMap::new(),
+            hardware_inputs: DeviceEnumerator::list_inputs(),
+            hardware_outputs: DeviceEnumerator::list_outputs(),
+            applications: self.apps.list_applications().unwrap_or_default(),
+            peak_levels: self.peaks.get_levels(),
         }
+    }
+
+    /// Get the PA sink name for a channel.
+    fn channel_sink_name(name: &str) -> String {
+        format!("osg_{}_ch", name.replace(' ', "_"))
+    }
+
+    /// Get the PA sink name for a mix.
+    fn mix_sink_name(name: &str) -> String {
+        format!("osg_{}_mix", name.replace(' ', "_"))
     }
 }
 
@@ -70,21 +113,17 @@ impl AudioPlugin for PulseAudioPlugin {
             can_create_virtual_sinks: true,
             can_route_applications: true,
             can_monitor_peaks: true,
-            can_apply_effects: false, // v0.2
-            can_lock_devices: false,  // v0.3
+            can_apply_effects: false,
+            can_lock_devices: false,
             max_channels: Some(8),
             max_mixes: Some(5),
         }
     }
 
     fn init(&mut self) -> Result<()> {
-        // TODO: Connect to PulseAudio server via libpulse-binding
-        // - Create threaded mainloop
-        // - Connect context
-        // - Subscribe to sink, sink-input, source events
-        // - Enumerate existing sinks and sources
-        tracing::info!("PulseAudio plugin initialized (stub)");
-        self.connected = true;
+        let conn = PulseConnection::connect()?;
+        self.connection = Some(conn);
+        tracing::info!("PulseAudio plugin initialized");
         Ok(())
     }
 
@@ -95,26 +134,35 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::ListHardwareInputs => {
-                // TODO: pactl list sources, filter out monitors
-                Ok(PluginResponse::HardwareInputs(vec![]))
+                Ok(PluginResponse::HardwareInputs(DeviceEnumerator::list_inputs()))
             }
 
             PluginCommand::ListHardwareOutputs => {
-                // TODO: pactl list sinks, filter out virtual
-                Ok(PluginResponse::HardwareOutputs(vec![]))
+                Ok(PluginResponse::HardwareOutputs(DeviceEnumerator::list_outputs()))
             }
 
             PluginCommand::ListApplications => {
-                // TODO: pactl list sink-inputs with application.name
-                Ok(PluginResponse::Applications(vec![]))
+                let apps = self.apps.list_applications()?;
+                Ok(PluginResponse::Applications(apps))
             }
 
             PluginCommand::CreateChannel { name } => {
                 let id = self.next_channel_id;
                 self.next_channel_id += 1;
 
-                // TODO: pactl load-module module-null-sink sink_name={name}_Apps
-                tracing::info!("Created channel '{}' (id={})", name, id);
+                let sink_name = Self::channel_sink_name(&name);
+                let description = format!("OSG {name} Channel");
+
+                match self.modules.create_null_sink(&sink_name, &description) {
+                    Ok(_module_id) => {
+                        tracing::info!("Created channel '{name}' (id={id}, sink={sink_name})");
+                        self.channel_sinks.insert(id, sink_name);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create null sink for channel '{name}': {e}");
+                        return Err(e);
+                    }
+                }
 
                 self.channels.push(ChannelInfo {
                     id,
@@ -127,9 +175,25 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::RemoveChannel { id } => {
-                // TODO: unload null sink + all associated loopbacks
                 self.channels.retain(|c| c.id != id);
-                self.routes.retain(|(src, _), _| *src != SourceId::Channel(id));
+                self.channel_sinks.remove(&id);
+
+                // Remove all loopbacks involving this channel
+                let source = SourceId::Channel(id);
+                let keys_to_remove: Vec<_> = self
+                    .loopback_modules
+                    .keys()
+                    .filter(|(src, _)| *src == source)
+                    .cloned()
+                    .collect();
+                for key in &keys_to_remove {
+                    if let Some(module_id) = self.loopback_modules.remove(key) {
+                        let _ = self.modules.unload_module(module_id);
+                    }
+                    self.loopback_sink_inputs.remove(key);
+                }
+
+                self.routes.retain(|(src, _), _| *src != source);
                 Ok(PluginResponse::Ok)
             }
 
@@ -137,9 +201,19 @@ impl AudioPlugin for PulseAudioPlugin {
                 let id = self.next_mix_id;
                 self.next_mix_id += 1;
 
-                // TODO: pactl load-module module-null-sink sink_name={name}_Mix
-                // TODO: create loopbacks from each channel to this mix
-                tracing::info!("Created mix '{}' (id={})", name, id);
+                let sink_name = Self::mix_sink_name(&name);
+                let description = format!("OSG {name} Mix");
+
+                match self.modules.create_null_sink(&sink_name, &description) {
+                    Ok(_module_id) => {
+                        tracing::info!("Created mix '{name}' (id={id}, sink={sink_name})");
+                        self.mix_sinks.insert(id, sink_name);
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create null sink for mix '{name}': {e}");
+                        return Err(e);
+                    }
+                }
 
                 self.mixes.push(MixInfo {
                     id,
@@ -154,39 +228,76 @@ impl AudioPlugin for PulseAudioPlugin {
 
             PluginCommand::RemoveMix { id } => {
                 self.mixes.retain(|m| m.id != id);
+                self.mix_sinks.remove(&id);
+
+                // Remove all loopbacks targeting this mix
+                let keys_to_remove: Vec<_> = self
+                    .loopback_modules
+                    .keys()
+                    .filter(|(_, mix)| *mix == id)
+                    .cloned()
+                    .collect();
+                for key in &keys_to_remove {
+                    if let Some(module_id) = self.loopback_modules.remove(key) {
+                        let _ = self.modules.unload_module(module_id);
+                    }
+                    self.loopback_sink_inputs.remove(key);
+                }
+
                 self.routes.retain(|(_, mix), _| *mix != id);
                 Ok(PluginResponse::Ok)
             }
 
             PluginCommand::SetRouteVolume { source, mix, volume } => {
                 let volume = volume.clamp(0.0, 1.0);
-                // TODO: pactl set-sink-input-volume <loopback_idx> <percent>%
                 self.routes.entry((source, mix)).or_default().volume = volume;
+
+                // Apply via PA if we have a sink-input for this route
+                if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
+                    if let Err(e) = self.modules.set_sink_input_volume(sink_input_idx, volume) {
+                        tracing::warn!("Failed to set volume: {e}");
+                    }
+                }
+
                 Ok(PluginResponse::Ok)
             }
 
             PluginCommand::SetRouteEnabled { source, mix, enabled } => {
-                // TODO: load/unload loopback module
                 self.routes.entry((source, mix)).or_default().enabled = enabled;
+                // TODO: load/unload loopback module based on enabled state
                 Ok(PluginResponse::Ok)
             }
 
             PluginCommand::SetRouteMuted { source, mix, muted } => {
-                // TODO: pactl set-sink-input-mute
                 self.routes.entry((source, mix)).or_default().muted = muted;
+
+                if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
+                    if let Err(e) = self.modules.set_sink_input_mute(sink_input_idx, muted) {
+                        tracing::warn!("Failed to set mute: {e}");
+                    }
+                }
+
                 Ok(PluginResponse::Ok)
             }
 
             PluginCommand::RouteApp { app, channel } => {
-                // TODO: pactl move-sink-input <app_stream_idx> <channel_sink>
+                let sink_name = self
+                    .channel_sinks
+                    .get(&channel)
+                    .cloned()
+                    .ok_or(OsgError::ChannelNotFound(channel))?;
+
+                if let Err(e) = self.modules.move_sink_input(app, &sink_name) {
+                    tracing::warn!("Failed to move sink-input {app} -> {sink_name}: {e}");
+                }
+
                 if let Some(ch) = self.channels.iter_mut().find(|c| c.id == channel) {
                     if !ch.apps.contains(&app) {
                         ch.apps.push(app);
                     }
-                    Ok(PluginResponse::Ok)
-                } else {
-                    Err(OsgError::ChannelNotFound(channel))
                 }
+
+                Ok(PluginResponse::Ok)
             }
 
             PluginCommand::UnrouteApp { app } => {
@@ -197,7 +308,6 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetMixOutput { mix, output } => {
-                // TODO: create loopback from mix monitor → output device
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.output = Some(output);
                     Ok(PluginResponse::Ok)
@@ -207,7 +317,6 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetMixMasterVolume { mix, volume } => {
-                // TODO: pactl set-sink-volume <mix_sink> <percent>%
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.master_volume = volume.clamp(0.0, 1.0);
                     Ok(PluginResponse::Ok)
@@ -226,7 +335,6 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetSourceMuted { source, muted } => {
-                // Mute across all mixes
                 for ((src, _), route) in &mut self.routes {
                     if *src == source {
                         route.muted = muted;
@@ -238,15 +346,27 @@ impl AudioPlugin for PulseAudioPlugin {
     }
 
     fn poll_events(&mut self) -> Vec<PluginEvent> {
-        // TODO: check PA event subscription for device/app changes
-        // TODO: read peak levels from PA monitor sources
+        // Update peak levels for all channel sinks
+        for channel in &self.channels {
+            if let Some(sink_name) = self.channel_sinks.get(&channel.id) {
+                self.peaks.update_level(sink_name, SourceId::Channel(channel.id));
+            }
+        }
+
+        let levels = self.peaks.get_levels();
+        if !levels.is_empty() {
+            self.pending_events.push(PluginEvent::PeakLevels(levels));
+        }
+
         self.pending_events.drain(..).collect()
     }
 
     fn cleanup(&mut self) -> Result<()> {
-        // TODO: unload all modules, disconnect from PA
-        tracing::info!("PulseAudio plugin cleanup (stub)");
-        self.connected = false;
+        tracing::info!("PulseAudio plugin cleaning up");
+        self.modules.unload_all();
+        if let Some(mut conn) = self.connection.take() {
+            conn.disconnect();
+        }
         Ok(())
     }
 }

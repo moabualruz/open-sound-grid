@@ -1,35 +1,29 @@
-use iced::widget::{column, container, slider, text};
-use iced::Element;
+use iced::widget::{column, slider, text};
+use iced::{Element, Length};
 
 use crate::app::Message;
+use crate::ui::theme::TEXT_SECONDARY;
 
-/// Placeholder volume slider with dB label.
-///
-/// Will be replaced with a custom Canvas widget supporting:
-/// - Vertical orientation
-/// - dB-scaled response curve
-/// - Fine adjustment on scroll
-/// - Double-click to type exact value
-pub fn volume_slider<'a>(
-    label: &str,
+/// Compact horizontal volume slider with dB readout.
+pub fn audio_slider<'a>(
     value: f32,
     on_change: impl Fn(f32) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let db_label = if value <= 0.0 {
+    let db_text = if value <= 0.001 {
         "-inf dB".to_string()
     } else {
         format!("{:.1} dB", 20.0 * value.log10())
     };
 
-    container(
-        column![
-            text(label.to_string()).size(11),
-            slider(0.0..=1.0, value, on_change).step(0.01),
-            text(db_label).size(10),
-        ]
-        .spacing(4)
-        .align_x(iced::Alignment::Center),
-    )
-    .padding(4)
+    column![
+        slider(0.0..=1.0, value, on_change)
+            .step(0.01)
+            .width(Length::Fill),
+        text(db_text)
+            .size(10)
+            .color(TEXT_SECONDARY),
+    ]
+    .spacing(2)
+    .width(Length::Fill)
     .into()
 }
