@@ -1,6 +1,6 @@
 use std::sync::{Mutex, OnceLock};
 
-use iced::widget::{button, column, container, pick_list, row, text, Space};
+use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
@@ -78,12 +78,27 @@ pub enum Message {
     // Window events
     WindowResized(u32, u32),
 
+    // Keyboard
+    KeyPressed(iced::keyboard::Key, iced::keyboard::Modifiers),
+
     // Output device selection
     MixOutputDeviceSelected { mix: MixId, device_name: String },
+
+    // Effects
+    EffectsToggled { channel: ChannelId, enabled: bool },
+    EffectsParamChanged { channel: ChannelId, param: String, value: f32 },
+    #[allow(dead_code)]
+    SelectedChannel(Option<ChannelId>),
 
     // UI
     SettingsToggled,
     SidebarToggleCollapse,
+    ThemeToggled,
+
+    // Presets
+    SavePreset(String),
+    LoadPreset(String),
+    PresetNameInput(String),
 }
 
 /// Application state.
@@ -95,6 +110,16 @@ pub struct App {
     pub sidebar_collapsed: bool,
     /// (mix_name, device_name) pairs waiting to be applied after first StateRefreshed.
     pub pending_output_restores: Vec<(String, String)>,
+    /// Keyboard focus: channel row index.
+    pub focused_row: Option<usize>,
+    /// Keyboard focus: mix column index.
+    pub focused_col: Option<usize>,
+    /// Text input for preset name entry.
+    pub preset_name_input: String,
+    /// List of saved preset names (refreshed after save/load).
+    pub available_presets: Vec<String>,
+    /// Currently selected channel for effects panel display.
+    pub selected_channel: Option<ChannelId>,
 }
 
 impl App {
@@ -113,6 +138,11 @@ impl App {
             settings_open: false,
             sidebar_collapsed,
             pending_output_restores: Vec::new(),
+            focused_row: None,
+            focused_col: None,
+            preset_name_input: String::new(),
+            available_presets: crate::presets::MixerPreset::list(),
+            selected_channel: None,
         }
     }
 
@@ -159,7 +189,10 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::Dark
+        match self.config.ui.theme_mode {
+            ui::theme::ThemeMode::Dark => Theme::Dark,
+            ui::theme::ThemeMode::Light => Theme::Light,
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -214,7 +247,7 @@ impl App {
                         .iter()
                         .find(|c| c.id == id)
                         .map_or(false, |c| c.muted),
-                    SourceId::Hardware(_) => false,
+                    SourceId::Hardware(_) | SourceId::Mix(_) => false,
                 };
                 tracing::debug!(source = ?source, new_muted = !current_muted, "Toggling source mute");
                 self.engine.send_command(PluginCommand::SetSourceMuted {
@@ -476,11 +509,240 @@ impl App {
                     tracing::error!(error = %e, "failed to save compact mode config");
                 }
             }
+            Message::KeyPressed(key, modifiers) => {
+                use iced::keyboard::Key;
+                match key {
+                    Key::Named(iced::keyboard::key::Named::Tab) => {
+                        let max_col = self.engine.state.mixes.len();
+                        let max_row = self.engine.state.channels.len();
+                        if max_col == 0 || max_row == 0 {
+                            return Task::none();
+                        }
+                        let (r, c) = match (self.focused_row, self.focused_col) {
+                            (Some(r), Some(c)) => {
+                                if modifiers.shift() {
+                                    if c > 0 { (r, c - 1) }
+                                    else if r > 0 { (r - 1, max_col - 1) }
+                                    else { (max_row - 1, max_col - 1) }
+                                } else {
+                                    if c + 1 < max_col { (r, c + 1) }
+                                    else if r + 1 < max_row { (r + 1, 0) }
+                                    else { (0, 0) }
+                                }
+                            }
+                            _ => (0, 0),
+                        };
+                        self.focused_row = Some(r);
+                        self.focused_col = Some(c);
+                        tracing::debug!(row = r, col = c, "keyboard: cell focused");
+                    }
+                    Key::Named(iced::keyboard::key::Named::ArrowUp) => {
+                        tracing::debug!(
+                            focused_row = ?self.focused_row,
+                            focused_col = ?self.focused_col,
+                            "keyboard: volume up"
+                        );
+                        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+                            if let (Some(ch), Some(mix)) = (
+                                self.engine.state.channels.get(r),
+                                self.engine.state.mixes.get(c),
+                            ) {
+                                let source = SourceId::Channel(ch.id);
+                                let current_vol = self.engine.state.routes
+                                    .get(&(source, mix.id))
+                                    .map_or(1.0, |r| r.volume);
+                                let new_vol = (current_vol + 0.01).min(1.0);
+                                tracing::debug!(
+                                    row = r, col = c,
+                                    channel_id = ch.id, mix_id = mix.id,
+                                    old_vol = current_vol, new_vol,
+                                    "keyboard: volume up applied"
+                                );
+                                self.engine.send_command(PluginCommand::SetRouteVolume {
+                                    source,
+                                    mix: mix.id,
+                                    volume: new_vol,
+                                });
+                            }
+                        }
+                    }
+                    Key::Named(iced::keyboard::key::Named::ArrowDown) => {
+                        tracing::debug!(
+                            focused_row = ?self.focused_row,
+                            focused_col = ?self.focused_col,
+                            "keyboard: volume down"
+                        );
+                        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+                            if let (Some(ch), Some(mix)) = (
+                                self.engine.state.channels.get(r),
+                                self.engine.state.mixes.get(c),
+                            ) {
+                                let source = SourceId::Channel(ch.id);
+                                let current_vol = self.engine.state.routes
+                                    .get(&(source, mix.id))
+                                    .map_or(1.0, |r| r.volume);
+                                let new_vol = (current_vol - 0.01).max(0.0);
+                                tracing::debug!(
+                                    row = r, col = c,
+                                    channel_id = ch.id, mix_id = mix.id,
+                                    old_vol = current_vol, new_vol,
+                                    "keyboard: volume down applied"
+                                );
+                                self.engine.send_command(PluginCommand::SetRouteVolume {
+                                    source,
+                                    mix: mix.id,
+                                    volume: new_vol,
+                                });
+                            }
+                        }
+                    }
+                    Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
+                        if let Some(c) = self.focused_col {
+                            if c > 0 {
+                                self.focused_col = Some(c - 1);
+                                tracing::debug!(col = c - 1, "keyboard: focus moved left");
+                            }
+                        }
+                    }
+                    Key::Named(iced::keyboard::key::Named::ArrowRight) => {
+                        let max_col = self.engine.state.mixes.len();
+                        if let Some(c) = self.focused_col {
+                            if c + 1 < max_col {
+                                self.focused_col = Some(c + 1);
+                                tracing::debug!(col = c + 1, "keyboard: focus moved right");
+                            }
+                        }
+                    }
+                    Key::Character(ref ch) if ch.as_str() == "m" || ch.as_str() == "M" => {
+                        tracing::debug!(
+                            focused_row = ?self.focused_row,
+                            focused_col = ?self.focused_col,
+                            "keyboard: toggle mute"
+                        );
+                        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+                            if let (Some(channel), Some(mix)) = (
+                                self.engine.state.channels.get(r),
+                                self.engine.state.mixes.get(c),
+                            ) {
+                                let source = SourceId::Channel(channel.id);
+                                let currently_muted = self.engine.state.routes
+                                    .get(&(source, mix.id))
+                                    .map_or(false, |r| r.muted);
+                                tracing::debug!(
+                                    row = r, col = c,
+                                    channel_id = channel.id, mix_id = mix.id,
+                                    new_muted = !currently_muted,
+                                    "keyboard: mute toggled"
+                                );
+                                self.engine.send_command(PluginCommand::SetRouteMuted {
+                                    source,
+                                    mix: mix.id,
+                                    muted: !currently_muted,
+                                });
+                            }
+                        }
+                    }
+                    Key::Named(iced::keyboard::key::Named::Space) => {
+                        tracing::debug!(
+                            focused_row = ?self.focused_row,
+                            focused_col = ?self.focused_col,
+                            "keyboard: toggle route"
+                        );
+                        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+                            if let (Some(channel), Some(mix)) = (
+                                self.engine.state.channels.get(r),
+                                self.engine.state.mixes.get(c),
+                            ) {
+                                let source = SourceId::Channel(channel.id);
+                                let enabled = self.engine.state.routes
+                                    .get(&(source, mix.id))
+                                    .map_or(true, |r| r.enabled);
+                                tracing::debug!(
+                                    row = r, col = c,
+                                    channel_id = channel.id, mix_id = mix.id,
+                                    new_enabled = !enabled,
+                                    "keyboard: route enabled toggled"
+                                );
+                                self.engine.send_command(PluginCommand::SetRouteEnabled {
+                                    source,
+                                    mix: mix.id,
+                                    enabled: !enabled,
+                                });
+                            }
+                        }
+                    }
+                    Key::Named(iced::keyboard::key::Named::Escape) => {
+                        self.focused_row = None;
+                        self.focused_col = None;
+                        tracing::debug!("keyboard: focus cleared");
+                    }
+                    _ => {}
+                }
+            }
+            Message::ThemeToggled => {
+                let new_mode = match self.config.ui.theme_mode {
+                    ui::theme::ThemeMode::Dark => ui::theme::ThemeMode::Light,
+                    ui::theme::ThemeMode::Light => ui::theme::ThemeMode::Dark,
+                };
+                tracing::info!(new_mode = ?new_mode, "theme toggled");
+                self.config.ui.theme_mode = new_mode;
+                let _ = self.config.save();
+            }
+            Message::SavePreset(name) => {
+                tracing::info!(name = %name, "saving preset");
+                let preset = crate::presets::MixerPreset::from_current(&name, &self.config, &self.engine.state);
+                if let Err(e) = preset.save() {
+                    tracing::error!(error = %e, "failed to save preset");
+                }
+                self.available_presets = crate::presets::MixerPreset::list();
+            }
+            Message::LoadPreset(name) => {
+                tracing::info!(name = %name, "loading preset");
+                match crate::presets::MixerPreset::load(&name) {
+                    Ok(preset) => {
+                        self.config.channels = preset.channels;
+                        self.config.mixes = preset.mixes;
+                        let _ = self.config.save();
+                        self.restore_from_config();
+                    }
+                    Err(e) => tracing::error!(error = %e, "failed to load preset"),
+                }
+            }
+            Message::PresetNameInput(text) => {
+                self.preset_name_input = text;
+            }
+            Message::SelectedChannel(id) => {
+                tracing::debug!(channel_id = ?id, "selected channel for effects panel");
+                self.selected_channel = id;
+            }
+            Message::EffectsToggled { channel, enabled } => {
+                tracing::debug!(channel_id = channel, enabled, "effects toggled");
+                self.engine
+                    .send_command(PluginCommand::SetEffectsEnabled { channel, enabled });
+            }
+            Message::EffectsParamChanged { channel, param, value } => {
+                tracing::debug!(channel_id = channel, param = %param, value, "effects param changed");
+                // Find current params for this channel, apply the change, send update
+                if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == channel) {
+                    if let Some(new_params) =
+                        ui::effects_panel::apply_param_change(&ch.effects, &param, value)
+                    {
+                        self.engine.send_command(PluginCommand::SetEffectsParams {
+                            channel,
+                            params: new_params,
+                        });
+                    } else {
+                        tracing::warn!(param = %param, "EffectsParamChanged: unknown param name");
+                    }
+                } else {
+                    tracing::warn!(channel_id = channel, "EffectsParamChanged: channel not found in state");
+                }
+            }
         }
         Task::none()
     }
 
-    /// Async subscriptions: plugin events + tray commands + window events.
+    /// Async subscriptions: plugin events + tray commands + window events + keyboard.
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             Subscription::run(plugin_event_stream),
@@ -490,6 +752,10 @@ impl App {
                     Some(Message::WindowResized(size.width as u32, size.height as u32))
                 }
                 _ => None,
+            }),
+            iced::keyboard::listen().map(|event| match event {
+                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => Message::KeyPressed(key, modifiers),
+                _ => Message::WindowResized(0, 0),
             }),
         ])
     }
@@ -507,6 +773,25 @@ impl App {
             text("⊟").size(13).color(ui::theme::TEXT_SECONDARY),
         )
         .on_press(Message::SettingsToggled)
+        .style(|_theme: &Theme, _status| button::Style {
+            background: Some(iced::Background::Color(ui::theme::BG_HOVER)),
+            border: iced::Border {
+                radius: iced::border::Radius::from(4.0),
+                ..Default::default()
+            },
+            text_color: ui::theme::TEXT_SECONDARY,
+            ..Default::default()
+        })
+        .padding([2, 8]);
+
+        let theme_icon = match self.config.ui.theme_mode {
+            ui::theme::ThemeMode::Dark => "☀",
+            ui::theme::ThemeMode::Light => "☾",
+        };
+        let theme_btn = button(
+            text(theme_icon).size(13).color(ui::theme::TEXT_SECONDARY),
+        )
+        .on_press(Message::ThemeToggled)
         .style(|_theme: &Theme, _status| button::Style {
             background: Some(iced::Background::Color(ui::theme::BG_HOVER)),
             border: iced::Border {
@@ -555,6 +840,8 @@ impl App {
                 Space::new().width(Length::Fill),
                 device_picker,
                 Space::new().width(Length::Fixed(8.0)),
+                theme_btn,
+                Space::new().width(Length::Fixed(4.0)),
                 compact_btn,
             ]
             .padding([10, 16])
@@ -582,7 +869,7 @@ impl App {
             &self.engine.state.hardware_inputs,
         );
 
-        let matrix = ui::matrix::matrix_grid(&self.engine.state);
+        let matrix = ui::matrix::matrix_grid(&self.engine.state, self.focused_row, self.focused_col);
 
         let app_panel = ui::app_list::app_list_panel(
             &self.engine.state.applications,
@@ -635,6 +922,37 @@ impl App {
         let settings_panel: Option<Element<'_, Message>> = if self.settings_open {
             tracing::trace!(settings_open = true, "rendering settings panel");
             let latency_text = format!("Latency: {}ms", self.config.audio.latency_ms);
+
+            // Preset save row: text input + "Save" button
+            let preset_name_val = self.preset_name_input.clone();
+            let save_btn = button(text("Save").size(12))
+                .on_press(Message::SavePreset(self.preset_name_input.clone()))
+                .padding([2, 8]);
+            let preset_save_row = row![
+                text_input("Preset name…", &preset_name_val)
+                    .on_input(Message::PresetNameInput)
+                    .size(12)
+                    .padding([2, 6]),
+                Space::new().width(Length::Fixed(6.0)),
+                save_btn,
+            ]
+            .align_y(iced::Alignment::Center);
+
+            // Preset load row: pick_list + "Load" button
+            let selected_preset: Option<String> = None;
+            let preset_names = self.available_presets.clone();
+            let load_btn = button(text("Load").size(12))
+                .on_press_maybe(selected_preset.as_ref().map(|n| Message::LoadPreset(n.clone())))
+                .padding([2, 8]);
+            let preset_load_row = row![
+                pick_list(preset_names, selected_preset, Message::LoadPreset)
+                    .placeholder("Select preset…")
+                    .text_size(12),
+                Space::new().width(Length::Fixed(6.0)),
+                load_btn,
+            ]
+            .align_y(iced::Alignment::Center);
+
             let panel = container(
                 column![
                     text("Settings").size(14).color(ui::theme::TEXT_PRIMARY),
@@ -646,6 +964,12 @@ impl App {
                         .size(12).color(ui::theme::TEXT_SECONDARY),
                     text(format!("Channels: {} / Mixes: {}", self.engine.state.channels.len(), self.engine.state.mixes.len()))
                         .size(12).color(ui::theme::TEXT_SECONDARY),
+                    Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
+                    text("Presets").size(13).color(ui::theme::TEXT_PRIMARY),
+                    Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
+                    preset_save_row,
+                    Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
+                    preset_load_row,
                 ]
                 .spacing(4)
             )
@@ -673,6 +997,14 @@ impl App {
 
         if let Some(settings) = settings_panel {
             right_panel = right_panel.push(settings);
+        }
+
+        // Effects panel — shown below the matrix when a channel is selected
+        if let Some(ch_id) = self.selected_channel {
+            if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
+                tracing::trace!(channel_id = ch_id, "rendering effects panel");
+                right_panel = right_panel.push(ui::effects_panel::effects_panel(ch));
+            }
         }
 
         let right_panel = right_panel.push(sep()).push(status_bar);

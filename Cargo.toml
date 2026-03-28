@@ -18,6 +18,9 @@ iced_aw = { version = "0.13", default-features = false, features = ["tab_bar", "
 # Audio
 libpulse-binding = "2.30"
 
+# DSP Effects
+fundsp = "0.23"
+
 # Serialization & Config
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

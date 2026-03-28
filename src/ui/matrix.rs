@@ -26,11 +26,17 @@ const MIX_COLORS: &[iced::Color] = &[
 ];
 
 /// Build the full matrix grid from mixer state.
-pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
+pub fn matrix_grid<'a>(
+    state: &'a MixerState,
+    focused_row: Option<usize>,
+    focused_col: Option<usize>,
+) -> Element<'a, Message> {
     tracing::trace!(
         channels = state.channels.len(),
         mixes = state.mixes.len(),
         routes = state.routes.len(),
+        focused_row = ?focused_row,
+        focused_col = ?focused_col,
         "rendering matrix grid"
     );
     if state.mixes.is_empty() && state.channels.is_empty() {
@@ -50,12 +56,14 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
 
     for (i, mix) in state.mixes.iter().enumerate() {
         let color = MIX_COLORS[i % MIX_COLORS.len()];
+        let mix_peak = state.peak_levels.get(&SourceId::Mix(mix.id)).copied().unwrap_or(0.0);
         header_row = header_row.push(mix_header(
             mix.id,
             &mix.name,
             color,
             mix.master_volume,
             mix.muted,
+            mix_peak,
         ));
     }
 
@@ -100,9 +108,10 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
     );
 
     // One row per channel
-    for channel in &state.channels {
+    for (row_index, channel) in state.channels.iter().enumerate() {
         let source = SourceId::Channel(channel.id);
         let peak = state.peak_levels.get(&source).copied().unwrap_or(0.0);
+        let row_focused = focused_row == Some(row_index);
 
         let mut ch_row = row![
             // Channel name cell
@@ -110,12 +119,21 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
         ]
         .spacing(1);
 
-        for mix in &state.mixes {
+        for (col_index, mix) in state.mixes.iter().enumerate() {
             let route = state.routes.get(&(source, mix.id));
-            ch_row = ch_row.push(matrix_cell(source, mix.id, route, peak));
+            let cell_focused = row_focused && focused_col == Some(col_index);
+            ch_row = ch_row.push(matrix_cell(source, mix.id, route, peak, cell_focused));
         }
 
-        grid = grid.push(container(ch_row).padding([4, 0]));
+        let row_bg = if row_focused { BG_HOVER } else { BG_PRIMARY };
+        grid = grid.push(
+            container(ch_row)
+                .padding([4, 0])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(row_bg)),
+                    ..Default::default()
+                }),
+        );
     }
 
     // "+ Create channel" button at the bottom
@@ -163,8 +181,9 @@ fn mix_header<'a>(
     color: iced::Color,
     master_volume: f32,
     muted: bool,
+    peak: f32,
 ) -> Element<'a, Message> {
-    tracing::trace!(mix_id, name = %name, volume = master_volume, muted, "rendering mix header");
+    tracing::trace!(mix_id, name = %name, volume = master_volume, muted, peak, "rendering mix header");
 
     let color_bar = container(text("").size(1))
         .width(Length::Fill)
@@ -229,6 +248,8 @@ fn mix_header<'a>(
 
     tracing::trace!(mix_id, "rendering mix remove button");
 
+    let meter = vu_meter(peak, 120.0, 4.0);
+
     container(
         column![
             color_bar,
@@ -244,12 +265,13 @@ fn mix_header<'a>(
             row![mute_btn, volume_slider]
                 .spacing(4)
                 .align_y(iced::Alignment::Center),
+            meter,
         ]
         .spacing(2)
         .align_x(iced::Alignment::Center),
     )
     .width(Length::Fixed(140.0))
-    .height(Length::Fixed(80.0))
+    .height(Length::Fixed(96.0))
     .padding([4, 8])
     .style(|_: &Theme| container::Style {
         background: Some(Background::Color(BG_ELEVATED)),
@@ -356,13 +378,15 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
 /// A single matrix intersection cell: mute icon + slider + VU meter.
 ///
 /// If no route exists (source not connected to mix), shows a "+" placeholder.
+/// `focused` adds a 2px ACCENT border to highlight keyboard selection.
 fn matrix_cell<'a>(
     source: SourceId,
     mix_id: u32,
     route: Option<&'a crate::plugin::api::RouteState>,
     peak: f32,
+    focused: bool,
 ) -> Element<'a, Message> {
-    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), peak, "rendering matrix cell");
+    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), peak, focused, "rendering matrix cell");
     let cell_content: Element<'a, Message> = match route {
         Some(route) => {
             let vol = route.volume;
@@ -441,11 +465,11 @@ fn matrix_cell<'a>(
         .padding(4)
         .center_x(Length::Fixed(140.0))
         .center_y(Length::Fixed(72.0))
-        .style(|_: &Theme| container::Style {
+        .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(BG_ELEVATED)),
             border: Border {
-                color: BORDER,
-                width: 1.0,
+                color: if focused { ACCENT } else { BORDER },
+                width: if focused { 2.0 } else { 1.0 },
                 radius: 0.0.into(),
             },
             ..Default::default()

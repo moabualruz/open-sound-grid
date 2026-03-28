@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::ui::theme::ThemeMode;
+
 /// Persisted application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -31,6 +33,7 @@ pub struct AudioConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     pub compact_mode: bool,
+    pub theme_mode: ThemeMode,
     pub window_width: u32,
     pub window_height: u32,
 }
@@ -65,6 +68,7 @@ impl Default for AppConfig {
             },
             ui: UiConfig {
                 compact_mode: false,
+                theme_mode: ThemeMode::Dark,
                 window_width: 1000,
                 window_height: 600,
             },

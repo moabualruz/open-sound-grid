@@ -129,6 +129,29 @@ impl PulseConnection {
     pub fn is_connected(&self) -> bool {
         self.connected
     }
+
+    /// Access the mainloop for locking during PA operations.
+    /// All PA introspect/stream calls must be made with the mainloop locked.
+    #[allow(dead_code)]
+    pub fn mainloop(&self) -> &Mainloop {
+        &self.mainloop
+    }
+
+    /// Mutable access to mainloop (needed for lock/unlock/wait/signal).
+    pub fn mainloop_mut(&mut self) -> &mut Mainloop {
+        &mut self.mainloop
+    }
+
+    /// Access the context for introspect and stream operations.
+    #[allow(dead_code)]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// Mutable access to context (needed for introspect calls).
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
 }
 
 impl Drop for PulseConnection {

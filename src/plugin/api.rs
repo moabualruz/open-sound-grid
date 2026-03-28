@@ -18,12 +18,16 @@ pub type OutputId = u32;
 /// Unique identifier for a running audio application.
 pub type AppId = u32;
 
-/// A source can be a hardware input or a software channel.
+/// A source can be a hardware input, a software channel, or an output mix
+/// (used for peak-level keying on mix VU meters).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceId {
     Hardware(u32),
     Channel(ChannelId),
+    /// Output mix — used as a peak-level key so mix VU meters share the
+    /// same `peak_levels` map as channel VU meters.
+    Mix(MixId),
 }
 
 // --- Data types ---
@@ -81,6 +85,7 @@ pub struct ChannelInfo {
     pub name: String,
     pub apps: Vec<AppId>,
     pub muted: bool,
+    pub effects: crate::effects::EffectsParams,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +148,10 @@ pub enum PluginCommand {
     SetMixMuted { mix: MixId, muted: bool },
     /// Mute/unmute a source across all mixes.
     SetSourceMuted { source: SourceId, muted: bool },
+    /// Set effects parameters for a channel.
+    SetEffectsParams { channel: ChannelId, params: crate::effects::EffectsParams },
+    /// Enable/disable effects for a channel.
+    SetEffectsEnabled { channel: ChannelId, enabled: bool },
 }
 
 impl fmt::Display for PluginCommand {
@@ -165,6 +174,8 @@ impl fmt::Display for PluginCommand {
             PluginCommand::SetMixMasterVolume { .. } => "SetMixMasterVolume",
             PluginCommand::SetMixMuted { .. } => "SetMixMuted",
             PluginCommand::SetSourceMuted { .. } => "SetSourceMuted",
+            PluginCommand::SetEffectsParams { .. } => "SetEffectsParams",
+            PluginCommand::SetEffectsEnabled { .. } => "SetEffectsEnabled",
         };
         f.write_str(name)
     }

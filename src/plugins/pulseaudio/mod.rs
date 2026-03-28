@@ -13,6 +13,7 @@
 mod apps;
 mod connection;
 mod devices;
+mod introspect;
 mod modules;
 mod peaks;
 
@@ -23,6 +24,7 @@ use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
 
+use crate::effects::EffectsChain;
 use crate::error::{OsgError, Result};
 use crate::plugin::api::*;
 use crate::plugin::{AudioPlugin, PluginCapabilities, PluginInfo, API_VERSION};
@@ -53,6 +55,8 @@ pub struct PulseAudioPlugin {
     loopback_sink_inputs: HashMap<(SourceId, MixId), u32>,
     /// Maps mix_id -> (loopback module_id, output device_id) for mix-to-hardware output.
     mix_output_modules: HashMap<MixId, u32>,
+    /// Per-channel effects chains. Keyed by ChannelId.
+    effects_chains: HashMap<ChannelId, EffectsChain>,
     /// `pactl subscribe` child process for PA event notifications.
     subscribe_process: Option<Child>,
     /// Sender for pushing PA subscribe events into the plugin thread's unified channel.
@@ -83,6 +87,7 @@ impl PulseAudioPlugin {
             loopback_modules: HashMap::new(),
             loopback_sink_inputs: HashMap::new(),
             mix_output_modules: HashMap::new(),
+            effects_chains: HashMap::new(),
             subscribe_process: None,
             unified_tx: None,
         }
@@ -96,20 +101,20 @@ impl PulseAudioPlugin {
             "building mixer snapshot"
         );
         let hardware_inputs = {
-            let v = DeviceEnumerator::list_inputs();
+            let v = DeviceEnumerator::list_inputs(self.connection.as_mut());
             if v.is_empty() {
                 tracing::warn!("build_snapshot: list_inputs returned empty (PA may be disconnected)");
             }
             v
         };
         let hardware_outputs = {
-            let v = DeviceEnumerator::list_outputs();
+            let v = DeviceEnumerator::list_outputs(self.connection.as_mut());
             if v.is_empty() {
                 tracing::warn!("build_snapshot: list_outputs returned empty (PA may be disconnected)");
             }
             v
         };
-        let applications = match self.apps.list_applications() {
+        let applications = match self.apps.list_applications(self.connection.as_mut()) {
             Ok(apps) => apps,
             Err(e) => {
                 tracing::warn!(err = %e, "build_snapshot: list_applications failed — returning empty list");
@@ -118,15 +123,30 @@ impl PulseAudioPlugin {
         };
 
         // Refresh peak levels for all known channel sinks before snapshotting.
+        // NOTE: These levels reflect the sink's configured volume, not the actual
+        // signal amplitude. True peak monitoring via PA_STREAM_PEAK_DETECT streams
+        // is a future improvement (requires unsafe callback wiring with libpulse).
         // channel_sinks is borrowed from self, so collect to avoid borrow conflict.
         let sink_pairs: Vec<(u32, String)> = self
             .channel_sinks
             .iter()
             .map(|(&id, name)| (id, name.clone()))
             .collect();
-        for (id, sink_name) in sink_pairs {
-            tracing::trace!(channel_id = id, sink = %sink_name, "refreshing peak level");
-            self.peaks.update_level(&sink_name, SourceId::Channel(id));
+        for (id, sink_name) in &sink_pairs {
+            tracing::trace!(channel_id = id, sink = %sink_name, "refreshing channel peak level");
+            self.peaks.update_level(sink_name, SourceId::Channel(*id));
+        }
+
+        // Refresh peak levels for all known mix sinks.
+        // Stored under SourceId::Mix so the UI can display VU meters in mix headers.
+        let mix_pairs: Vec<(u32, String)> = self
+            .mix_sinks
+            .iter()
+            .map(|(&id, name)| (id, name.clone()))
+            .collect();
+        for (id, sink_name) in &mix_pairs {
+            tracing::trace!(mix_id = id, sink = %sink_name, "refreshing mix peak level");
+            self.peaks.update_level(sink_name, SourceId::Mix(*id));
         }
 
         MixerSnapshot {
@@ -160,15 +180,15 @@ impl PulseAudioPlugin {
             }
 
             PluginCommand::ListHardwareInputs => {
-                Ok(PluginResponse::HardwareInputs(DeviceEnumerator::list_inputs()))
+                Ok(PluginResponse::HardwareInputs(DeviceEnumerator::list_inputs(self.connection.as_mut())))
             }
 
             PluginCommand::ListHardwareOutputs => {
-                Ok(PluginResponse::HardwareOutputs(DeviceEnumerator::list_outputs()))
+                Ok(PluginResponse::HardwareOutputs(DeviceEnumerator::list_outputs(self.connection.as_mut())))
             }
 
             PluginCommand::ListApplications => {
-                let apps = self.apps.list_applications()?;
+                let apps = self.apps.list_applications(self.connection.as_mut())?;
                 tracing::debug!(count = apps.len(), "listing applications");
                 Ok(PluginResponse::Applications(apps))
             }
@@ -191,11 +211,14 @@ impl PulseAudioPlugin {
                     }
                 }
 
+                let effects = crate::effects::EffectsParams::default();
+                self.effects_chains.insert(id, EffectsChain::new());
                 self.channels.push(ChannelInfo {
                     id,
                     name,
                     apps: vec![],
                     muted: false,
+                    effects,
                 });
 
                 Ok(PluginResponse::ChannelCreated { id })
@@ -223,6 +246,8 @@ impl PulseAudioPlugin {
                 }
 
                 self.routes.retain(|(src, _), _| *src != source);
+                self.effects_chains.remove(&id);
+                tracing::debug!(channel_id = id, "removed effects chain for channel");
                 Ok(PluginResponse::Ok)
             }
 
@@ -304,6 +329,10 @@ impl PulseAudioPlugin {
                         SourceId::Hardware(_) => {
                             tracing::warn!(source = ?source, "hardware source routing not yet supported");
                             self.routes.entry((source, mix)).or_default().enabled = true;
+                            return Ok(PluginResponse::Ok);
+                        }
+                        SourceId::Mix(_) => {
+                            tracing::warn!(source = ?source, "mix-as-source routing not supported");
                             return Ok(PluginResponse::Ok);
                         }
                     };
@@ -410,7 +439,7 @@ impl PulseAudioPlugin {
                 })?;
 
                 // Find the hardware output device_id by OutputId
-                let hw_outputs = DeviceEnumerator::list_outputs();
+                let hw_outputs = DeviceEnumerator::list_outputs(self.connection.as_mut());
                 let hw_device = hw_outputs.iter().find(|o| o.id == output).ok_or_else(|| {
                     tracing::error!(output_id = output, "hardware output not found");
                     OsgError::OutputNotFound(format!("output id {output}"))
@@ -530,6 +559,40 @@ impl PulseAudioPlugin {
                     if let Some(ch) = self.channels.iter_mut().find(|c| c.id == id) {
                         ch.muted = muted;
                     }
+                }
+                Ok(PluginResponse::Ok)
+            }
+
+            PluginCommand::SetEffectsParams { channel, params } => {
+                tracing::debug!(
+                    channel_id = channel,
+                    enabled = params.enabled,
+                    eq_freq = params.eq_freq_hz,
+                    comp_threshold = params.comp_threshold_db,
+                    "setting effects params for channel"
+                );
+                if let Some(chain) = self.effects_chains.get_mut(&channel) {
+                    chain.set_params(params.clone());
+                } else {
+                    tracing::warn!(channel_id = channel, "SetEffectsParams: no effects chain found for channel");
+                }
+                // Sync params into ChannelInfo so snapshots reflect current state
+                if let Some(ch) = self.channels.iter_mut().find(|c| c.id == channel) {
+                    ch.effects = params;
+                }
+                Ok(PluginResponse::Ok)
+            }
+
+            PluginCommand::SetEffectsEnabled { channel, enabled } => {
+                tracing::debug!(channel_id = channel, enabled, "setting effects enabled for channel");
+                if let Some(chain) = self.effects_chains.get_mut(&channel) {
+                    chain.set_enabled(enabled);
+                } else {
+                    tracing::warn!(channel_id = channel, "SetEffectsEnabled: no effects chain found for channel");
+                }
+                // Sync into ChannelInfo
+                if let Some(ch) = self.channels.iter_mut().find(|c| c.id == channel) {
+                    ch.effects.enabled = enabled;
                 }
                 Ok(PluginResponse::Ok)
             }

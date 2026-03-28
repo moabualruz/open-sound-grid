@@ -1,9 +1,11 @@
 pub mod app;
 pub mod config;
+pub mod effects;
 pub mod engine;
 pub mod error;
 pub mod plugin;
 pub mod plugins;
+pub mod presets;
 pub mod resolve;
 pub mod tray;
 pub mod ui;

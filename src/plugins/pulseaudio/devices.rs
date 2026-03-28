@@ -1,12 +1,20 @@
-//! PulseAudio device enumeration via `pactl`.
+//! PulseAudio device enumeration.
 //!
-//! Parses `pactl list sinks` and `pactl list sources` to discover
-//! hardware audio devices, filtering out virtual sinks/sources
-//! created by OpenSoundGrid or other software.
+//! Primary path: libpulse introspect API via `PulseConnection`.
+//! Fallback path (no connection, tests): `pactl list sinks/sources`.
+//!
+//! Filtering rules are shared between both paths:
+//! - Sinks whose name starts with `osg_` (OSG virtual sinks) are excluded.
+//! - Sinks whose name contains `_Apps` or `_OBS` (third-party virtual sinks) are excluded.
+//! - Sources that are PA monitor sources are excluded (introspect path uses the
+//!   `monitor_of_sink` field; pactl path filters the `.monitor` name suffix).
 
 use std::process::Command;
 
 use crate::plugin::api::{HardwareInput, HardwareOutput};
+
+use super::connection::PulseConnection;
+use super::introspect;
 
 /// Prefix used by all OSG-managed virtual sinks (channels and mixes).
 /// Checked via `starts_with` to avoid false positives on real hardware names.
@@ -17,7 +25,7 @@ const OSG_SINK_PREFIX: &str = "osg_";
 /// conventions are not under OSG's control.
 const SINK_EXCLUDE_PATTERNS: &[&str] = &["_Apps", "_OBS"];
 
-/// Filters applied to source names to exclude monitor sources.
+/// Filters applied to source names to exclude monitor sources (pactl fallback).
 const SOURCE_EXCLUDE_PATTERNS: &[&str] = &[".monitor"];
 
 /// Parsed fields from a single `pactl list sinks/sources` section.
@@ -32,18 +40,50 @@ struct PactlDevice {
 pub struct DeviceEnumerator;
 
 impl DeviceEnumerator {
-    /// List hardware audio outputs by parsing `pactl list sinks`.
+    /// List hardware audio outputs.
     ///
-    /// Filters out OSG-managed virtual sinks (those whose Name starts with
-    /// [`OSG_SINK_PREFIX`]) and third-party virtual sinks matching any pattern
-    /// in [`SINK_EXCLUDE_PATTERNS`].
-    pub fn list_outputs() -> Vec<HardwareOutput> {
-        tracing::debug!("enumerating hardware outputs via pactl list sinks");
+    /// Uses the libpulse introspect API when `conn` is provided.
+    /// Falls back to `pactl list sinks` when `conn` is `None` (e.g. in unit tests).
+    pub fn list_outputs(conn: Option<&mut PulseConnection>) -> Vec<HardwareOutput> {
+        if let Some(conn) = conn {
+            tracing::debug!("enumerating hardware outputs via libpulse introspect");
+            let results = introspect::list_sinks_sync(conn);
+            tracing::debug!(count = results.len(), "hardware outputs enumerated via introspect");
+            for dev in &results {
+                tracing::debug!(device_id = %dev.device_id, name = %dev.name, "found output device");
+            }
+            results
+        } else {
+            Self::list_outputs_pactl()
+        }
+    }
 
-        let output = match Command::new("pactl")
-            .args(["list", "sinks"])
-            .output()
-        {
+    /// List hardware audio inputs.
+    ///
+    /// Uses the libpulse introspect API when `conn` is provided.
+    /// Falls back to `pactl list sources` when `conn` is `None`.
+    pub fn list_inputs(conn: Option<&mut PulseConnection>) -> Vec<HardwareInput> {
+        if let Some(conn) = conn {
+            tracing::debug!("enumerating hardware inputs via libpulse introspect");
+            let results = introspect::list_sources_sync(conn);
+            tracing::debug!(count = results.len(), "hardware inputs enumerated via introspect");
+            for dev in &results {
+                tracing::debug!(name = %dev.name, "found input device");
+            }
+            results
+        } else {
+            Self::list_inputs_pactl()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // pactl fallback (used in tests and when connection is unavailable)
+    // ------------------------------------------------------------------
+
+    fn list_outputs_pactl() -> Vec<HardwareOutput> {
+        tracing::debug!("enumerating hardware outputs via pactl list sinks (fallback)");
+
+        let output = match Command::new("pactl").args(["list", "sinks"]).output() {
             Ok(o) => o,
             Err(e) => {
                 tracing::error!(err = %e, "pactl list sinks failed to execute");
@@ -62,9 +102,8 @@ impl DeviceEnumerator {
                     tracing::debug!(name = %d.name, reason = "osg prefix", "excluding virtual sink");
                     return false;
                 }
-                let excluded = SINK_EXCLUDE_PATTERNS
-                    .iter()
-                    .any(|pat| d.name.contains(pat));
+                let excluded =
+                    SINK_EXCLUDE_PATTERNS.iter().any(|pat| d.name.contains(pat));
                 if excluded {
                     tracing::trace!(sink_name = %d.name, "filtering out virtual sink");
                 }
@@ -78,24 +117,17 @@ impl DeviceEnumerator {
             })
             .collect();
 
-        tracing::debug!(count = results.len(), "hardware outputs enumerated");
+        tracing::debug!(count = results.len(), "hardware outputs enumerated via pactl");
         for dev in &results {
             tracing::debug!(device_id = %dev.device_id, name = %dev.name, "found output device");
         }
         results
     }
 
-    /// List hardware audio inputs by parsing `pactl list sources`.
-    ///
-    /// Filters out sources whose Name contains `.monitor` (PA creates
-    /// a monitor source for every sink automatically).
-    pub fn list_inputs() -> Vec<HardwareInput> {
-        tracing::debug!("enumerating hardware inputs via pactl list sources");
+    fn list_inputs_pactl() -> Vec<HardwareInput> {
+        tracing::debug!("enumerating hardware inputs via pactl list sources (fallback)");
 
-        let output = match Command::new("pactl")
-            .args(["list", "sources"])
-            .output()
-        {
+        let output = match Command::new("pactl").args(["list", "sources"]).output() {
             Ok(o) => o,
             Err(e) => {
                 tracing::error!(err = %e, "pactl list sources failed to execute");
@@ -110,9 +142,8 @@ impl DeviceEnumerator {
         let results: Vec<HardwareInput> = all_devices
             .into_iter()
             .filter(|d| {
-                let excluded = SOURCE_EXCLUDE_PATTERNS
-                    .iter()
-                    .any(|pat| d.name.contains(pat));
+                let excluded =
+                    SOURCE_EXCLUDE_PATTERNS.iter().any(|pat| d.name.contains(pat));
                 if excluded {
                     tracing::trace!(source_name = %d.name, "filtering out monitor source");
                 }
@@ -125,7 +156,7 @@ impl DeviceEnumerator {
             })
             .collect();
 
-        tracing::debug!(count = results.len(), "hardware inputs enumerated");
+        tracing::debug!(count = results.len(), "hardware inputs enumerated via pactl");
         for dev in &results {
             tracing::debug!(name = %dev.name, "found input device");
         }

@@ -3,10 +3,12 @@ use iced::Size;
 
 mod app;
 mod config;
+mod effects;
 mod engine;
 mod error;
 mod plugin;
 mod plugins;
+mod presets;
 mod resolve;
 mod tray;
 mod ui;

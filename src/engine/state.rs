@@ -94,7 +94,7 @@ mod tests {
     fn test_apply_snapshot_replaces_channels() {
         let mut state = MixerState::default();
         let snapshot = MixerSnapshot {
-            channels: vec![ChannelInfo { id: 1, name: "Test".into(), apps: vec![], muted: false }],
+            channels: vec![ChannelInfo { id: 1, name: "Test".into(), apps: vec![], muted: false, effects: crate::effects::EffectsParams::default() }],
             ..Default::default()
         };
         state.apply_snapshot(snapshot);

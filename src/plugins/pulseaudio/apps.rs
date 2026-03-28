@@ -4,6 +4,9 @@ use std::process::Command;
 use crate::error::{OsgError, Result};
 use crate::plugin::api::AudioApplication;
 
+use super::connection::PulseConnection;
+use super::introspect;
+
 /// Detects running audio applications via PulseAudio sink-inputs.
 pub struct AppDetector {
     next_app_id: u32,
@@ -21,35 +24,39 @@ impl AppDetector {
 
     /// List all running audio applications visible to PulseAudio.
     ///
-    /// Shells out to `pactl list sink-inputs` and parses the output.
+    /// Uses the libpulse introspect API when `conn` is provided.
+    /// Falls back to `pactl list sink-inputs` when `conn` is `None`.
+    ///
     /// Filters out sink-inputs with no `application.name` and those
     /// whose `media.name` contains "loopback" (our loopback modules).
     ///
     /// `app.id` is a stable internal counter independent of the PA sink-input
     /// index. The same sink-input gets the same stable id across refreshes;
     /// new sink-inputs receive a fresh incrementing id.
-    pub fn list_applications(&mut self) -> Result<Vec<AudioApplication>> {
-        tracing::debug!("listing audio applications via pactl");
+    pub fn list_applications(
+        &mut self,
+        conn: Option<&mut PulseConnection>,
+    ) -> Result<Vec<AudioApplication>> {
+        let raw_apps: Vec<AudioApplication> = if let Some(conn) = conn {
+            tracing::debug!("listing audio applications via libpulse introspect");
+            let entries = introspect::list_sink_inputs_sync(conn);
+            entries
+                .into_iter()
+                .map(|e| AudioApplication {
+                    id: e.stream_index,
+                    name: e.name,
+                    binary: e.binary,
+                    icon_name: e.icon_name,
+                    stream_index: e.stream_index,
+                    channel: None,
+                })
+                .collect()
+        } else {
+            tracing::debug!("listing audio applications via pactl (fallback)");
+            self.list_applications_pactl()?
+        };
 
-        let output = Command::new("pactl")
-            .args(["list", "sink-inputs"])
-            .output()
-            .map_err(|e| {
-                tracing::error!(err = %e, "pactl list sink-inputs failed to execute");
-                OsgError::PulseAudio(format!("failed to run pactl: {e}"))
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            tracing::error!(status = %output.status, stderr = %stderr, "pactl list sink-inputs returned error");
-            return Err(OsgError::PulseAudio(format!(
-                "pactl exited with {}: {stderr}",
-                output.status
-            )));
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut apps = parse_sink_inputs(&stdout);
+        let mut apps = raw_apps;
 
         // Assign stable IDs: reuse existing ID for known sink-input indices,
         // assign new ID for newly seen indices.
@@ -85,6 +92,35 @@ impl AppDetector {
             );
         }
         Ok(apps)
+    }
+
+    /// Fallback: list sink-inputs by spawning `pactl list sink-inputs`.
+    ///
+    /// Used when no `PulseConnection` is available (tests, edge cases).
+    fn list_applications_pactl(&self) -> Result<Vec<AudioApplication>> {
+        let output = Command::new("pactl")
+            .args(["list", "sink-inputs"])
+            .output()
+            .map_err(|e| {
+                tracing::error!(err = %e, "pactl list sink-inputs failed to execute");
+                OsgError::PulseAudio(format!("failed to run pactl: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(
+                status = %output.status,
+                stderr = %stderr,
+                "pactl list sink-inputs returned error"
+            );
+            return Err(OsgError::PulseAudio(format!(
+                "pactl exited with {}: {stderr}",
+                output.status
+            )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(parse_sink_inputs(&stdout))
     }
 }
 

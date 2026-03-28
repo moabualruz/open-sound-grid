@@ -1,4 +1,5 @@
 use iced::Color;
+use serde::{Deserialize, Serialize};
 
 // =============================================================================
 // OpenSoundGrid Theme — Claude/Anthropic Design Language
@@ -6,6 +7,18 @@ use iced::Color;
 // Wave Link 3.0 UX layout + Anthropic warm neutral tones
 // Dark default, light available
 // =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThemeMode {
+    Dark,
+    Light,
+}
+
+impl Default for ThemeMode {
+    fn default() -> Self {
+        Self::Dark
+    }
+}
 
 // --- Dark Theme (Default) ---
 
@@ -49,3 +62,88 @@ pub const MIX_AUX: Color = Color::from_rgb(0.769, 0.639, 0.353); // #c4a35a (gol
 pub const STATUS_CONNECTED: Color = Color::from_rgb(0.298, 0.686, 0.314); // green
 #[allow(dead_code)]
 pub const STATUS_ERROR: Color = Color::from_rgb(0.957, 0.263, 0.212); // red
+
+// --- Light Theme ---
+
+#[allow(dead_code)]
+pub const LIGHT_BG_PRIMARY: Color = Color::from_rgb(0.980, 0.976, 0.969);   // #faf9f7
+#[allow(dead_code)]
+pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(0.941, 0.933, 0.922); // #f0eeeb
+#[allow(dead_code)]
+pub const LIGHT_BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0);        // #ffffff
+#[allow(dead_code)]
+pub const LIGHT_BG_HOVER: Color = Color::from_rgb(0.918, 0.910, 0.898);     // #eae8e5
+#[allow(dead_code)]
+pub const LIGHT_TEXT_PRIMARY: Color = Color::from_rgb(0.102, 0.102, 0.102); // #1a1a1a
+#[allow(dead_code)]
+pub const LIGHT_TEXT_SECONDARY: Color = Color::from_rgb(0.420, 0.400, 0.376); // #6b6660
+#[allow(dead_code)]
+pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb(0.600, 0.580, 0.557);   // #99948e
+#[allow(dead_code)]
+pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875);       // #e5e3df
+
+// --- Theme-aware helpers ---
+
+#[allow(dead_code)]
+pub fn bg_primary(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BG_PRIMARY,
+        ThemeMode::Light => LIGHT_BG_PRIMARY,
+    }
+}
+
+#[allow(dead_code)]
+pub fn bg_secondary(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BG_SECONDARY,
+        ThemeMode::Light => LIGHT_BG_SECONDARY,
+    }
+}
+
+#[allow(dead_code)]
+pub fn bg_elevated(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BG_ELEVATED,
+        ThemeMode::Light => LIGHT_BG_ELEVATED,
+    }
+}
+
+#[allow(dead_code)]
+pub fn bg_hover(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BG_HOVER,
+        ThemeMode::Light => LIGHT_BG_HOVER,
+    }
+}
+
+#[allow(dead_code)]
+pub fn text_primary(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => TEXT_PRIMARY,
+        ThemeMode::Light => LIGHT_TEXT_PRIMARY,
+    }
+}
+
+#[allow(dead_code)]
+pub fn text_secondary(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => TEXT_SECONDARY,
+        ThemeMode::Light => LIGHT_TEXT_SECONDARY,
+    }
+}
+
+#[allow(dead_code)]
+pub fn text_muted(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => TEXT_MUTED,
+        ThemeMode::Light => LIGHT_TEXT_MUTED,
+    }
+}
+
+#[allow(dead_code)]
+pub fn border(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BORDER,
+        ThemeMode::Light => LIGHT_BORDER,
+    }
+}
