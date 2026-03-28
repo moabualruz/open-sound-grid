@@ -17,6 +17,9 @@ mod modules;
 mod peaks;
 
 use std::collections::HashMap;
+use std::io::BufRead;
+use std::process::{Child, Stdio};
+use std::sync::mpsc as std_mpsc;
 use std::thread;
 use std::time::Duration;
 
@@ -53,6 +56,11 @@ pub struct PulseAudioPlugin {
     pending_events: Vec<PluginEvent>,
     /// Last emitted peak levels, used to suppress unchanged/insignificant updates.
     last_emitted_peaks: HashMap<SourceId, f32>,
+    /// `pactl subscribe` child process for PA event notifications.
+    subscribe_process: Option<Child>,
+    /// Sender for pushing PA subscribe events into the plugin thread's unified channel.
+    /// Set via `set_event_sender()` by the plugin manager after init.
+    unified_tx: Option<std_mpsc::Sender<crate::plugin::PluginThreadMsg>>,
 }
 
 // SAFETY: PulseAudioPlugin is moved into the plugin thread and only accessed there.
@@ -79,17 +87,40 @@ impl PulseAudioPlugin {
             mix_output_modules: HashMap::new(),
             pending_events: Vec::new(),
             last_emitted_peaks: HashMap::new(),
+            subscribe_process: None,
+            unified_tx: None,
         }
     }
 
     fn build_snapshot(&self) -> MixerSnapshot {
+        let hardware_inputs = {
+            let v = DeviceEnumerator::list_inputs();
+            if v.is_empty() {
+                tracing::warn!("build_snapshot: list_inputs returned empty (PA may be disconnected)");
+            }
+            v
+        };
+        let hardware_outputs = {
+            let v = DeviceEnumerator::list_outputs();
+            if v.is_empty() {
+                tracing::warn!("build_snapshot: list_outputs returned empty (PA may be disconnected)");
+            }
+            v
+        };
+        let applications = match self.apps.list_applications() {
+            Ok(apps) => apps,
+            Err(e) => {
+                tracing::warn!(err = %e, "build_snapshot: list_applications failed — returning empty list");
+                Vec::new()
+            }
+        };
         MixerSnapshot {
             channels: self.channels.clone(),
             mixes: self.mixes.clone(),
             routes: self.routes.clone(),
-            hardware_inputs: DeviceEnumerator::list_inputs(),
-            hardware_outputs: DeviceEnumerator::list_outputs(),
-            applications: self.apps.list_applications().unwrap_or_default(),
+            hardware_inputs,
+            hardware_outputs,
+            applications,
             peak_levels: self.peaks.get_levels(),
         }
     }
@@ -280,16 +311,31 @@ impl PulseAudioPlugin {
                     self.loopback_modules.insert((source, mix), module_id);
 
                     // Small delay for PipeWire/PA to register the sink-input
+                    tracing::debug!(module_id = module_id, "waiting 100ms for PA to register sink-input (attempt 1)");
                     thread::sleep(Duration::from_millis(100));
 
-                    match self.modules.find_loopback_sink_input(module_id)? {
-                        Some(sink_input_idx) => {
-                            tracing::debug!(module_id = module_id, sink_input_idx = sink_input_idx, "found loopback sink-input");
-                            self.loopback_sink_inputs.insert((source, mix), sink_input_idx);
+                    let sink_input_idx = match self.modules.find_loopback_sink_input(module_id)? {
+                        Some(idx) => {
+                            tracing::debug!(module_id = module_id, sink_input_idx = idx, "found loopback sink-input on attempt 1");
+                            Some(idx)
                         }
                         None => {
-                            tracing::warn!(module_id = module_id, "loopback sink-input not found after creation");
+                            tracing::warn!(module_id = module_id, "loopback sink-input not found on attempt 1 — retrying after 100ms");
+                            thread::sleep(Duration::from_millis(100));
+                            match self.modules.find_loopback_sink_input(module_id)? {
+                                Some(idx) => {
+                                    tracing::debug!(module_id = module_id, sink_input_idx = idx, "found loopback sink-input on attempt 2");
+                                    Some(idx)
+                                }
+                                None => {
+                                    tracing::warn!(module_id = module_id, "loopback sink-input not found after 2 attempts — volume control unavailable for this route");
+                                    None
+                                }
+                            }
                         }
+                    };
+                    if let Some(idx) = sink_input_idx {
+                        self.loopback_sink_inputs.insert((source, mix), idx);
                     }
 
                     self.routes.entry((source, mix)).or_default().enabled = true;
@@ -425,6 +471,24 @@ impl PulseAudioPlugin {
                 tracing::debug!(mix_id = mix, muted = muted, "setting mix muted");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.muted = muted;
+                    // Apply via PA: mute the mix null sink
+                    if let Some(sink_name) = self.mix_sinks.get(&mix) {
+                        let mute_val = if muted { "1" } else { "0" };
+                        let output = std::process::Command::new("pactl")
+                            .args(["set-sink-mute", sink_name, mute_val])
+                            .output();
+                        match output {
+                            Ok(o) if o.status.success() => {
+                                tracing::debug!(mix_id = mix, muted, sink = %sink_name, "PA set-sink-mute applied to mix");
+                            }
+                            Ok(o) => {
+                                tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed on mix");
+                            }
+                            Err(e) => {
+                                tracing::warn!(mix_id = mix, err = %e, "PA set-sink-mute command error on mix");
+                            }
+                        }
+                    }
                     Ok(PluginResponse::Ok)
                 } else {
                     tracing::error!(mix_id = mix, "mix not found for SetMixMuted");
@@ -472,6 +536,16 @@ impl PulseAudioPlugin {
     }
 }
 
+impl Drop for PulseAudioPlugin {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.subscribe_process.take() {
+            tracing::debug!("dropping PulseAudioPlugin — killing subscribe process");
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 impl AudioPlugin for PulseAudioPlugin {
     fn info(&self) -> PluginInfo {
         PluginInfo {
@@ -509,6 +583,62 @@ impl AudioPlugin for PulseAudioPlugin {
         Ok(())
     }
 
+    fn set_event_sender(&mut self, tx: std_mpsc::Sender<crate::plugin::PluginThreadMsg>) {
+        use crate::plugin::manager::PaSubscribeKind;
+        use crate::plugin::PluginThreadMsg;
+
+        tracing::debug!("setting PA event sender — spawning pactl subscribe");
+        self.unified_tx = Some(tx.clone());
+
+        // Spawn `pactl subscribe` for real-time PA event notifications
+        match std::process::Command::new("pactl")
+            .arg("subscribe")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                // Background thread reads pactl subscribe lines and pushes
+                // directly into the plugin thread's unified channel
+                std::thread::Builder::new()
+                    .name("osg-pa-subscribe".into())
+                    .spawn(move || {
+                        let reader = std::io::BufReader::new(stdout);
+                        for line in reader.lines() {
+                            let Ok(line) = line else { break };
+                            tracing::trace!(line = %line, "pactl subscribe raw event");
+                            let kind = if line.contains("sink-input") {
+                                Some(PaSubscribeKind::SinkInput)
+                            } else if line.contains("'change' on sink")
+                                || line.contains("'new' on sink")
+                                || line.contains("'remove' on sink")
+                            {
+                                Some(PaSubscribeKind::Sink)
+                            } else if line.contains("source") {
+                                Some(PaSubscribeKind::Source)
+                            } else {
+                                None
+                            };
+                            if let Some(k) = kind {
+                                tracing::debug!(kind = ?k, "PA subscribe event parsed");
+                                if tx.send(PluginThreadMsg::PaEvent(k)).is_err() {
+                                    break; // unified channel closed
+                                }
+                            }
+                        }
+                        tracing::debug!("pactl subscribe reader thread exiting");
+                    })
+                    .ok();
+                self.subscribe_process = Some(child);
+                tracing::info!("pactl subscribe started — real-time PA events active");
+            }
+            Err(e) => {
+                tracing::warn!(err = %e, "failed to spawn pactl subscribe — no live PA events");
+            }
+        }
+    }
+
     fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
         tracing::debug!(cmd = ?cmd, "received plugin command");
         let result = self.dispatch_command(cmd);
@@ -519,43 +649,24 @@ impl AudioPlugin for PulseAudioPlugin {
     }
 
     fn poll_events(&mut self) -> Vec<PluginEvent> {
-        tracing::trace!(channel_count = self.channels.len(), "polling events");
-
-        // Update peak levels for all channel sinks
-        for channel in &self.channels {
-            if let Some(sink_name) = self.channel_sinks.get(&channel.id) {
-                self.peaks.update_level(sink_name, SourceId::Channel(channel.id));
-            }
-        }
-
-        let levels = self.peaks.get_levels();
-        if !levels.is_empty() {
-            let changed = levels
-                .iter()
-                .filter(|(source, level)| {
-                    let prev = self.last_emitted_peaks.get(source).copied().unwrap_or(0.0);
-                    (*level - prev).abs() > 0.01
-                })
-                .count();
-            tracing::trace!(changed_count = changed, total = levels.len(), "peak levels coalesced");
-            if changed > 0 {
-                self.last_emitted_peaks = levels.clone();
-                self.pending_events.push(PluginEvent::PeakLevels(levels));
-            }
-        }
-
+        // Called once after init to drain any startup events.
+        // After that, all events flow through the unified channel (no polling).
         let events: Vec<PluginEvent> = self.pending_events.drain(..).collect();
-        tracing::trace!(event_count = events.len(), "poll_events returning events");
-        for event in &events {
-            tracing::trace!(event = ?event, "emitting plugin event");
-        }
+        tracing::trace!(event_count = events.len(), "poll_events draining pending events");
         events
     }
 
     fn cleanup(&mut self) -> Result<()> {
         let module_count = self.modules.module_count();
         tracing::info!(module_count = module_count, "PulseAudio plugin cleaning up");
-        // unload_all internally logs warn! for each failed unload
+
+        // Kill the pactl subscribe child process
+        if let Some(mut child) = self.subscribe_process.take() {
+            tracing::debug!("killing pactl subscribe process");
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+
         self.modules.unload_all();
         if let Some(mut conn) = self.connection.take() {
             conn.disconnect();

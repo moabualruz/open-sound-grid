@@ -1,6 +1,6 @@
 use std::sync::{Mutex, OnceLock};
 
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{button, column, container, row, text, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
@@ -332,10 +332,30 @@ impl App {
         tracing::trace!("rendering view");
 
         // Header — flush, same bg as sidebar for visual continuity
+        let header_title = if self.engine.is_connected() {
+            "OpenSoundGrid — PulseAudio"
+        } else {
+            "OpenSoundGrid"
+        };
+        let compact_btn = button(
+            text("⊟").size(13).color(ui::theme::TEXT_SECONDARY),
+        )
+        .on_press(Message::SettingsToggled)
+        .style(|_theme: &Theme, _status| button::Style {
+            background: Some(iced::Background::Color(ui::theme::BG_HOVER)),
+            border: iced::Border {
+                radius: iced::border::Radius::from(4.0),
+                ..Default::default()
+            },
+            text_color: ui::theme::TEXT_SECONDARY,
+            ..Default::default()
+        })
+        .padding([2, 8]);
         let header = container(
             row![
-                text("OpenSoundGrid").size(18).color(ui::theme::TEXT_PRIMARY),
+                text(header_title).size(18).color(ui::theme::TEXT_PRIMARY),
                 Space::new().width(Length::Fill),
+                compact_btn,
             ]
             .padding([10, 16])
             .align_y(iced::Alignment::Center),
@@ -369,22 +389,41 @@ impl App {
             &self.engine.state.channels,
         );
 
-        let status_text = if self.engine.is_connected() {
-            "Connected"
+        let connected = self.engine.is_connected();
+        let channel_count = self.engine.state.channels.len();
+        let route_count = self.engine.state.routes.len();
+        tracing::trace!(connected, channels = channel_count, routes = route_count, "rendering status bar");
+
+        let (status_dot_color, status_text) = if connected {
+            (ui::theme::STATUS_CONNECTED, "Connected")
         } else {
-            "Disconnected"
+            (ui::theme::STATUS_ERROR, "Disconnected")
         };
+        let status_dot = container(Space::new())
+            .width(Length::Fixed(8.0))
+            .height(Length::Fixed(8.0))
+            .style(move |_: &Theme| container::Style {
+                background: Some(iced::Background::Color(status_dot_color)),
+                border: iced::Border {
+                    radius: iced::border::Radius::from(4.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
 
         // Status bar — same bg as header/sidebar for visual frame
         let status_bar = container(
             row![
+                status_dot,
+                Space::new().width(Length::Fixed(6.0)),
                 text(status_text).size(11).color(ui::theme::TEXT_SECONDARY),
                 Space::new().width(Length::Fill),
-                text(format!("{} channels", self.engine.state.channels.len()))
+                text(format!("{} channels  ·  {} routes  ·  20ms latency", channel_count, route_count))
                     .size(11)
                     .color(ui::theme::TEXT_MUTED),
             ]
-            .padding([4, 16]),
+            .padding([4, 16])
+            .align_y(iced::Alignment::Center),
         )
         .width(Length::Fill)
         .style(|_theme: &Theme| container::Style {

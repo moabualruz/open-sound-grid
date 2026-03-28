@@ -10,6 +10,7 @@ pub mod api;
 pub mod manager;
 
 pub use api::*;
+pub use manager::{PaSubscribeKind, PluginThreadMsg};
 
 use crate::error::Result;
 
@@ -68,8 +69,15 @@ pub trait AudioPlugin: Send {
     /// Handle a command from the core mixer engine.
     fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse>;
 
-    /// Poll for asynchronous events (called periodically from the plugin thread).
+    /// Poll for asynchronous events (called once after init to drain initial state).
     fn poll_events(&mut self) -> Vec<PluginEvent>;
+
+    /// Provide the plugin with a sender for pushing PA subscribe events into the
+    /// plugin thread's unified channel. Plugins that use `pactl subscribe` or similar
+    /// background event sources should wire them to this sender.
+    ///
+    /// Default: no-op (plugin doesn't produce background events).
+    fn set_event_sender(&mut self, _tx: std::sync::mpsc::Sender<PluginThreadMsg>) {}
 
     /// Clean up: unload modules, disconnect.
     fn cleanup(&mut self) -> Result<()>;

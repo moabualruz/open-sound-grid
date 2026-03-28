@@ -38,13 +38,19 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
         // Corner cell (channel name column)
         container(text("").size(12))
             .width(Length::Fixed(120.0))
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(80.0))
     ]
     .spacing(1);
 
     for (i, mix) in state.mixes.iter().enumerate() {
         let color = MIX_COLORS[i % MIX_COLORS.len()];
-        header_row = header_row.push(mix_header(&mix.name, color));
+        header_row = header_row.push(mix_header(
+            mix.id,
+            &mix.name,
+            color,
+            mix.master_volume,
+            mix.muted,
+        ));
     }
 
     // "+ Add Mix" button in header row
@@ -74,9 +80,9 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
     header_row = header_row.push(
         container(add_mix_btn)
             .width(Length::Fixed(140.0))
-            .height(Length::Fixed(48.0))
+            .height(Length::Fixed(80.0))
             .center_x(Length::Fixed(140.0))
-            .center_y(Length::Fixed(48.0)),
+            .center_y(Length::Fixed(80.0)),
     );
 
     grid = grid.push(
@@ -145,7 +151,15 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
 }
 
 /// Header cell for a mix column.
-fn mix_header<'a>(name: &str, color: iced::Color) -> Element<'a, Message> {
+fn mix_header<'a>(
+    mix_id: u32,
+    name: &str,
+    color: iced::Color,
+    master_volume: f32,
+    muted: bool,
+) -> Element<'a, Message> {
+    tracing::trace!(mix_id, name = %name, volume = master_volume, muted, "rendering mix header");
+
     let color_bar = container(text("").size(1))
         .width(Length::Fill)
         .height(Length::Fixed(3.0))
@@ -154,6 +168,38 @@ fn mix_header<'a>(name: &str, color: iced::Color) -> Element<'a, Message> {
             ..Default::default()
         });
 
+    let mute_label = if muted { "M" } else { " " };
+    let mute_btn = button(
+        text(mute_label)
+            .size(9)
+            .center(),
+    )
+    .width(16)
+    .height(16)
+    .on_press(Message::MixMuteToggled(mix_id))
+    .padding(0)
+    .style(move |_: &Theme, _status| button::Style {
+        background: if muted {
+            Some(Background::Color(ACCENT))
+        } else {
+            None
+        },
+        text_color: TEXT_PRIMARY,
+        border: Border {
+            color: BORDER,
+            width: 1.0,
+            radius: 2.0.into(),
+        },
+        ..Default::default()
+    });
+
+    let volume_slider = audio_slider(master_volume, move |v| {
+        Message::MixMasterVolumeChanged {
+            mix: mix_id,
+            volume: v,
+        }
+    });
+
     container(
         column![
             color_bar,
@@ -161,12 +207,15 @@ fn mix_header<'a>(name: &str, color: iced::Color) -> Element<'a, Message> {
                 .size(12)
                 .color(TEXT_PRIMARY)
                 .center(),
+            row![mute_btn, volume_slider]
+                .spacing(4)
+                .align_y(iced::Alignment::Center),
         ]
         .spacing(4)
         .align_x(iced::Alignment::Center),
     )
     .width(Length::Fixed(140.0))
-    .height(Length::Fixed(48.0))
+    .height(Length::Fixed(80.0))
     .padding([4, 8])
     .style(|_: &Theme| container::Style {
         background: Some(Background::Color(BG_ELEVATED)),
