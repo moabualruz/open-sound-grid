@@ -265,4 +265,59 @@ Sink Input #101
         let apps = parse_sink_inputs("");
         assert!(apps.is_empty());
     }
+
+    /// A sink-input whose `media.name` starts with "Loopback from …" must be
+    /// filtered out regardless of whether it has an `application.name`.
+    #[test]
+    fn loopback_from_prefix_is_filtered() {
+        let input = r#"Sink Input #10
+	Driver: protocol-native.c
+	State: RUNNING
+	Sink: 0
+	Properties:
+		media.name = "Loopback from osg_Music_ch"
+		application.name = "PulseAudio"
+		application.process.binary = "pulseaudio"
+"#;
+        let apps = parse_sink_inputs(input);
+        assert!(
+            apps.is_empty(),
+            "loopback sink-input should be filtered out"
+        );
+    }
+
+    /// A normal Firefox entry (no loopback media) must be kept.
+    #[test]
+    fn non_loopback_entry_is_kept() {
+        let input = r#"Sink Input #20
+	Driver: protocol-native.c
+	State: RUNNING
+	Sink: 0
+	Properties:
+		media.name = "Audio Playback"
+		application.name = "Firefox"
+		application.process.binary = "firefox"
+"#;
+        let apps = parse_sink_inputs(input);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "Firefox");
+    }
+
+    /// A sink-input with no `application.name` property must be filtered out.
+    #[test]
+    fn entry_without_app_name_is_filtered() {
+        let input = r#"Sink Input #30
+	Driver: protocol-native.c
+	State: RUNNING
+	Sink: 0
+	Properties:
+		media.name = "Background Music"
+		application.process.binary = "some-daemon"
+"#;
+        let apps = parse_sink_inputs(input);
+        assert!(
+            apps.is_empty(),
+            "entry without application.name should be filtered out"
+        );
+    }
 }

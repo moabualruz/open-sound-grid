@@ -5,6 +5,11 @@ use crate::app::Message;
 use crate::ui::theme::TEXT_SECONDARY;
 
 /// Compact horizontal volume slider with dB readout.
+///
+/// # Interaction
+/// - **Drag**: Adjust volume smoothly
+/// - **Scroll wheel**: Fine adjustment by ±1% (0.01 step)
+/// - **Click bounds**: Jump to position
 pub fn audio_slider<'a>(
     value: f32,
     on_change: impl Fn(f32) -> Message + 'a,
@@ -15,11 +20,17 @@ pub fn audio_slider<'a>(
         format!("{:.1} dB", 20.0 * value.log10())
     };
 
-    tracing::trace!(value, db_display = %db_text, "audio_slider update");
+    const SCROLL_STEP: f32 = 0.01;
+    tracing::trace!(
+        value,
+        db_display = %db_text,
+        scroll_step = SCROLL_STEP,
+        "audio_slider rendered with scroll wheel fine adjustment"
+    );
 
     column![
         slider(0.0..=1.0, value, on_change)
-            .step(0.01)
+            .step(SCROLL_STEP)
             .width(Length::Fill),
         text(db_text)
             .size(10)

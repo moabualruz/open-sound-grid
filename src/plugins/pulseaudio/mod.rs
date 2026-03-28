@@ -67,6 +67,7 @@ unsafe impl Send for PulseAudioPlugin {}
 
 impl PulseAudioPlugin {
     pub fn new() -> Self {
+        tracing::debug!("creating PulseAudioPlugin instance");
         Self {
             connection: None,
             modules: ModuleManager::new(),
@@ -88,6 +89,12 @@ impl PulseAudioPlugin {
     }
 
     fn build_snapshot(&mut self) -> MixerSnapshot {
+        tracing::debug!(
+            channels = self.channels.len(),
+            mixes = self.mixes.len(),
+            routes = self.routes.len(),
+            "building mixer snapshot"
+        );
         let hardware_inputs = {
             let v = DeviceEnumerator::list_inputs();
             if v.is_empty() {

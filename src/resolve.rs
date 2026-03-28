@@ -255,4 +255,27 @@ mod tests {
         let (name, _icon) = resolver.resolve("firefox", None);
         assert_eq!(name, "Mozilla Firefox");
     }
+
+    /// `flatpak run org.mozilla.firefox` — `flatpak` is the actual binary being
+    /// executed. The current implementation does not skip `flatpak` the way it
+    /// skips `env`, so it returns `"flatpak"` as the binary name.
+    #[test]
+    fn test_extract_binary_flatpak() {
+        assert_eq!(
+            extract_binary("flatpak run org.mozilla.firefox"),
+            Some("flatpak".to_string()),
+            "flatpak is the real binary; the app ID is an argument"
+        );
+    }
+
+    /// Multiple `KEY=VAL` tokens after `env` should all be skipped; the first
+    /// non-assignment token is the binary.
+    #[test]
+    fn test_extract_binary_with_multiple_env_vars() {
+        assert_eq!(
+            extract_binary("env GDK_BACKEND=x11 QT_QPA_PLATFORM=xcb discord"),
+            Some("discord".to_string()),
+            "binary should be extracted after skipping env and all KEY=VAL tokens"
+        );
+    }
 }

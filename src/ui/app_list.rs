@@ -56,6 +56,7 @@ fn app_entry<'a>(
     app: &'a AudioApplication,
     channels: &'a [ChannelInfo],
 ) -> Element<'a, Message> {
+    tracing::trace!(app_name = %app.name, stream_index = app.stream_index, "rendering app entry");
     let name = text(&app.name).size(11).color(TEXT_PRIMARY);
     let stream_idx = app.stream_index;
 

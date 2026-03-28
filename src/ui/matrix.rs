@@ -27,6 +27,12 @@ const MIX_COLORS: &[iced::Color] = &[
 
 /// Build the full matrix grid from mixer state.
 pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
+    tracing::trace!(
+        channels = state.channels.len(),
+        mixes = state.mixes.len(),
+        routes = state.routes.len(),
+        "rendering matrix grid"
+    );
     if state.mixes.is_empty() && state.channels.is_empty() {
         return empty_matrix();
     }
@@ -200,9 +206,37 @@ fn mix_header<'a>(
         }
     });
 
+    let remove_btn = button(
+        text("×")
+            .size(10)
+            .color(TEXT_MUTED)
+            .center(),
+    )
+    .width(12)
+    .height(12)
+    .on_press(Message::RemoveMix(mix_id))
+    .padding(0)
+    .style(|_: &Theme, status| button::Style {
+        background: match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                Some(Background::Color(BG_HOVER))
+            }
+            _ => None,
+        },
+        text_color: TEXT_MUTED,
+        ..Default::default()
+    });
+
+    tracing::trace!(mix_id, "rendering mix remove button");
+
     container(
         column![
             color_bar,
+            row![
+                Space::new().width(Length::Fill),
+                remove_btn,
+            ]
+            .align_y(iced::Alignment::Center),
             text(name.to_string())
                 .size(12)
                 .color(TEXT_PRIMARY)
@@ -211,7 +245,7 @@ fn mix_header<'a>(
                 .spacing(4)
                 .align_y(iced::Alignment::Center),
         ]
-        .spacing(4)
+        .spacing(2)
         .align_x(iced::Alignment::Center),
     )
     .width(Length::Fixed(140.0))
@@ -231,6 +265,7 @@ fn mix_header<'a>(
 
 /// Channel name label on the left side of each row.
 fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, Message> {
+    tracing::trace!(name, muted, source = ?source, "rendering channel label");
     let name_color = if muted { TEXT_MUTED } else { TEXT_PRIMARY };
 
     let mute_label = if muted { "M" } else { " " };
@@ -258,16 +293,50 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
         ..Default::default()
     });
 
-    container(
-        row![
-            mute_btn,
-            text(name.to_string())
-                .size(12)
-                .color(name_color),
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center),
-    )
+    // Remove button — only shown for named channels (SourceId::Channel)
+    let remove_btn: Option<Element<'a, Message>> = if let SourceId::Channel(channel_id) = source {
+        tracing::trace!(channel_id, "rendering channel remove button");
+        Some(
+            button(
+                text("×")
+                    .size(10)
+                    .color(TEXT_MUTED)
+                    .center(),
+            )
+            .width(12)
+            .height(12)
+            .on_press(Message::RemoveChannel(channel_id))
+            .padding(0)
+            .style(|_: &Theme, status| button::Style {
+                background: match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Some(Background::Color(BG_HOVER))
+                    }
+                    _ => None,
+                },
+                text_color: TEXT_MUTED,
+                ..Default::default()
+            })
+            .into(),
+        )
+    } else {
+        None
+    };
+
+    let mut label_row = row![
+        mute_btn,
+        text(name.to_string())
+            .size(12)
+            .color(name_color),
+    ]
+    .spacing(4)
+    .align_y(iced::Alignment::Center);
+
+    if let Some(btn) = remove_btn {
+        label_row = label_row.push(Space::new().width(Length::Fill)).push(btn);
+    }
+
+    container(label_row)
     .width(Length::Fixed(120.0))
     .height(Length::Fixed(72.0))
     .padding([4, 8])
@@ -293,6 +362,7 @@ fn matrix_cell<'a>(
     route: Option<&'a crate::plugin::api::RouteState>,
     peak: f32,
 ) -> Element<'a, Message> {
+    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), peak, "rendering matrix cell");
     let cell_content: Element<'a, Message> = match route {
         Some(route) => {
             let vol = route.volume;
@@ -336,7 +406,6 @@ fn matrix_cell<'a>(
         }
         None => {
             // Empty cell -- source not routed to this mix; clicking creates the route
-            tracing::trace!(source = ?source, mix = mix_id, has_route = false, "Rendering matrix cell");
             button(
                 text("+")
                     .size(16)
@@ -386,6 +455,7 @@ fn matrix_cell<'a>(
 
 /// Shown when the matrix is completely empty.
 fn empty_matrix<'a>() -> Element<'a, Message> {
+    tracing::trace!("rendering empty matrix placeholder");
     container(
         column![
             text("No channels or mixes configured").size(14).color(TEXT_SECONDARY),

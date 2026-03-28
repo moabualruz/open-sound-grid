@@ -36,6 +36,7 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Ele
 }
 
 fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {
+    tracing::trace!(input_count = hardware_inputs.len(), "rendering expanded sidebar");
     let collapse_btn = button(text("«").size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
@@ -101,6 +102,7 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Messag
 }
 
 fn collapsed_view<'a>() -> Element<'a, Message> {
+    tracing::trace!("rendering collapsed sidebar");
     let settings_btn = button(text("*").size(16).center())
         .width(32)
         .on_press(Message::SettingsToggled)

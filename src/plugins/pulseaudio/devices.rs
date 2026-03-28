@@ -310,4 +310,62 @@ Source #3
         let devices = parse_sections("", "Sink");
         assert!(devices.is_empty());
     }
+
+    /// Hardware sinks whose names happen to contain `_ch` or `_mix` as
+    /// substrings must NOT be excluded — only the `osg_` prefix matters.
+    #[test]
+    fn test_osg_prefix_filter_does_not_exclude_real_hardware() {
+        let pactl_output = "\
+Sink #0
+\tState: RUNNING
+\tName: osg_Music_ch
+\tDescription: OSG Music Channel
+\tDriver: module-null-sink.c
+
+Sink #1
+\tState: RUNNING
+\tName: osg_Monitor_mix
+\tDescription: OSG Monitor Mix
+\tDriver: module-null-sink.c
+
+Sink #2
+\tState: RUNNING
+\tName: alsa_output.usb-device_ch_stereo
+\tDescription: USB Audio Device Stereo
+\tDriver: module-alsa-card.c
+
+Sink #3
+\tState: RUNNING
+\tName: alsa_output.pci-0000_00_1f.3.analog-stereo
+\tDescription: Built-in Audio Analog Stereo
+\tDriver: module-alsa-card.c
+";
+
+        let devices = parse_sections(pactl_output, "Sink");
+        assert_eq!(devices.len(), 4, "should parse all 4 sink sections");
+
+        let filtered: Vec<_> = devices
+            .iter()
+            .filter(|d| {
+                if d.name.starts_with(OSG_SINK_PREFIX) {
+                    return false;
+                }
+                !SINK_EXCLUDE_PATTERNS
+                    .iter()
+                    .any(|pat| d.name.contains(pat))
+            })
+            .collect();
+
+        assert_eq!(filtered.len(), 2, "only the 2 real hardware sinks should pass the filter");
+        assert_eq!(
+            filtered[0].name,
+            "alsa_output.usb-device_ch_stereo",
+            "usb sink with _ch in name must NOT be excluded"
+        );
+        assert_eq!(
+            filtered[1].name,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo",
+            "normal PCI sink must NOT be excluded"
+        );
+    }
 }

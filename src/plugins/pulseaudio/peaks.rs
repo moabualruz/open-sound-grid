@@ -197,4 +197,31 @@ Sink #2
         let pct = parse_volume_percentage(" front-left: 99999 / 153% / 5.00 dB");
         assert!((pct.unwrap() - 1.0).abs() < f32::EPSILON);
     }
+
+    #[test]
+    fn parse_volume_percentage_stereo_full_line() {
+        // Full Volume: line fragment as it appears after stripping the "Volume:" prefix.
+        let pct = parse_volume_percentage(
+            "  front-left: 32768 /  50% / -18.06 dB, front-right: 32768 /  50% / -18.06 dB",
+        );
+        assert!(
+            (pct.unwrap() - 0.5).abs() < f32::EPSILON,
+            "expected 0.5 for 50%"
+        );
+    }
+
+    #[test]
+    fn parse_volume_percentage_zero_mono() {
+        let pct = parse_volume_percentage("  mono: 0 /   0% / -inf dB");
+        assert!(
+            (pct.unwrap() - 0.0).abs() < f32::EPSILON,
+            "expected 0.0 for 0%"
+        );
+    }
+
+    #[test]
+    fn parse_volume_percentage_empty_returns_none() {
+        let pct = parse_volume_percentage("");
+        assert!(pct.is_none(), "empty input should return None");
+    }
 }

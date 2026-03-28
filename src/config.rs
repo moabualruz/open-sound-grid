@@ -114,3 +114,16 @@ impl AppConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_has_expected_channels_and_mixes() {
+        let config = AppConfig::default();
+        assert_eq!(config.channels.len(), 4, "default config must have 4 channels");
+        assert_eq!(config.mixes.len(), 2, "default config must have 2 mixes");
+        assert_eq!(config.audio.latency_ms, 20, "default latency must be 20 ms");
+    }
+}

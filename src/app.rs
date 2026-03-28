@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ChannelConfig, MixConfig};
 use crate::engine::MixerEngine;
-use crate::plugin::api::{MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
+use crate::plugin::api::{ChannelId, MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
 use crate::resolve::AppResolver;
 use crate::tray;
 use crate::ui;
@@ -57,6 +57,10 @@ pub enum Message {
     CreateChannel(String),
     CreateMix(String),
 
+    // Channel/mix removal
+    RemoveChannel(ChannelId),
+    RemoveMix(MixId),
+
     // Plugin events (from async subscription — zero latency)
     PluginStateRefreshed(MixerSnapshot),
     PluginDevicesChanged,
@@ -72,7 +76,7 @@ pub enum Message {
     TrayMuteAll,
 
     // Output device selection
-    OutputDeviceSelected(String), // device name (resolved to id on update)
+    MixOutputDeviceSelected { mix: MixId, device_name: String },
 
     // UI
     SettingsToggled,
@@ -86,6 +90,8 @@ pub struct App {
     pub app_resolver: AppResolver,
     pub settings_open: bool,
     pub sidebar_collapsed: bool,
+    /// (mix_name, device_name) pairs waiting to be applied after first StateRefreshed.
+    pub pending_output_restores: Vec<(String, String)>,
 }
 
 impl App {
@@ -94,17 +100,22 @@ impl App {
         let config = AppConfig::load();
         let app_resolver = AppResolver::new();
 
+        let sidebar_collapsed = config.ui.compact_mode;
+        tracing::debug!(compact_mode = config.ui.compact_mode, "applying compact_mode from config");
+
         Self {
             config,
             engine: MixerEngine::new(),
             app_resolver,
             settings_open: false,
-            sidebar_collapsed: false,
+            sidebar_collapsed,
+            pending_output_restores: Vec::new(),
         }
     }
 
     /// Store the plugin event receiver for the subscription to consume.
     pub fn set_event_receiver(rx: mpsc::UnboundedReceiver<PluginEvent>) {
+        tracing::debug!("storing plugin event receiver in global slot");
         let _ = EVENT_RX.set(Mutex::new(Some(rx)));
     }
 
@@ -130,10 +141,18 @@ impl App {
             self.engine.send_command(PluginCommand::GetState);
         }
 
-        // Note: output device restoration happens after the first StateRefreshed
-        // arrives (because mix IDs aren't known until the plugin creates them).
-        // We store the desired output names here for later matching.
-        tracing::debug!("config restore: output devices will be applied after first state refresh");
+        // Output device restoration happens after the first StateRefreshed arrives
+        // because mix IDs aren't known until the plugin creates them.
+        self.pending_output_restores = self
+            .config
+            .mixes
+            .iter()
+            .filter_map(|m| m.output_device.as_ref().map(|d| (m.name.clone(), d.clone())))
+            .collect();
+        tracing::debug!(
+            count = self.pending_output_restores.len(),
+            "config restore: queued output devices for restoration after first state refresh"
+        );
     }
 
     pub fn theme(&self) -> Theme {
@@ -240,6 +259,16 @@ impl App {
                 self.engine.send_command(PluginCommand::CreateMix { name });
                 self.engine.send_command(PluginCommand::GetState);
             }
+            Message::RemoveChannel(id) => {
+                tracing::info!(channel_id = id, "removing channel");
+                self.engine.send_command(PluginCommand::RemoveChannel { id });
+                self.engine.send_command(PluginCommand::GetState);
+            }
+            Message::RemoveMix(id) => {
+                tracing::info!(mix_id = id, "removing mix");
+                self.engine.send_command(PluginCommand::RemoveMix { id });
+                self.engine.send_command(PluginCommand::GetState);
+            }
             // Plugin events — arrive instantly via async subscription
             Message::PluginStateRefreshed(snapshot) => {
                 tracing::debug!(
@@ -270,6 +299,51 @@ impl App {
                     .collect();
 
                 self.engine.apply_snapshot(snapshot);
+
+                // Apply any pending output device restores from config
+                if !self.pending_output_restores.is_empty() {
+                    let restores = std::mem::take(&mut self.pending_output_restores);
+                    for (mix_name, device_name) in restores {
+                        let mix_id = self
+                            .engine
+                            .state
+                            .mixes
+                            .iter()
+                            .find(|m| m.name == mix_name)
+                            .map(|m| m.id);
+                        let hw_id = self
+                            .engine
+                            .state
+                            .hardware_outputs
+                            .iter()
+                            .find(|o| o.name == device_name)
+                            .map(|o| o.id);
+                        match (mix_id, hw_id) {
+                            (Some(mix), Some(output)) => {
+                                tracing::info!(
+                                    %mix_name,
+                                    %device_name,
+                                    mix_id = mix,
+                                    output_id = output,
+                                    "restoring output device from config"
+                                );
+                                self.engine.send_command(PluginCommand::SetMixOutput {
+                                    mix,
+                                    output,
+                                });
+                            }
+                            _ => {
+                                tracing::warn!(
+                                    %mix_name,
+                                    %device_name,
+                                    mix_found = mix_id.is_some(),
+                                    device_found = hw_id.is_some(),
+                                    "could not restore output device — mix or device not found"
+                                );
+                            }
+                        }
+                    }
+                }
 
                 // Only persist when the channel or mix list actually changed
                 if new_channels != self.config.channels || new_mixes != self.config.mixes {
@@ -340,33 +414,41 @@ impl App {
                     });
                 }
             }
-            Message::OutputDeviceSelected(name) => {
-                tracing::debug!(device_name = %name, "output device selected");
+            Message::MixOutputDeviceSelected { mix: mix_id, device_name } => {
+                tracing::debug!(mix_id, device_name = %device_name, "mix output device selected");
                 let hw_output = self
                     .engine
                     .state
                     .hardware_outputs
                     .iter()
-                    .find(|o| o.name == name)
+                    .find(|o| o.name == device_name)
                     .cloned();
                 if let Some(output) = hw_output {
-                    if let Some(first_mix) = self.engine.state.mixes.first() {
-                        let mix_id = first_mix.id;
-                        tracing::info!(
-                            mix_id,
-                            output_id = output.id,
-                            output_name = %output.name,
-                            "setting mix output device"
-                        );
-                        self.engine.send_command(PluginCommand::SetMixOutput {
-                            mix: mix_id,
-                            output: output.id,
-                        });
+                    tracing::info!(
+                        mix_id,
+                        output_id = output.id,
+                        output_name = %output.name,
+                        "setting mix output device"
+                    );
+                    self.engine.send_command(PluginCommand::SetMixOutput {
+                        mix: mix_id,
+                        output: output.id,
+                    });
+                    // Persist the selection to config
+                    if let Some(mix_config) = self.config.mixes.iter_mut().find(|c| {
+                        self.engine.state.mixes.iter().any(|m| m.id == mix_id && m.name == c.name)
+                    }) {
+                        mix_config.output_device = Some(device_name.clone());
+                        if let Err(e) = self.config.save() {
+                            tracing::error!(error = %e, "failed to save output device config");
+                        } else {
+                            tracing::debug!(mix_id, device_name = %device_name, "output device persisted to config");
+                        }
                     } else {
-                        tracing::warn!(device_name = %name, "OutputDeviceSelected but no mixes exist");
+                        tracing::warn!(mix_id, "MixOutputDeviceSelected: no matching config entry for mix");
                     }
                 } else {
-                    tracing::warn!(device_name = %name, "OutputDeviceSelected but device not found in hardware_outputs");
+                    tracing::warn!(device_name = %device_name, "MixOutputDeviceSelected: device not found in hardware_outputs");
                 }
             }
             Message::SettingsToggled => {
@@ -379,6 +461,10 @@ impl App {
                     "sidebar collapse toggled"
                 );
                 self.sidebar_collapsed = !self.sidebar_collapsed;
+                self.config.ui.compact_mode = self.sidebar_collapsed;
+                if let Err(e) = self.config.save() {
+                    tracing::error!(error = %e, "failed to save compact mode config");
+                }
             }
         }
         Task::none()
@@ -437,9 +523,15 @@ impl App {
                     .find(|o| o.id == out_id)
             })
             .map(|o| o.name.clone());
-        let device_picker = pick_list(output_names, selected_output, Message::OutputDeviceSelected)
-            .placeholder("Select output...")
-            .text_size(12);
+        let first_mix_id = self.engine.state.mixes.first().map(|m| m.id).unwrap_or(0);
+        let device_picker = pick_list(output_names, selected_output, move |name| {
+            Message::MixOutputDeviceSelected {
+                mix: first_mix_id,
+                device_name: name,
+            }
+        })
+        .placeholder("Select output...")
+        .text_size(12);
 
         let header = container(
             row![
