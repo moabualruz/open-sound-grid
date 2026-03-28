@@ -1,6 +1,6 @@
 use std::sync::{Mutex, OnceLock};
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{button, column, container, pick_list, row, text, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
@@ -64,6 +64,9 @@ pub enum Message {
     TrayShow,
     TrayQuit,
     TrayMuteAll,
+
+    // Output device selection
+    OutputDeviceSelected(String), // device name (resolved to id on update)
 
     // UI
     SettingsToggled,
@@ -306,6 +309,35 @@ impl App {
                     });
                 }
             }
+            Message::OutputDeviceSelected(name) => {
+                tracing::debug!(device_name = %name, "output device selected");
+                let hw_output = self
+                    .engine
+                    .state
+                    .hardware_outputs
+                    .iter()
+                    .find(|o| o.name == name)
+                    .cloned();
+                if let Some(output) = hw_output {
+                    if let Some(first_mix) = self.engine.state.mixes.first() {
+                        let mix_id = first_mix.id;
+                        tracing::info!(
+                            mix_id,
+                            output_id = output.id,
+                            output_name = %output.name,
+                            "setting mix output device"
+                        );
+                        self.engine.send_command(PluginCommand::SetMixOutput {
+                            mix: mix_id,
+                            output: output.id,
+                        });
+                    } else {
+                        tracing::warn!(device_name = %name, "OutputDeviceSelected but no mixes exist");
+                    }
+                } else {
+                    tracing::warn!(device_name = %name, "OutputDeviceSelected but device not found in hardware_outputs");
+                }
+            }
             Message::SettingsToggled => {
                 tracing::debug!(settings_open = !self.settings_open, "settings toggled");
                 self.settings_open = !self.settings_open;
@@ -352,10 +384,38 @@ impl App {
             ..Default::default()
         })
         .padding([2, 8]);
+
+        let output_names: Vec<String> = self
+            .engine
+            .state
+            .hardware_outputs
+            .iter()
+            .map(|o| o.name.clone())
+            .collect();
+        let selected_output = self
+            .engine
+            .state
+            .mixes
+            .first()
+            .and_then(|m| m.output)
+            .and_then(|out_id| {
+                self.engine
+                    .state
+                    .hardware_outputs
+                    .iter()
+                    .find(|o| o.id == out_id)
+            })
+            .map(|o| o.name.clone());
+        let device_picker = pick_list(output_names, selected_output, Message::OutputDeviceSelected)
+            .placeholder("Select output...")
+            .text_size(12);
+
         let header = container(
             row![
                 text(header_title).size(18).color(ui::theme::TEXT_PRIMARY),
                 Space::new().width(Length::Fill),
+                device_picker,
+                Space::new().width(Length::Fixed(8.0)),
                 compact_btn,
             ]
             .padding([10, 16])

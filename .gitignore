@@ -1,5 +1,33 @@
-/target
-*.swp
-*.swo
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock — include for binaries (do NOT add Cargo.lock here)
+
+# IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# ── AI Agent Files ──────────────────────────────────────────
+.ai/
+.planning/
+.claude/
+.gemini/
+.cursor/
+.agent/
+.gsd/
+.superpowers/

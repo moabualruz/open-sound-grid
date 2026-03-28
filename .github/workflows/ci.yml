@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
+      - name: cargo fmt check
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy -- -D warnings
+      - name: cargo test
+        run: cargo test

@@ -3,8 +3,10 @@ name = "open-sound-grid"
 version = "0.1.0"
 edition = "2024"
 description = "Professional audio matrix mixer for Linux"
-license = "MIT"
-repository = "https://github.com/user/open-sound-grid"
+license = "CC-BY-NC-SA-4.0"
+repository = "https://github.com/moabualruz/open-sound-grid"
+homepage = "https://github.com/moabualruz/open-sound-grid"
+readme = "README.md"
 keywords = ["audio", "mixer", "pulseaudio", "pipewire", "linux"]
 categories = ["multimedia::audio"]
 

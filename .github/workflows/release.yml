@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package
+        run: |
+          cd target/release
+          tar czf ../../open-sound-grid-x86_64-linux.tar.gz open-sound-grid
+          cd ../..
+          sha256sum open-sound-grid-x86_64-linux.tar.gz > open-sound-grid-x86_64-linux.tar.gz.sha256
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-sound-grid-linux
+          path: |
+            open-sound-grid-x86_64-linux.*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

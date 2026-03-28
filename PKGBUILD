@@ -4,8 +4,8 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc='Professional audio matrix mixer for Linux — route apps across multiple output mixes'
 arch=('x86_64')
-url='https://github.com/user/open-sound-grid'
-license=('MIT')
+url='https://github.com/moabualruz/open-sound-grid'
+license=('CC-BY-NC-SA-4.0')
 depends=('libpulse' 'dbus')
 makedepends=('cargo' 'pkg-config')
 optdepends=('pipewire-pulse: PipeWire compatibility layer')
@@ -36,5 +36,5 @@ package() {
   install -Dm755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
   install -Dm644 "assets/open-sound-grid.desktop" "$pkgdir/usr/share/applications/$pkgname.desktop"
   install -Dm644 "assets/icon.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/$pkgname.svg"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 LICENSE.md "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
 }
