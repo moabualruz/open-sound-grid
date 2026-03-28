@@ -29,7 +29,10 @@ impl MixerEngine {
 
     /// Attach a plugin bridge. Returns the event receiver for use in subscriptions.
     pub fn attach(&mut self, bridge: PluginBridge) -> mpsc::UnboundedReceiver<PluginEvent> {
-        tracing::info!("plugin bridge attached");
+        tracing::info!(
+            command_tx_capacity = "unbounded",
+            "plugin bridge attached"
+        );
         self.command_tx = Some(bridge.command_tx);
         // Request initial state
         self.send_command(PluginCommand::GetState);
@@ -41,7 +44,7 @@ impl MixerEngine {
         tracing::debug!(command = ?cmd, "sending plugin command");
         if let Some(tx) = &self.command_tx {
             if tx.send(cmd).is_err() {
-                tracing::error!("Plugin bridge disconnected");
+                tracing::warn!("plugin bridge disconnected; command dropped");
             }
         } else {
             tracing::warn!("send_command called with no bridge attached");
@@ -50,13 +53,14 @@ impl MixerEngine {
 
     /// Apply a snapshot from the plugin to the engine state.
     pub fn apply_snapshot(&mut self, snapshot: MixerSnapshot) {
-        tracing::info!(
+        tracing::debug!(
             channels = snapshot.channels.len(),
             mixes = snapshot.mixes.len(),
             routes = snapshot.routes.len(),
             hardware_inputs = snapshot.hardware_inputs.len(),
             hardware_outputs = snapshot.hardware_outputs.len(),
             applications = snapshot.applications.len(),
+            peaks = snapshot.peak_levels.len(),
             "applying snapshot to engine"
         );
         self.state.apply_snapshot(snapshot);
@@ -64,6 +68,8 @@ impl MixerEngine {
 
     /// Check if plugin is connected.
     pub fn is_connected(&self) -> bool {
-        self.command_tx.is_some()
+        let connected = self.command_tx.is_some();
+        tracing::trace!(connected, "is_connected check");
+        connected
     }
 }

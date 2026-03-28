@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
 use iced::widget::{column, container, row, text, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 use crate::config::{AppConfig, ChannelConfig, MixConfig};
 use crate::engine::MixerEngine;
 use crate::plugin::api::{MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
+use crate::resolve::AppResolver;
+use crate::tray;
 use crate::ui;
 
 /// Global slot for the plugin event receiver.
@@ -57,6 +59,11 @@ pub enum Message {
     PluginConnectionLost,
     PluginConnectionRestored,
 
+    // Tray commands
+    TrayShow,
+    TrayQuit,
+    TrayMuteAll,
+
     // UI
     SettingsToggled,
     SidebarToggleCollapse,
@@ -66,6 +73,7 @@ pub enum Message {
 pub struct App {
     pub config: AppConfig,
     pub engine: MixerEngine,
+    pub app_resolver: AppResolver,
     pub settings_open: bool,
     pub sidebar_collapsed: bool,
 }
@@ -74,10 +82,12 @@ impl App {
     pub fn new() -> Self {
         tracing::info!("initializing App");
         let config = AppConfig::load();
+        let app_resolver = AppResolver::new();
 
         Self {
             config,
             engine: MixerEngine::new(),
+            app_resolver,
             settings_open: false,
             sidebar_collapsed: false,
         }
@@ -159,10 +169,20 @@ impl App {
                 });
             }
             Message::SourceMuteToggled(source) => {
-                tracing::debug!(?source, "source mute toggled");
+                let current_muted = match source {
+                    SourceId::Channel(id) => self
+                        .engine
+                        .state
+                        .channels
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map_or(false, |c| c.muted),
+                    SourceId::Hardware(_) => false,
+                };
+                tracing::debug!(source = ?source, new_muted = !current_muted, "Toggling source mute");
                 self.engine.send_command(PluginCommand::SetSourceMuted {
                     source,
-                    muted: true,
+                    muted: !current_muted,
                 });
             }
             Message::AppRouteChanged {
@@ -236,8 +256,22 @@ impl App {
                 tracing::debug!("devices changed, requesting state");
                 self.engine.send_command(PluginCommand::GetState);
             }
-            Message::PluginAppsChanged(apps) => {
+            Message::PluginAppsChanged(mut apps) => {
                 tracing::debug!(count = apps.len(), "applications changed");
+                // Resolve display names via desktop entries
+                for app in &mut apps {
+                    let (display_name, _icon_path) = self.app_resolver.resolve(
+                        &app.binary,
+                        Some(&app.name),
+                    );
+                    tracing::debug!(
+                        binary = %app.binary,
+                        raw_name = %app.name,
+                        resolved_name = %display_name,
+                        "resolved app display name"
+                    );
+                    app.name = display_name;
+                }
                 self.engine.state.update_applications(apps);
             }
             Message::PluginPeakLevels(levels) => {
@@ -252,6 +286,24 @@ impl App {
             Message::PluginConnectionRestored => {
                 tracing::info!("plugin connection restored");
                 self.engine.send_command(PluginCommand::GetState);
+            }
+            Message::TrayShow => {
+                tracing::info!("tray: show window requested");
+                // iced doesn't have a show/hide window API in 0.14 —
+                // the tray "Show" is a no-op for now (window is always visible)
+            }
+            Message::TrayQuit => {
+                tracing::info!("tray: quit requested");
+                return iced::exit();
+            }
+            Message::TrayMuteAll => {
+                tracing::info!("tray: mute all requested");
+                for channel in &self.engine.state.channels {
+                    self.engine.send_command(PluginCommand::SetSourceMuted {
+                        source: SourceId::Channel(channel.id),
+                        muted: true,
+                    });
+                }
             }
             Message::SettingsToggled => {
                 tracing::debug!(settings_open = !self.settings_open, "settings toggled");
@@ -268,10 +320,12 @@ impl App {
         Task::none()
     }
 
-    /// Async subscription that bridges plugin events to iced messages.
-    /// Zero latency — events arrive the instant the plugin emits them.
+    /// Async subscriptions: plugin events + tray commands.
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::run(plugin_event_stream)
+        Subscription::batch([
+            Subscription::run(plugin_event_stream),
+            Subscription::run(tray_event_stream),
+        ])
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -310,6 +364,11 @@ impl App {
 
         let matrix = ui::matrix::matrix_grid(&self.engine.state);
 
+        let app_panel = ui::app_list::app_list_panel(
+            &self.engine.state.applications,
+            &self.engine.state.channels,
+        );
+
         let status_text = if self.engine.is_connected() {
             "Connected"
         } else {
@@ -333,8 +392,8 @@ impl App {
             ..Default::default()
         });
 
-        // Right panel: flush stack — header, sep, body, sep, status
-        let right_panel = column![header, sep(), matrix, sep(), status_bar,]
+        // Right panel: flush stack — header, sep, body, app panel, sep, status
+        let right_panel = column![header, sep(), matrix, app_panel, sep(), status_bar,]
             .spacing(0)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -412,6 +471,48 @@ fn plugin_event_stream() -> impl iced::futures::Stream<Item = Message> {
                     tracing::warn!("plugin event channel closed");
                     let _ = sender
                         .try_send(Message::PluginError("Plugin disconnected".into()));
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    })
+}
+
+// --- Tray command stream ---
+
+/// Produces a stream of Messages from the tray command channel.
+fn tray_event_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(16, async move |mut sender| {
+        let mut rx = tray::TRAY_RX
+            .get()
+            .and_then(|m| m.lock().ok())
+            .and_then(|mut guard| guard.take());
+
+        if rx.is_none() {
+            tracing::debug!("no tray command receiver — tray subscription idle");
+            std::future::pending::<()>().await;
+            return;
+        }
+
+        let rx = rx.as_mut().unwrap();
+        tracing::info!("tray command subscription started");
+
+        loop {
+            match rx.recv().await {
+                Some(cmd) => {
+                    tracing::debug!(cmd = ?cmd, "tray command received");
+                    let msg = match cmd {
+                        tray::TrayCommand::Show => Message::TrayShow,
+                        tray::TrayCommand::Hide => Message::TrayShow, // treat as show
+                        tray::TrayCommand::Quit => Message::TrayQuit,
+                        tray::TrayCommand::MuteAll => Message::TrayMuteAll,
+                    };
+                    if sender.try_send(msg).is_err() {
+                        tracing::warn!("tray subscription sender full, dropping command");
+                    }
+                }
+                None => {
+                    tracing::debug!("tray command channel closed");
                     std::future::pending::<()>().await;
                 }
             }

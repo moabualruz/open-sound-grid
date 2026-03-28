@@ -15,6 +15,11 @@ impl ModuleManager {
         }
     }
 
+    /// Return the number of currently tracked loaded modules.
+    pub fn module_count(&self) -> usize {
+        self.loaded_modules.len()
+    }
+
     pub fn create_null_sink(&mut self, name: &str, description: &str) -> Result<u32> {
         tracing::debug!(sink_name = %name, description = %description, "creating null sink");
 
@@ -266,11 +271,16 @@ fn parse_sink_input_for_module(text: &str, module_id_quoted: &str) -> Option<u32
 
         if let Some(rest) = trimmed.strip_prefix("Sink Input #") {
             current_idx = rest.parse::<u32>().ok();
+            if let Some(idx) = current_idx {
+                tracing::trace!(sink_input_idx = idx, "parsing sink-input section");
+            }
         }
 
         if trimmed.starts_with("pulse.module.id =") {
             if let Some(idx) = current_idx {
+                tracing::trace!(sink_input_idx = idx, property = %trimmed, "checking pulse.module.id property");
                 if trimmed.ends_with(module_id_quoted) {
+                    tracing::trace!(sink_input_idx = idx, module_id_quoted = %module_id_quoted, "matched pulse.module.id property");
                     return Some(idx);
                 }
             }

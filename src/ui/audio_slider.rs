@@ -15,6 +15,8 @@ pub fn audio_slider<'a>(
         format!("{:.1} dB", 20.0 * value.log10())
     };
 
+    tracing::trace!(value, db_display = %db_text, "audio_slider update");
+
     column![
         slider(0.0..=1.0, value, on_change)
             .step(0.01)

@@ -286,12 +286,34 @@ fn matrix_cell<'a>(
                 .into()
         }
         None => {
-            // Empty cell -- source not routed to this mix
-            text("+")
-                .size(16)
-                .color(TEXT_MUTED)
-                .center()
-                .into()
+            // Empty cell -- source not routed to this mix; clicking creates the route
+            tracing::trace!(source = ?source, mix = mix_id, has_route = false, "Rendering matrix cell");
+            button(
+                text("+")
+                    .size(16)
+                    .color(TEXT_MUTED)
+                    .center(),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .on_press(Message::RouteToggled { source, mix: mix_id })
+            .padding(0)
+            .style(|_: &Theme, status| button::Style {
+                background: match status {
+                    button::Status::Hovered | button::Status::Pressed => {
+                        Some(Background::Color(ACCENT))
+                    }
+                    _ => Some(Background::Color(BG_ELEVATED)),
+                },
+                text_color: TEXT_MUTED,
+                border: Border {
+                    color: BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            })
+            .into()
         }
     };
 

@@ -1,9 +1,16 @@
 //! System tray via ksni (StatusNotifierItem).
 //! Runs in its own thread with a dedicated tokio runtime.
 
+use std::sync::{Mutex, OnceLock};
+
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Tray, TrayMethods};
 use tokio::sync::mpsc;
+
+/// Global slot for the tray command receiver.
+/// Set once during boot in `spawn_tray`, consumed once by the subscription stream.
+pub static TRAY_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<TrayCommand>>>> =
+    OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayCommand {
@@ -20,7 +27,10 @@ struct OsgTray {
 
 impl OsgTray {
     fn send(&self, cmd: TrayCommand) {
-        let _ = self.tx.send(cmd);
+        tracing::debug!("Tray command sent: {:?}", cmd);
+        if let Err(e) = self.tx.send(cmd) {
+            tracing::warn!("Tray command dropped — receiver closed: {e}");
+        }
     }
 }
 
@@ -77,38 +87,54 @@ impl Tray for OsgTray {
 
 /// Spawn the system tray in its own thread with a dedicated tokio runtime.
 ///
-/// Returns a receiver for tray user actions.
-/// If the tray fails to start, logs a warning — the app still works without it.
-pub fn spawn_tray() -> mpsc::UnboundedReceiver<TrayCommand> {
-    tracing::info!("spawning system tray");
-    let (tx, rx) = mpsc::unbounded_channel();
+/// Stores the tray command receiver in the global `TRAY_RX` slot so the iced
+/// subscription can consume it on first tick.  The tray stays alive for the
+/// entire lifetime of the process — `handle.shutdown()` is intentionally
+/// **not** called (BUG-004 fix).
+///
+/// If the tray fails to start the app continues without it (logs a warning).
+pub fn spawn_tray() {
+    tracing::info!("Spawning system tray");
+    let (tx, rx) = mpsc::unbounded_channel::<TrayCommand>();
+
+    // Store the receiver globally before spawning so the subscription can
+    // pick it up even if it initialises before the thread finishes booting.
+    let _ = TRAY_RX.set(Mutex::new(Some(rx)));
+    tracing::debug!("Tray command receiver stored in TRAY_RX");
+
     let tray = OsgTray { tx };
 
-    std::thread::Builder::new()
+    match std::thread::Builder::new()
         .name("osg-tray".into())
         .spawn(move || {
+            tracing::debug!("Tray thread started");
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             {
                 Ok(rt) => rt,
                 Err(e) => {
-                    tracing::warn!("Failed to create tray runtime: {e}");
+                    tracing::error!("Failed to create tray tokio runtime: {e}");
                     return;
                 }
             };
 
             rt.block_on(async move {
                 match tray.spawn().await {
-                    Ok(handle) => {
-                        tracing::info!("System tray started");
-                        handle.shutdown().await;
+                    Ok(_handle) => {
+                        // BUG-004 fix: do NOT call handle.shutdown() here.
+                        // Block forever so the tray remains registered with the
+                        // StatusNotifierWatcher for the lifetime of the process.
+                        tracing::info!("System tray started — running indefinitely");
+                        std::future::pending::<()>().await;
                     }
-                    Err(e) => tracing::warn!("System tray unavailable: {e}"),
+                    Err(e) => tracing::warn!("System tray unavailable (D-Bus/SNI): {e}"),
                 }
             });
-        })
-        .ok();
 
-    rx
+            tracing::debug!("Tray thread exiting");
+        }) {
+        Ok(_) => tracing::debug!("Tray thread spawned"),
+        Err(e) => tracing::warn!("Failed to spawn tray thread: {e}"),
+    }
 }

@@ -18,7 +18,7 @@ pub const BG_HOVER: Color = Color::from_rgb(0.220, 0.220, 0.220); // #383838
 // Text — warm whites
 pub const TEXT_PRIMARY: Color = Color::from_rgb(0.910, 0.894, 0.875); // #e8e4df
 pub const TEXT_SECONDARY: Color = Color::from_rgb(0.639, 0.620, 0.588); // #a39e96
-pub const TEXT_MUTED: Color = Color::from_rgb(0.420, 0.400, 0.376); // #6b6660
+pub const TEXT_MUTED: Color = Color::from_rgb(0.502, 0.482, 0.459); // #807b75 — WCAG AA compliant against BG_SECONDARY
 
 // Accent — Claude coral/orange
 pub const ACCENT: Color = Color::from_rgb(0.855, 0.467, 0.337); // #da7756

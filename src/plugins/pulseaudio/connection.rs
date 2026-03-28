@@ -44,19 +44,23 @@ impl PulseConnection {
         })));
 
         // Start mainloop thread
+        tracing::trace!("locking mainloop before start");
         mainloop.lock();
 
         if mainloop.start().is_err() {
+            tracing::trace!("unlocking mainloop after failed start");
             mainloop.unlock();
             tracing::error!("failed to start PulseAudio threaded mainloop");
             return Err(OsgError::PulseAudio("failed to start threaded mainloop".into()));
         }
+        tracing::debug!("PulseAudio threaded mainloop started");
 
         // Connect (mainloop lock is held)
         if context
             .connect(None, ContextFlagSet::NOAUTOSPAWN, None)
             .is_err()
         {
+            tracing::trace!("unlocking mainloop after failed connect");
             mainloop.unlock();
             mainloop.stop();
             tracing::error!("PulseAudio context connect call failed");
@@ -67,9 +71,11 @@ impl PulseConnection {
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         loop {
             let state = context.get_state();
+            tracing::debug!(state = ?state, "PulseAudio context state change");
             match state {
                 context::State::Ready => break,
                 context::State::Failed | context::State::Terminated => {
+                    tracing::trace!("unlocking mainloop after terminal state");
                     mainloop.unlock();
                     mainloop.stop();
                     tracing::error!(state = ?state, "PulseAudio context entered terminal state");
@@ -79,6 +85,7 @@ impl PulseConnection {
                 }
                 _ => {
                     if Instant::now() >= deadline {
+                        tracing::trace!("unlocking mainloop after timeout");
                         mainloop.unlock();
                         mainloop.stop();
                         tracing::error!(timeout_secs = CONNECT_TIMEOUT.as_secs(), "timed out waiting for PulseAudio context Ready");
@@ -91,6 +98,7 @@ impl PulseConnection {
             }
         }
 
+        tracing::trace!("unlocking mainloop after context Ready");
         mainloop.unlock();
         tracing::info!("PulseAudio connection established");
 
@@ -107,8 +115,11 @@ impl PulseConnection {
             tracing::debug!("disconnect called but already disconnected");
             return;
         }
+        tracing::debug!("disconnecting PulseAudio connection");
+        tracing::trace!("locking mainloop for disconnect");
         self.mainloop.lock();
         self.context.disconnect();
+        tracing::trace!("unlocking mainloop after context disconnect");
         self.mainloop.unlock();
         self.mainloop.stop();
         self.connected = false;

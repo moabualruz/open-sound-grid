@@ -5,6 +5,7 @@
 //! No shared state — all communication is through these types.
 
 use std::collections::HashMap;
+use std::fmt;
 
 // --- IDs (opaque to plugins, assigned by plugin impl) ---
 
@@ -139,6 +140,31 @@ pub enum PluginCommand {
     SetSourceMuted { source: SourceId, muted: bool },
 }
 
+impl fmt::Display for PluginCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            PluginCommand::GetState => "GetState",
+            PluginCommand::ListHardwareInputs => "ListHardwareInputs",
+            PluginCommand::ListHardwareOutputs => "ListHardwareOutputs",
+            PluginCommand::ListApplications => "ListApplications",
+            PluginCommand::CreateChannel { .. } => "CreateChannel",
+            PluginCommand::RemoveChannel { .. } => "RemoveChannel",
+            PluginCommand::CreateMix { .. } => "CreateMix",
+            PluginCommand::RemoveMix { .. } => "RemoveMix",
+            PluginCommand::SetRouteVolume { .. } => "SetRouteVolume",
+            PluginCommand::SetRouteEnabled { .. } => "SetRouteEnabled",
+            PluginCommand::SetRouteMuted { .. } => "SetRouteMuted",
+            PluginCommand::RouteApp { .. } => "RouteApp",
+            PluginCommand::UnrouteApp { .. } => "UnrouteApp",
+            PluginCommand::SetMixOutput { .. } => "SetMixOutput",
+            PluginCommand::SetMixMasterVolume { .. } => "SetMixMasterVolume",
+            PluginCommand::SetMixMuted { .. } => "SetMixMuted",
+            PluginCommand::SetSourceMuted { .. } => "SetSourceMuted",
+        };
+        f.write_str(name)
+    }
+}
+
 // --- Responses (Plugin → Core, synchronous) ---
 
 #[derive(Debug, Clone)]
@@ -171,4 +197,19 @@ pub enum PluginEvent {
     ConnectionLost,
     /// Reconnected to audio server.
     ConnectionRestored,
+}
+
+impl fmt::Display for PluginEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            PluginEvent::StateRefreshed(_) => "StateRefreshed",
+            PluginEvent::DevicesChanged => "DevicesChanged",
+            PluginEvent::ApplicationsChanged(_) => "ApplicationsChanged",
+            PluginEvent::PeakLevels(_) => "PeakLevels",
+            PluginEvent::Error(_) => "Error",
+            PluginEvent::ConnectionLost => "ConnectionLost",
+            PluginEvent::ConnectionRestored => "ConnectionRestored",
+        };
+        f.write_str(name)
+    }
 }

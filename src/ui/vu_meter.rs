@@ -21,6 +21,15 @@ pub fn vu_meter(level: f32, width: f32, height: f32) -> Element<'static, Message
         VU_RED
     };
 
+    let zone = if level < 0.70 {
+        "green"
+    } else if level < 0.90 {
+        "amber"
+    } else {
+        "red"
+    };
+    tracing::trace!(level, zone, "vu_meter update");
+
     let bar = container(
         container("")
             .width(Length::Fixed(fill_width))

@@ -37,6 +37,7 @@ pub struct UiConfig {
 
 impl Default for AppConfig {
     fn default() -> Self {
+        tracing::debug!("creating default AppConfig");
         Self {
             channels: vec![
                 ChannelConfig { name: "Music".into() },
@@ -78,7 +79,23 @@ impl AppConfig {
                 let path = confy::get_configuration_file_path("open-sound-grid", None)
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|_| "<unknown>".into());
-                tracing::info!(path = %path, "config loaded");
+                tracing::info!(
+                    path = %path,
+                    channels = config.channels.len(),
+                    mixes = config.mixes.len(),
+                    "config loaded"
+                );
+                for ch in &config.channels {
+                    tracing::debug!(name = %ch.name, "loaded channel config");
+                }
+                for mix in &config.mixes {
+                    tracing::debug!(
+                        name = %mix.name,
+                        icon = %mix.icon,
+                        output_device = ?mix.output_device,
+                        "loaded mix config"
+                    );
+                }
                 config
             }
             Err(e) => {

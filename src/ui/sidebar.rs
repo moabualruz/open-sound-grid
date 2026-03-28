@@ -9,6 +9,7 @@ const EXPANDED_WIDTH: f32 = 200.0;
 const COLLAPSED_WIDTH: f32 = 48.0;
 
 pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {
+    tracing::trace!(collapsed = collapsed, input_count = hardware_inputs.len(), "rendering sidebar");
     let width = if collapsed { COLLAPSED_WIDTH } else { EXPANDED_WIDTH };
 
     let content = if collapsed {
@@ -35,6 +36,18 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Ele
 }
 
 fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {
+    let collapse_btn = button(text("«").size(14).center())
+        .width(32)
+        .on_press(Message::SidebarToggleCollapse)
+        .style(|_: &Theme, status| button::Style {
+            background: match status {
+                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                _ => None,
+            },
+            text_color: TEXT_SECONDARY,
+            ..Default::default()
+        });
+
     let header = text("DEVICES").size(11).color(TEXT_SECONDARY);
 
     let mut devices = column![header].spacing(4);
@@ -70,6 +83,7 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Messag
         });
 
     column![
+        collapse_btn,
         devices,
         rule::horizontal(1).style(|_: &Theme| rule::Style {
             color: BORDER,
@@ -99,8 +113,20 @@ fn collapsed_view<'a>() -> Element<'a, Message> {
             ..Default::default()
         });
 
+    let expand_btn = button(text("»").size(14).center())
+        .width(32)
+        .on_press(Message::SidebarToggleCollapse)
+        .style(|_: &Theme, status| button::Style {
+            background: match status {
+                button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+                _ => None,
+            },
+            text_color: TEXT_SECONDARY,
+            ..Default::default()
+        });
+
     column![
-        text("^").size(16).color(TEXT_SECONDARY).center(),
+        expand_btn,
         text("#").size(16).color(TEXT_PRIMARY).center(),
         Space::new().width(Length::Fill).height(Length::Fill),
         settings_btn,

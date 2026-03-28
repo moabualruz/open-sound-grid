@@ -77,7 +77,7 @@ impl SinkInputEntry {
         let name = match self.app_name {
             Some(n) => n,
             None => {
-                tracing::trace!(index = self.index, "skipping sink-input with no application.name");
+                tracing::debug!(index = self.index, reason = "no application.name property", "filtering out sink-input");
                 return None;
             }
         };
@@ -85,7 +85,7 @@ impl SinkInputEntry {
         // Filter: skip loopback streams (our loopback modules).
         if let Some(ref media) = self.media_name {
             if media.to_lowercase().contains("loopback") {
-                tracing::trace!(index = self.index, app_name = %name, media_name = %media, "filtering out loopback stream");
+                tracing::debug!(index = self.index, app_name = %name, media_name = %media, reason = "loopback media stream", "filtering out sink-input");
                 return None;
             }
         }
@@ -115,6 +115,7 @@ fn parse_sink_inputs(output: &str) -> Vec<AudioApplication> {
                     apps.push(app);
                 }
             }
+            tracing::trace!(sink_input_index = index, "parsing sink-input entry");
             current = Some(SinkInputEntry::new(index));
             in_properties = false;
             continue;
@@ -144,10 +145,22 @@ fn parse_sink_inputs(output: &str) -> Vec<AudioApplication> {
         // Properties are indented lines: `key = "value"`
         if let Some((key, value)) = parse_property(trimmed) {
             match key {
-                "application.name" => entry.app_name = Some(value),
-                "application.process.binary" => entry.app_binary = Some(value),
-                "application.icon_name" => entry.icon_name = Some(value),
-                "media.name" => entry.media_name = Some(value),
+                "application.name" => {
+                    tracing::trace!(index = entry.index, app_name = %value, "parsed application.name");
+                    entry.app_name = Some(value);
+                }
+                "application.process.binary" => {
+                    tracing::trace!(index = entry.index, binary = %value, "parsed application.process.binary");
+                    entry.app_binary = Some(value);
+                }
+                "application.icon_name" => {
+                    tracing::trace!(index = entry.index, icon = %value, "parsed application.icon_name");
+                    entry.icon_name = Some(value);
+                }
+                "media.name" => {
+                    tracing::trace!(index = entry.index, media_name = %value, "parsed media.name");
+                    entry.media_name = Some(value);
+                }
                 _ => {}
             }
         }

@@ -51,6 +51,8 @@ pub struct PulseAudioPlugin {
     /// Maps mix_id -> (loopback module_id, output device_id) for mix-to-hardware output.
     mix_output_modules: HashMap<MixId, u32>,
     pending_events: Vec<PluginEvent>,
+    /// Last emitted peak levels, used to suppress unchanged/insignificant updates.
+    last_emitted_peaks: HashMap<SourceId, f32>,
 }
 
 // SAFETY: PulseAudioPlugin is moved into the plugin thread and only accessed there.
@@ -76,6 +78,7 @@ impl PulseAudioPlugin {
             loopback_sink_inputs: HashMap::new(),
             mix_output_modules: HashMap::new(),
             pending_events: Vec::new(),
+            last_emitted_peaks: HashMap::new(),
         }
     }
 
@@ -100,41 +103,10 @@ impl PulseAudioPlugin {
     fn mix_sink_name(name: &str) -> String {
         format!("osg_{}_mix", name.replace(' ', "_"))
     }
-}
 
-impl AudioPlugin for PulseAudioPlugin {
-    fn info(&self) -> PluginInfo {
-        PluginInfo {
-            id: "pulseaudio",
-            name: "PulseAudio",
-            version: "0.1.0",
-            api_version: API_VERSION,
-            os: "linux",
-        }
-    }
-
-    fn capabilities(&self) -> PluginCapabilities {
-        PluginCapabilities {
-            can_create_virtual_sinks: true,
-            can_route_applications: true,
-            can_monitor_peaks: true,
-            can_apply_effects: false,
-            can_lock_devices: false,
-            max_channels: Some(8),
-            max_mixes: Some(5),
-        }
-    }
-
-    fn init(&mut self) -> Result<()> {
-        let conn = PulseConnection::connect()?;
-        self.connection = Some(conn);
-        tracing::info!("PulseAudio plugin initialized");
-        Ok(())
-    }
-
-    fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
-        tracing::debug!(cmd = ?cmd, "received plugin command");
-
+    /// Inner dispatch: execute a plugin command and return the result.
+    /// Called by `handle_command` which adds the error-level tracing wrapper.
+    fn dispatch_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
         match cmd {
             PluginCommand::GetState => {
                 tracing::debug!("building mixer snapshot");
@@ -424,6 +396,24 @@ impl AudioPlugin for PulseAudioPlugin {
                 tracing::debug!(mix_id = mix, volume = volume, "setting mix master volume");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.master_volume = volume.clamp(0.0, 1.0);
+                    // Apply via PA: set volume on the mix null sink itself
+                    if let Some(sink_name) = self.mix_sinks.get(&mix) {
+                        let percent = (m.master_volume * 100.0) as u32;
+                        let output = std::process::Command::new("pactl")
+                            .args(["set-sink-volume", sink_name, &format!("{percent}%")])
+                            .output();
+                        match output {
+                            Ok(o) if o.status.success() => {
+                                tracing::debug!(mix_id = mix, percent, sink = %sink_name, "PA set-sink-volume applied");
+                            }
+                            Ok(o) => {
+                                tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-volume failed");
+                            }
+                            Err(e) => {
+                                tracing::warn!(mix_id = mix, err = %e, "PA set-sink-volume command error");
+                            }
+                        }
+                    }
                     Ok(PluginResponse::Ok)
                 } else {
                     tracing::error!(mix_id = mix, "mix not found for SetMixMasterVolume");
@@ -444,17 +434,93 @@ impl AudioPlugin for PulseAudioPlugin {
 
             PluginCommand::SetSourceMuted { source, muted } => {
                 tracing::debug!(source = ?source, muted = muted, "setting source muted across all routes");
+                // Update in-memory state
                 for ((src, _), route) in &mut self.routes {
                     if *src == source {
                         route.muted = muted;
+                    }
+                }
+                // Apply via PA: mute the channel's null sink directly
+                if let SourceId::Channel(id) = source {
+                    if let Some(sink_name) = self.channel_sinks.get(&id) {
+                        let mute_val = if muted { "1" } else { "0" };
+                        let output = std::process::Command::new("pactl")
+                            .args(["set-sink-mute", sink_name, mute_val])
+                            .output();
+                        match output {
+                            Ok(o) if o.status.success() => {
+                                tracing::debug!(source = ?source, muted, sink = %sink_name, "PA set-sink-mute applied");
+                            }
+                            Ok(o) => {
+                                tracing::warn!(source = ?source, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed");
+                            }
+                            Err(e) => {
+                                tracing::warn!(source = ?source, err = %e, "PA set-sink-mute command error");
+                            }
+                        }
+                    }
+                }
+                // Also update channel muted state
+                if let SourceId::Channel(id) = source {
+                    if let Some(ch) = self.channels.iter_mut().find(|c| c.id == id) {
+                        ch.muted = muted;
                     }
                 }
                 Ok(PluginResponse::Ok)
             }
         }
     }
+}
+
+impl AudioPlugin for PulseAudioPlugin {
+    fn info(&self) -> PluginInfo {
+        PluginInfo {
+            id: "pulseaudio",
+            name: "PulseAudio",
+            version: "0.1.0",
+            api_version: API_VERSION,
+            os: "linux",
+        }
+    }
+
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities {
+            can_create_virtual_sinks: true,
+            can_route_applications: true,
+            can_monitor_peaks: true,
+            can_apply_effects: false,
+            can_lock_devices: false,
+            max_channels: Some(8),
+            max_mixes: Some(5),
+        }
+    }
+
+    fn init(&mut self) -> Result<()> {
+        tracing::debug!("initializing PulseAudio plugin");
+        let conn = PulseConnection::connect()?;
+        self.connection = Some(conn);
+        tracing::info!(
+            plugin_id = "pulseaudio",
+            version = "0.1.0",
+            max_channels = 8,
+            max_mixes = 5,
+            "PulseAudio plugin initialized"
+        );
+        Ok(())
+    }
+
+    fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
+        tracing::debug!(cmd = ?cmd, "received plugin command");
+        let result = self.dispatch_command(cmd);
+        if let Err(ref e) = result {
+            tracing::warn!(err = %e, "plugin command returned error");
+        }
+        result
+    }
 
     fn poll_events(&mut self) -> Vec<PluginEvent> {
+        tracing::trace!(channel_count = self.channels.len(), "polling events");
+
         // Update peak levels for all channel sinks
         for channel in &self.channels {
             if let Some(sink_name) = self.channel_sinks.get(&channel.id) {
@@ -464,10 +530,22 @@ impl AudioPlugin for PulseAudioPlugin {
 
         let levels = self.peaks.get_levels();
         if !levels.is_empty() {
-            self.pending_events.push(PluginEvent::PeakLevels(levels));
+            let changed = levels
+                .iter()
+                .filter(|(source, level)| {
+                    let prev = self.last_emitted_peaks.get(source).copied().unwrap_or(0.0);
+                    (*level - prev).abs() > 0.01
+                })
+                .count();
+            tracing::trace!(changed_count = changed, total = levels.len(), "peak levels coalesced");
+            if changed > 0 {
+                self.last_emitted_peaks = levels.clone();
+                self.pending_events.push(PluginEvent::PeakLevels(levels));
+            }
         }
 
         let events: Vec<PluginEvent> = self.pending_events.drain(..).collect();
+        tracing::trace!(event_count = events.len(), "poll_events returning events");
         for event in &events {
             tracing::trace!(event = ?event, "emitting plugin event");
         }
@@ -475,12 +553,14 @@ impl AudioPlugin for PulseAudioPlugin {
     }
 
     fn cleanup(&mut self) -> Result<()> {
-        tracing::info!("PulseAudio plugin cleaning up");
+        let module_count = self.modules.module_count();
+        tracing::info!(module_count = module_count, "PulseAudio plugin cleaning up");
+        // unload_all internally logs warn! for each failed unload
         self.modules.unload_all();
         if let Some(mut conn) = self.connection.take() {
             conn.disconnect();
         }
-        tracing::info!("PulseAudio plugin cleanup complete");
+        tracing::info!(modules_unloaded = module_count, "PulseAudio plugin cleanup complete");
         Ok(())
     }
 }

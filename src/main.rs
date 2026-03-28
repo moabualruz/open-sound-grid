@@ -42,8 +42,10 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting OpenSoundGrid");
 
-    // Spawn system tray (returns receiver for tray commands)
-    let _tray_rx = tray::spawn_tray();
+    // Spawn system tray. The command receiver is stored in tray::TRAY_RX so
+    // the iced subscription can consume it on first tick (BUG-003 fix).
+    tray::spawn_tray();
+    tracing::debug!("Tray spawned; TRAY_RX ready for subscription");
 
     // Create and start the audio plugin before the iced event loop
     let audio_plugin = plugins::create_default_plugin();

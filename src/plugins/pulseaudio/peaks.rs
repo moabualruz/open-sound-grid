@@ -28,6 +28,17 @@ impl PeakMonitor {
     pub fn update_level(&mut self, sink_name: &str, source_id: SourceId) {
         let level = read_sink_volume(sink_name).unwrap_or(0.0);
         tracing::trace!(sink_name = %sink_name, source_id = ?source_id, level = level, "peak level updated");
+        let previous = self.levels.get(&source_id).copied().unwrap_or(0.0);
+        if (level - previous).abs() > 0.1 {
+            tracing::debug!(
+                sink_name = %sink_name,
+                source_id = ?source_id,
+                previous = previous,
+                current = level,
+                delta = level - previous,
+                "significant peak level change"
+            );
+        }
         self.levels.insert(source_id, level);
     }
 
