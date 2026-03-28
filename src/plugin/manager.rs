@@ -4,12 +4,14 @@
 //! and wakes only when a UI command or PA subscribe event arrives. No timers,
 //! no polling, no sleep loops.
 
+use std::collections::HashMap;
 use std::sync::mpsc as std_mpsc;
 
-use tracing::instrument;
 use tokio::sync::mpsc;
+use tracing::instrument;
 
 use crate::error::Result;
+use crate::plugin::api::SourceId;
 use crate::plugin::{AudioPlugin, PluginCommand, PluginEvent, PluginInfo, PluginResponse};
 
 /// Bridges the plugin thread with the iced UI thread.
@@ -26,6 +28,15 @@ pub enum PluginThreadMsg {
     Command(PluginCommand),
     /// A PA subscribe event from the background reader thread.
     PaEvent(PaSubscribeKind),
+    /// Peak level update from monitoring streams.
+    ///
+    /// This variant is infrastructure for future stream-callback-driven peaks.
+    /// Currently, peaks arrive via `build_snapshot()` (called on every state
+    /// refresh). When PA PEAK_DETECT stream callbacks are wired in, they will
+    /// send this message at ~25 Hz independently of state refreshes, allowing
+    /// the UI VU meters to update at full rate without triggering a full state rebuild.
+    #[allow(dead_code)]
+    PeakUpdate(HashMap<SourceId, f32>),
 }
 
 /// Categories of PA subscribe events.
@@ -177,7 +188,8 @@ fn run_plugin_thread(
                                 // Mutation succeeded — refresh state so the UI updates
                                 match plugin.handle_command(PluginCommand::GetState) {
                                     Ok(PluginResponse::State(snapshot)) => {
-                                        let _ = event_tx.send(PluginEvent::StateRefreshed(snapshot));
+                                        let _ =
+                                            event_tx.send(PluginEvent::StateRefreshed(snapshot));
                                     }
                                     Ok(_) => {}
                                     Err(e) => {
@@ -194,6 +206,11 @@ fn run_plugin_thread(
                 }
             }
 
+            PluginThreadMsg::PeakUpdate(levels) => {
+                tracing::trace!(count = levels.len(), "peak update from streams");
+                let _ = event_tx.send(PluginEvent::PeakLevels(levels));
+            }
+
             PluginThreadMsg::PaEvent(kind) => {
                 tracing::debug!(kind = ?kind, "PA subscribe event received");
                 match kind {
@@ -203,7 +220,10 @@ fn run_plugin_thread(
                         match plugin.handle_command(PluginCommand::GetState) {
                             Ok(PluginResponse::State(snapshot)) => {
                                 let apps = snapshot.applications.clone();
-                                tracing::debug!(app_count = apps.len(), "emitting ApplicationsChanged from PA subscribe");
+                                tracing::debug!(
+                                    app_count = apps.len(),
+                                    "emitting ApplicationsChanged from PA subscribe"
+                                );
                                 let _ = event_tx.send(PluginEvent::ApplicationsChanged(apps));
                                 let _ = event_tx.send(PluginEvent::StateRefreshed(snapshot));
                             }

@@ -98,7 +98,9 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         .step(0.1)
     };
 
-    let eq_viz = eq_canvas(ch_id, params);
+    // Placeholder — will be replaced with real FFT data from PA stream capture in v0.4.
+    let spectrum: Vec<(f32, f32)> = vec![];
+    let eq_viz = eq_canvas(ch_id, params, &spectrum);
     tracing::trace!(channel_id = ch_id, "rendering eq_viz canvas");
 
     // --- Compressor section ---

@@ -58,6 +58,8 @@ pub enum BandType {
 pub struct EqProgram {
     channel_id: ChannelId,
     bands: Vec<EqBand>,
+    /// Frequency spectrum bins as (freq_hz, level_db) pairs for the overlay.
+    spectrum: Vec<(f32, f32)>,
 }
 
 /// Per-widget mutable state managed by iced.
@@ -70,13 +72,21 @@ pub struct EqState {
 
 /// Build the EQ canvas element for `channel_id` using `params`.
 ///
+/// `spectrum_data` is a slice of `(freq_hz, level_db)` bins for the spectrum overlay.
+/// Pass an empty slice to use the simulated spectrum until real FFT data is available.
+///
 /// Returns an `Element` sized `Length::Fill` × `Length::Fixed(200)`.
-pub fn eq_canvas<'a>(channel_id: ChannelId, params: &EffectsParams) -> Element<'a, Message> {
+pub fn eq_canvas<'a>(
+    channel_id: ChannelId,
+    params: &EffectsParams,
+    spectrum_data: &[(f32, f32)],
+) -> Element<'a, Message> {
     tracing::trace!(
         channel_id,
         eq_freq = params.eq_freq_hz,
         eq_gain = params.eq_gain_db,
         eq_q = params.eq_q,
+        spectrum_bins = spectrum_data.len(),
         "building eq_canvas"
     );
 
@@ -88,7 +98,14 @@ pub fn eq_canvas<'a>(channel_id: ChannelId, params: &EffectsParams) -> Element<'
         label: "Peak",
     }];
 
-    let program = EqProgram { channel_id, bands };
+    // Use real spectrum data when available, otherwise fall back to simulated.
+    let spectrum = if spectrum_data.is_empty() {
+        simulated_spectrum(params)
+    } else {
+        spectrum_data.to_vec()
+    };
+
+    let program = EqProgram { channel_id, bands, spectrum };
 
     canvas::Canvas::new(program)
         .width(Length::Fill)
@@ -112,6 +129,7 @@ impl canvas::Program<Message> for EqProgram {
         let geometry = state.cache.draw(renderer, bounds.size(), |frame| {
             draw_background(frame, bounds.size());
             draw_grid(frame, bounds.size());
+            draw_spectrum(frame, bounds.size(), &self.spectrum);
             draw_db_labels(frame, bounds.size());
             draw_freq_labels(frame, bounds.size());
             draw_curve(frame, bounds.size(), &self.bands);
@@ -121,6 +139,7 @@ impl canvas::Program<Message> for EqProgram {
         tracing::trace!(
             channel_id = self.channel_id,
             bands = self.bands.len(),
+            spectrum_bins = self.spectrum.len(),
             "eq_canvas draw"
         );
 
@@ -333,6 +352,66 @@ fn draw_band_points(frame: &mut Frame, size: Size, bands: &[EqBand]) {
             },
         );
     }
+}
+
+// --- Spectrum overlay ---
+
+/// Spectrum dB floor used for the y-axis mapping in `draw_spectrum`.
+const SPECTRUM_DB_FLOOR: f32 = -80.0;
+/// Spectrum dB ceiling (0 dB = full signal).
+const SPECTRUM_DB_CEIL: f32 = 0.0;
+
+/// Generate a simulated spectrum for display purposes.
+/// In v0.4, this will be replaced with real FFT data from PA stream capture.
+fn simulated_spectrum(_params: &EffectsParams) -> Vec<(f32, f32)> {
+    let mut bins = Vec::with_capacity(128);
+    for i in 0..128 {
+        let t = i as f32 / 127.0;
+        let freq = 20.0 * (20000.0_f32 / 20.0).powf(t);
+        // Base noise floor at -60 dB, rolling off at high frequencies.
+        let level = -60.0 + 20.0 * (1.0 - t) + 5.0 * ((freq * 0.01).sin());
+        bins.push((freq, level.max(SPECTRUM_DB_FLOOR).min(SPECTRUM_DB_CEIL)));
+    }
+    bins
+}
+
+/// Map a spectrum dB value to a Y pixel position.
+///
+/// `SPECTRUM_DB_FLOOR` → bottom of plot; `SPECTRUM_DB_CEIL` → top of plot.
+fn spectrum_db_to_y(db: f32, plot_h: f32) -> f32 {
+    let t = (db.clamp(SPECTRUM_DB_FLOOR, SPECTRUM_DB_CEIL) - SPECTRUM_DB_CEIL)
+        / (SPECTRUM_DB_FLOOR - SPECTRUM_DB_CEIL);
+    PAD_TOP + t * plot_h
+}
+
+/// Draw a filled spectrum overlay behind the EQ curve.
+fn draw_spectrum(frame: &mut Frame, size: Size, bins: &[(f32, f32)]) {
+    if bins.is_empty() {
+        return;
+    }
+
+    let (plot_w, plot_h) = plot_dims(size);
+    let bottom_y = PAD_TOP + plot_h;
+    let fill_color = Color { a: 0.15, ..ACCENT };
+
+    let path = Path::new(|b| {
+        // Start at bottom-left of plot.
+        b.move_to(Point::new(PAD_LEFT, bottom_y));
+
+        for &(freq, db) in bins {
+            let x = freq_to_x(freq, plot_w);
+            let y = spectrum_db_to_y(db, plot_h);
+            b.line_to(Point::new(x, y));
+        }
+
+        // Close back to bottom-right then bottom-left.
+        if let Some(&(last_freq, _)) = bins.last() {
+            b.line_to(Point::new(freq_to_x(last_freq, plot_w), bottom_y));
+        }
+        b.close();
+    });
+
+    frame.fill(&path, fill_color);
 }
 
 // --- DSP: biquad magnitude response ---

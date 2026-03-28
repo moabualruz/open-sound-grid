@@ -3,6 +3,19 @@ use tracing::instrument;
 
 use crate::ui::theme::ThemeMode;
 
+/// Ranked backup output device list for automatic failover.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceFailover {
+    /// Ranked list of output device names, highest priority first.
+    pub output_devices: Vec<String>,
+}
+
+impl Default for DeviceFailover {
+    fn default() -> Self {
+        Self { output_devices: vec![] }
+    }
+}
+
 /// Persisted application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -12,6 +25,8 @@ pub struct AppConfig {
     pub ui: UiConfig,
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
+    #[serde(default)]
+    pub failover: DeviceFailover,
 }
 
 /// A persisted route between a channel and a mix.
@@ -102,6 +117,7 @@ impl Default for AppConfig {
                 window_height: 600,
             },
             routes: Vec::new(),
+            failover: DeviceFailover::default(),
         }
     }
 }

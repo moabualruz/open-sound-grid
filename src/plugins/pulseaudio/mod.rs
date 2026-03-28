@@ -131,32 +131,13 @@ impl PulseAudioPlugin {
             }
         }
 
-        // Refresh peak levels for all known channel sinks before snapshotting.
-        // NOTE: These levels reflect the sink's configured volume, not the actual
-        // signal amplitude. True peak monitoring via PA_STREAM_PEAK_DETECT streams
-        // is a future improvement (requires unsafe callback wiring with libpulse).
-        // channel_sinks is borrowed from self, so collect to avoid borrow conflict.
-        let sink_pairs: Vec<(u32, String)> = self
-            .channel_sinks
-            .iter()
-            .map(|(&id, name)| (id, name.clone()))
-            .collect();
-        for (id, sink_name) in &sink_pairs {
-            tracing::trace!(channel_id = id, sink = %sink_name, "refreshing channel peak level");
-            self.peaks.update_level(sink_name, SourceId::Channel(*id));
-        }
-
-        // Refresh peak levels for all known mix sinks.
-        // Stored under SourceId::Mix so the UI can display VU meters in mix headers.
-        let mix_pairs: Vec<(u32, String)> = self
-            .mix_sinks
-            .iter()
-            .map(|(&id, name)| (id, name.clone()))
-            .collect();
-        for (id, sink_name) in &mix_pairs {
-            tracing::trace!(mix_id = id, sink = %sink_name, "refreshing mix peak level");
-            self.peaks.update_level(sink_name, SourceId::Mix(*id));
-        }
+        // Poll PA for current peak levels of all registered monitor sinks.
+        // Only sinks explicitly started via start_monitoring() are queried —
+        // avoids touching every PA sink on the system.
+        // PeakUpdate messages (sent via the unified channel) are the future
+        // path for stream-callback-driven peaks; for now peaks arrive here
+        // on every state refresh triggered by a PA subscribe event or UI command.
+        self.peaks.read_peaks();
 
         MixerSnapshot {
             channels: self.channels.clone(),
@@ -212,6 +193,7 @@ impl PulseAudioPlugin {
                 match self.modules.create_null_sink(self.connection.as_mut(), &sink_name, &description) {
                     Ok(_module_id) => {
                         tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, "channel created");
+                        self.peaks.start_monitoring(&sink_name, SourceId::Channel(id));
                         self.channel_sinks.insert(id, sink_name);
                     }
                     Err(e) => {
@@ -237,6 +219,7 @@ impl PulseAudioPlugin {
                 tracing::info!(channel_id = id, "removing channel");
                 self.channels.retain(|c| c.id != id);
                 self.channel_sinks.remove(&id);
+                self.peaks.stop_monitoring(&SourceId::Channel(id));
 
                 // Remove all loopbacks involving this channel
                 let source = SourceId::Channel(id);
@@ -270,6 +253,7 @@ impl PulseAudioPlugin {
                 match self.modules.create_null_sink(self.connection.as_mut(), &sink_name, &description) {
                     Ok(_module_id) => {
                         tracing::info!(mix_name = %name, mix_id = id, sink_name = %sink_name, "mix created");
+                        self.peaks.start_monitoring(&sink_name, SourceId::Mix(id));
                         self.mix_sinks.insert(id, sink_name);
                     }
                     Err(e) => {
@@ -293,6 +277,7 @@ impl PulseAudioPlugin {
                 tracing::info!(mix_id = id, "removing mix");
                 self.mixes.retain(|m| m.id != id);
                 self.mix_sinks.remove(&id);
+                self.peaks.stop_monitoring(&SourceId::Mix(id));
 
                 // Remove all loopbacks targeting this mix
                 let keys_to_remove: Vec<_> = self

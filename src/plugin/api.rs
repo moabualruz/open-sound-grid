@@ -209,6 +209,8 @@ pub enum PluginEvent {
     ApplicationsChanged(Vec<AudioApplication>),
     /// Updated peak levels for VU meters.
     PeakLevels(HashMap<SourceId, f32>),
+    /// FFT spectrum data for a channel (frequency bins).
+    SpectrumData { channel: ChannelId, bins: Vec<(f32, f32)> },
     /// Plugin encountered an error.
     Error(String),
     /// Lost connection to audio server.
@@ -224,6 +226,7 @@ impl fmt::Display for PluginEvent {
             PluginEvent::DevicesChanged => "DevicesChanged",
             PluginEvent::ApplicationsChanged(_) => "ApplicationsChanged",
             PluginEvent::PeakLevels(_) => "PeakLevels",
+            PluginEvent::SpectrumData { .. } => "SpectrumData",
             PluginEvent::Error(_) => "Error",
             PluginEvent::ConnectionLost => "ConnectionLost",
             PluginEvent::ConnectionRestored => "ConnectionRestored",

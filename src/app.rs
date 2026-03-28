@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
@@ -67,6 +68,8 @@ pub enum Message {
     PluginDevicesChanged,
     PluginAppsChanged(Vec<crate::plugin::api::AudioApplication>),
     PluginPeakLevels(std::collections::HashMap<SourceId, f32>),
+    /// FFT spectrum data received from plugin (future use).
+    PluginSpectrumData { channel: ChannelId, bins: Vec<(f32, f32)> },
     PluginError(String),
     PluginConnectionLost,
     PluginConnectionRestored,
@@ -127,6 +130,8 @@ pub struct App {
     pub available_presets: Vec<String>,
     /// Currently selected channel for effects panel display.
     pub selected_channel: Option<ChannelId>,
+    /// Per-channel FFT spectrum data (populated when SpectrumData plugin events arrive).
+    pub spectrum_data: HashMap<ChannelId, Vec<(f32, f32)>>,
 }
 
 impl App {
@@ -153,6 +158,7 @@ impl App {
             preset_name_input: String::new(),
             available_presets: crate::presets::MixerPreset::list(),
             selected_channel: None,
+            spectrum_data: HashMap::new(),
         }
     }
 
@@ -408,6 +414,85 @@ impl App {
 
                 self.engine.apply_snapshot(snapshot);
 
+                // Auto-populate failover list on first boot when list is empty
+                if self.config.failover.output_devices.is_empty()
+                    && !self.engine.state.hardware_outputs.is_empty()
+                {
+                    self.config.failover.output_devices = self
+                        .engine
+                        .state
+                        .hardware_outputs
+                        .iter()
+                        .map(|o| o.name.clone())
+                        .collect();
+                    tracing::info!(
+                        devices = ?self.config.failover.output_devices,
+                        "auto-populated failover device list"
+                    );
+                    if let Err(e) = self.config.save() {
+                        tracing::error!(error = %e, "failed to save config after populating failover list");
+                    }
+                }
+
+                // Check for mixes whose output device has disappeared and attempt failover
+                let lost_mixes: Vec<(u32, u32)> = self
+                    .engine
+                    .state
+                    .mixes
+                    .iter()
+                    .filter_map(|mix| {
+                        mix.output.and_then(|output_id| {
+                            let exists = self
+                                .engine
+                                .state
+                                .hardware_outputs
+                                .iter()
+                                .any(|o| o.id == output_id);
+                            if exists { None } else { Some((mix.id, output_id)) }
+                        })
+                    })
+                    .collect();
+
+                for (mix_id, output_id) in lost_mixes {
+                    tracing::warn!(
+                        mix_id,
+                        output_id,
+                        "mix output device disappeared — attempting failover"
+                    );
+                    let fallback = self
+                        .config
+                        .failover
+                        .output_devices
+                        .iter()
+                        .find_map(|fallback_name| {
+                            self.engine
+                                .state
+                                .hardware_outputs
+                                .iter()
+                                .find(|o| o.name == *fallback_name)
+                                .map(|hw| (hw.id, hw.name.clone()))
+                        });
+                    match fallback {
+                        Some((hw_id, hw_name)) => {
+                            tracing::info!(
+                                mix_id,
+                                fallback = %hw_name,
+                                "failover: switching to backup device"
+                            );
+                            self.engine.send_command(PluginCommand::SetMixOutput {
+                                mix: mix_id,
+                                output: hw_id,
+                            });
+                        }
+                        None => {
+                            tracing::warn!(
+                                mix_id,
+                                "failover: no available backup device found in failover list"
+                            );
+                        }
+                    }
+                }
+
                 // Apply any pending output device restores from config
                 if !self.pending_output_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_output_restores);
@@ -630,6 +715,10 @@ impl App {
             Message::PluginPeakLevels(levels) => {
                 tracing::trace!(count = levels.len(), "peak levels received");
                 self.engine.state.update_peaks(levels);
+            }
+            Message::PluginSpectrumData { channel, bins } => {
+                tracing::trace!(channel, bin_count = bins.len(), "spectrum data received");
+                self.spectrum_data.insert(channel, bins);
             }
             Message::PluginError(err) => {
                 tracing::error!(error = %err, "plugin error");
@@ -1313,6 +1402,9 @@ fn plugin_event_stream() -> impl iced::futures::Stream<Item = Message> {
                         PluginEvent::Error(err) => Message::PluginError(err),
                         PluginEvent::ConnectionLost => Message::PluginConnectionLost,
                         PluginEvent::ConnectionRestored => Message::PluginConnectionRestored,
+                        PluginEvent::SpectrumData { channel, bins } => {
+                            Message::PluginSpectrumData { channel, bins }
+                        }
                     };
                     if sender.try_send(msg).is_err() {
                         tracing::warn!("subscription sender full, dropping event");
