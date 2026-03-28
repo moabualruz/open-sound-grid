@@ -67,9 +67,10 @@ impl MixerEngine {
     }
 
     /// Check if plugin is connected.
+    /// Uses state.connected which is set true by apply_snapshot and false by ConnectionLost.
     pub fn is_connected(&self) -> bool {
-        let connected = self.command_tx.is_some();
-        tracing::trace!(connected, "is_connected check");
+        let connected = self.command_tx.is_some() && self.state.connected;
+        tracing::trace!(connected, has_bridge = self.command_tx.is_some(), state_connected = self.state.connected, "is_connected check");
         connected
     }
 }

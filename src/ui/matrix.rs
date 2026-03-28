@@ -304,7 +304,7 @@ fn matrix_cell<'a>(
             )
             .width(16)
             .height(16)
-            .on_press(Message::SourceMuteToggled(source))
+            .on_press(Message::RouteMuteToggled { source, mix: mix_id })
             .padding(0)
             .style(move |_: &Theme, _status| button::Style {
                 background: if muted {

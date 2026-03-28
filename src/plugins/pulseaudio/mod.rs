@@ -94,7 +94,7 @@ impl PulseAudioPlugin {
         }
     }
 
-    fn build_snapshot(&self) -> MixerSnapshot {
+    fn build_snapshot(&mut self) -> MixerSnapshot {
         let hardware_inputs = {
             let v = DeviceEnumerator::list_inputs();
             if v.is_empty() {
@@ -116,6 +116,19 @@ impl PulseAudioPlugin {
                 Vec::new()
             }
         };
+
+        // Refresh peak levels for all known channel sinks before snapshotting.
+        // channel_sinks is borrowed from self, so collect to avoid borrow conflict.
+        let sink_pairs: Vec<(u32, String)> = self
+            .channel_sinks
+            .iter()
+            .map(|(&id, name)| (id, name.clone()))
+            .collect();
+        for (id, sink_name) in sink_pairs {
+            tracing::trace!(channel_id = id, sink = %sink_name, "refreshing peak level");
+            self.peaks.update_level(&sink_name, SourceId::Channel(id));
+        }
+
         MixerSnapshot {
             channels: self.channels.clone(),
             mixes: self.mixes.clone(),
@@ -313,31 +326,17 @@ impl PulseAudioPlugin {
                     self.loopback_modules.insert((source, mix), module_id);
 
                     // Small delay for PipeWire/PA to register the sink-input
-                    tracing::debug!(module_id = module_id, "waiting 100ms for PA to register sink-input (attempt 1)");
-                    thread::sleep(Duration::from_millis(100));
+                    tracing::debug!(module_id = module_id, "waiting 50ms for PA to register sink-input");
+                    thread::sleep(Duration::from_millis(50));
 
-                    let sink_input_idx = match self.modules.find_loopback_sink_input(module_id)? {
+                    match self.modules.find_loopback_sink_input(module_id)? {
                         Some(idx) => {
-                            tracing::debug!(module_id = module_id, sink_input_idx = idx, "found loopback sink-input on attempt 1");
-                            Some(idx)
+                            tracing::debug!(module_id, sink_input_idx = idx, "found loopback sink-input");
+                            self.loopback_sink_inputs.insert((source, mix), idx);
                         }
                         None => {
-                            tracing::warn!(module_id = module_id, "loopback sink-input not found on attempt 1 — retrying after 100ms");
-                            thread::sleep(Duration::from_millis(100));
-                            match self.modules.find_loopback_sink_input(module_id)? {
-                                Some(idx) => {
-                                    tracing::debug!(module_id = module_id, sink_input_idx = idx, "found loopback sink-input on attempt 2");
-                                    Some(idx)
-                                }
-                                None => {
-                                    tracing::warn!(module_id = module_id, "loopback sink-input not found after 2 attempts — volume control unavailable for this route");
-                                    None
-                                }
-                            }
+                            tracing::warn!(module_id, "loopback sink-input not found — volume control unavailable for this route");
                         }
-                    };
-                    if let Some(idx) = sink_input_idx {
-                        self.loopback_sink_inputs.insert((source, mix), idx);
                     }
 
                     self.routes.entry((source, mix)).or_default().enabled = true;

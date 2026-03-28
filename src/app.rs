@@ -36,8 +36,14 @@ pub enum Message {
     },
     MixMuteToggled(MixId),
 
-    // Source controls
+    // Source controls (mutes channel across ALL mixes)
     SourceMuteToggled(SourceId),
+
+    // Route-level mute (mutes one source in one specific mix)
+    RouteMuteToggled {
+        source: SourceId,
+        mix: MixId,
+    },
 
     // Application routing
     AppRouteChanged {
@@ -123,6 +129,11 @@ impl App {
             );
             self.engine.send_command(PluginCommand::GetState);
         }
+
+        // Note: output device restoration happens after the first StateRefreshed
+        // arrives (because mix IDs aren't known until the plugin creates them).
+        // We store the desired output names here for later matching.
+        tracing::debug!("config restore: output devices will be applied after first state refresh");
     }
 
     pub fn theme(&self) -> Theme {
@@ -189,6 +200,20 @@ impl App {
                     muted: !current_muted,
                 });
             }
+            Message::RouteMuteToggled { source, mix } => {
+                let currently_muted = self
+                    .engine
+                    .state
+                    .routes
+                    .get(&(source, mix))
+                    .map_or(false, |r| r.muted);
+                tracing::debug!(?source, ?mix, new_muted = !currently_muted, "route mute toggled");
+                self.engine.send_command(PluginCommand::SetRouteMuted {
+                    source,
+                    mix,
+                    muted: !currently_muted,
+                });
+            }
             Message::AppRouteChanged {
                 app_index,
                 channel_index,
@@ -232,11 +257,15 @@ impl App {
                 let new_mixes: Vec<MixConfig> = snapshot
                     .mixes
                     .iter()
-                    .map(|m| MixConfig {
-                        name: m.name.clone(),
-                        icon: String::new(),
-                        color: [128, 128, 128],
-                        output_device: None,
+                    .map(|m| {
+                        // Preserve existing icon/color/output_device from config
+                        let existing = self.config.mixes.iter().find(|c| c.name == m.name);
+                        MixConfig {
+                            name: m.name.clone(),
+                            icon: existing.map(|c| c.icon.clone()).unwrap_or_default(),
+                            color: existing.map(|c| c.color).unwrap_or([128, 128, 128]),
+                            output_device: existing.and_then(|c| c.output_device.clone()),
+                        }
                     })
                     .collect();
 
@@ -279,6 +308,7 @@ impl App {
                 self.engine.state.update_applications(apps);
             }
             Message::PluginPeakLevels(levels) => {
+                tracing::trace!(count = levels.len(), "peak levels received");
                 self.engine.state.update_peaks(levels);
             }
             Message::PluginError(err) => {
@@ -286,6 +316,7 @@ impl App {
             }
             Message::PluginConnectionLost => {
                 tracing::warn!("plugin connection lost");
+                self.engine.state.connected = false;
             }
             Message::PluginConnectionRestored => {
                 tracing::info!("plugin connection restored");
@@ -479,7 +510,7 @@ impl App {
                 Space::new().width(Length::Fixed(6.0)),
                 text(status_text).size(11).color(ui::theme::TEXT_SECONDARY),
                 Space::new().width(Length::Fill),
-                text(format!("{} channels  ·  {} routes  ·  20ms latency", channel_count, route_count))
+                text(format!("{} channels  ·  {} routes  ·  {}ms latency", channel_count, route_count, self.config.audio.latency_ms))
                     .size(11)
                     .color(ui::theme::TEXT_MUTED),
             ]

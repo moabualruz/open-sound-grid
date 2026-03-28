@@ -8,8 +8,14 @@ use std::process::Command;
 
 use crate::plugin::api::{HardwareInput, HardwareOutput};
 
-/// Filters applied to sink names to exclude virtual/software sinks.
-const SINK_EXCLUDE_PATTERNS: &[&str] = &["_ch", "_mix", "_Apps", "_OBS"];
+/// Prefix used by all OSG-managed virtual sinks (channels and mixes).
+/// Checked via `starts_with` to avoid false positives on real hardware names.
+const OSG_SINK_PREFIX: &str = "osg_";
+
+/// Substring filters for third-party virtual sinks (OBS, etc.).
+/// These are intentionally kept as substring matches because their naming
+/// conventions are not under OSG's control.
+const SINK_EXCLUDE_PATTERNS: &[&str] = &["_Apps", "_OBS"];
 
 /// Filters applied to source names to exclude monitor sources.
 const SOURCE_EXCLUDE_PATTERNS: &[&str] = &[".monitor"];
@@ -28,8 +34,9 @@ pub struct DeviceEnumerator;
 impl DeviceEnumerator {
     /// List hardware audio outputs by parsing `pactl list sinks`.
     ///
-    /// Filters out sinks whose Name contains any of the patterns in
-    /// [`SINK_EXCLUDE_PATTERNS`] (virtual sinks created by OSG, OBS, etc.).
+    /// Filters out OSG-managed virtual sinks (those whose Name starts with
+    /// [`OSG_SINK_PREFIX`]) and third-party virtual sinks matching any pattern
+    /// in [`SINK_EXCLUDE_PATTERNS`].
     pub fn list_outputs() -> Vec<HardwareOutput> {
         tracing::debug!("enumerating hardware outputs via pactl list sinks");
 
@@ -51,6 +58,10 @@ impl DeviceEnumerator {
         let results: Vec<HardwareOutput> = all_devices
             .into_iter()
             .filter(|d| {
+                if d.name.starts_with(OSG_SINK_PREFIX) {
+                    tracing::debug!(name = %d.name, reason = "osg prefix", "excluding virtual sink");
+                    return false;
+                }
                 let excluded = SINK_EXCLUDE_PATTERNS
                     .iter()
                     .any(|pat| d.name.contains(pat));
@@ -252,6 +263,9 @@ Source #3
         let filtered: Vec<_> = devices
             .into_iter()
             .filter(|d| {
+                if d.name.starts_with(OSG_SINK_PREFIX) {
+                    return false;
+                }
                 !SINK_EXCLUDE_PATTERNS
                     .iter()
                     .any(|pat| d.name.contains(pat))

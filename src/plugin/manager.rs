@@ -129,6 +129,7 @@ fn run_plugin_thread(
     pa_event_tx: std_mpsc::Sender<PluginThreadMsg>,
     event_tx: mpsc::UnboundedSender<PluginEvent>,
 ) {
+    let _span = tracing::info_span!("plugin_thread").entered();
     tracing::info!("plugin thread started (event-driven, no polling)");
 
     // Initialize plugin — this spawns `pactl subscribe` internally
@@ -197,9 +198,13 @@ fn run_plugin_thread(
                 tracing::debug!(kind = ?kind, "PA subscribe event received");
                 match kind {
                     PaSubscribeKind::SinkInput => {
-                        // App list may have changed — refresh apps and push full state
+                        // App list may have changed — emit ApplicationsChanged first so
+                        // AppResolver runs before StateRefreshed triggers a UI redraw.
                         match plugin.handle_command(PluginCommand::GetState) {
                             Ok(PluginResponse::State(snapshot)) => {
+                                let apps = snapshot.applications.clone();
+                                tracing::debug!(app_count = apps.len(), "emitting ApplicationsChanged from PA subscribe");
+                                let _ = event_tx.send(PluginEvent::ApplicationsChanged(apps));
                                 let _ = event_tx.send(PluginEvent::StateRefreshed(snapshot));
                             }
                             _ => {}
