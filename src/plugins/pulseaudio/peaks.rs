@@ -25,6 +25,7 @@ impl PeakMonitor {
     /// parse its `Volume:` line, and store the percentage as 0.0..1.0.
     ///
     /// If the sink is not found or the command fails, stores 0.0.
+    #[allow(dead_code)]
     pub fn update_level(&mut self, sink_name: &str, source_id: SourceId) {
         let level = read_sink_volume(sink_name).unwrap_or(0.0);
         tracing::trace!(sink_name = %sink_name, source_id = ?source_id, level = level, "peak level updated");
@@ -48,6 +49,7 @@ impl PeakMonitor {
     }
 
     /// Clear all stored levels.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         tracing::debug!(count = self.levels.len(), "clearing all peak levels");
         self.levels.clear();
@@ -60,6 +62,7 @@ impl PeakMonitor {
 /// `Volume:` line in that block. Expects the format:
 ///   `Volume: front-left: 32768 / 50% / -18.06 dB, ...`
 /// Returns the first channel's percentage as 0.0..1.0.
+#[allow(dead_code)]
 fn read_sink_volume(sink_name: &str) -> Option<f32> {
     let output = Command::new("pactl")
         .args(["list", "sinks"])
@@ -80,6 +83,7 @@ fn read_sink_volume(sink_name: &str) -> Option<f32> {
 }
 
 /// Parse `pactl list sinks` text to find the volume for `sink_name`.
+#[allow(dead_code)]
 fn parse_sink_volume(pactl_output: &str, sink_name: &str) -> Option<f32> {
     let mut in_target_sink = false;
 
@@ -115,6 +119,7 @@ fn parse_sink_volume(pactl_output: &str, sink_name: &str) -> Option<f32> {
 ///
 /// Input example: ` front-left: 32768 / 50% / -18.06 dB, front-right: ...`
 /// Returns 0.5 for 50%.
+#[allow(dead_code)]
 fn parse_volume_percentage(volume_line: &str) -> Option<f32> {
     for segment in volume_line.split('/') {
         let segment = segment.trim();

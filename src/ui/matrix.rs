@@ -31,7 +31,7 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
         return empty_matrix();
     }
 
-    let mut grid = column![].spacing(0);
+    let mut grid = column![].spacing(1);
 
     // Header row: empty corner cell + one header per mix
     let mut header_row = row![
@@ -109,7 +109,7 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
             ch_row = ch_row.push(matrix_cell(source, mix.id, route, peak));
         }
 
-        grid = grid.push(ch_row);
+        grid = grid.push(container(ch_row).padding([4, 0]));
     }
 
     // "+ Create channel" button at the bottom

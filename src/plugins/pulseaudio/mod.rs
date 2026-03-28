@@ -53,8 +53,10 @@ pub struct PulseAudioPlugin {
     loopback_sink_inputs: HashMap<(SourceId, MixId), u32>,
     /// Maps mix_id -> (loopback module_id, output device_id) for mix-to-hardware output.
     mix_output_modules: HashMap<MixId, u32>,
+    #[allow(dead_code)]
     pending_events: Vec<PluginEvent>,
     /// Last emitted peak levels, used to suppress unchanged/insignificant updates.
+    #[allow(dead_code)]
     last_emitted_peaks: HashMap<SourceId, f32>,
     /// `pactl subscribe` child process for PA event notifications.
     subscribe_process: Option<Child>,

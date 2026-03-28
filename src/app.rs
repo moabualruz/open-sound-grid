@@ -44,6 +44,7 @@ pub enum Message {
         app_index: u32,
         channel_index: u32,
     },
+    #[allow(dead_code)]
     RefreshApps,
 
     // Channel/mix creation

@@ -22,11 +22,14 @@ pub const TEXT_MUTED: Color = Color::from_rgb(0.502, 0.482, 0.459); // #807b75 â
 
 // Accent â€” Claude coral/orange
 pub const ACCENT: Color = Color::from_rgb(0.855, 0.467, 0.337); // #da7756
+#[allow(dead_code)]
 pub const ACCENT_HOVER: Color = Color::from_rgb(0.769, 0.416, 0.294); // #c46a4b
+#[allow(dead_code)]
 pub const ACCENT_SECONDARY: Color = Color::from_rgb(0.486, 0.612, 0.749); // #7c9cbf
 
 // Borders
 pub const BORDER: Color = Color::from_rgb(0.200, 0.200, 0.200); // #333333
+#[allow(dead_code)]
 pub const BORDER_ACTIVE: Color = Color::from_rgb(0.855, 0.467, 0.337); // #da7756
 
 // VU meter gradient stops
@@ -42,11 +45,7 @@ pub const MIX_CHAT: Color = Color::from_rgb(0.365, 0.667, 0.408); // #5daa68 (gr
 pub const MIX_AUX: Color = Color::from_rgb(0.769, 0.639, 0.353); // #c4a35a (gold)
 
 // Status
+#[allow(dead_code)]
 pub const STATUS_CONNECTED: Color = Color::from_rgb(0.298, 0.686, 0.314); // green
+#[allow(dead_code)]
 pub const STATUS_ERROR: Color = Color::from_rgb(0.957, 0.263, 0.212); // red
-
-// --- Backward compat aliases (used in existing widgets) ---
-pub const BG_DARKEST: Color = BG_PRIMARY;
-pub const BG_DARK: Color = BG_SECONDARY;
-pub const BG_PANEL: Color = BG_ELEVATED;
-pub const BORDER_SUBTLE: Color = BORDER;

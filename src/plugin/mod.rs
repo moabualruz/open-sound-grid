@@ -10,7 +10,7 @@ pub mod api;
 pub mod manager;
 
 pub use api::*;
-pub use manager::{PaSubscribeKind, PluginThreadMsg};
+pub use manager::PluginThreadMsg;
 
 use crate::error::Result;
 
@@ -19,6 +19,7 @@ pub const API_VERSION: u32 = 1;
 
 /// Declares what a plugin can do.
 /// Core adapts the UI to available capabilities.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PluginCapabilities {
     /// Can create virtual sinks/channels for app routing.
@@ -38,6 +39,7 @@ pub struct PluginCapabilities {
 }
 
 /// Plugin identity and metadata.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PluginInfo {
     /// Unique identifier: "pulseaudio", "pipewire", "coreaudio"
@@ -56,6 +58,7 @@ pub struct PluginInfo {
 ///
 /// Implement this for each audio backend. The plugin runs in its own thread.
 /// All methods are called from that thread — no Send/Sync concerns for internal state.
+#[allow(dead_code)]
 pub trait AudioPlugin: Send {
     /// Return plugin identity and metadata.
     fn info(&self) -> PluginInfo;

@@ -19,6 +19,7 @@ pub type OutputId = u32;
 pub type AppId = u32;
 
 /// A source can be a hardware input or a software channel.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceId {
     Hardware(u32),
@@ -27,6 +28,7 @@ pub enum SourceId {
 
 // --- Data types ---
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HardwareInput {
     pub id: u32,
@@ -34,6 +36,7 @@ pub struct HardwareInput {
     pub description: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct HardwareOutput {
     pub id: OutputId,
@@ -43,6 +46,7 @@ pub struct HardwareOutput {
     pub device_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AudioApplication {
     pub id: AppId,
@@ -102,6 +106,7 @@ pub struct MixerSnapshot {
 
 // --- Commands (Core → Plugin) ---
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PluginCommand {
     /// Get a full snapshot of current state.
@@ -167,6 +172,7 @@ impl fmt::Display for PluginCommand {
 
 // --- Responses (Plugin → Core, synchronous) ---
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PluginResponse {
     Ok,
@@ -181,6 +187,7 @@ pub enum PluginResponse {
 
 // --- Events (Plugin → Core, asynchronous) ---
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PluginEvent {
     /// Full state snapshot from the plugin.
