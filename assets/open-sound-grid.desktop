@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=OpenSoundGrid
+Comment=Professional audio matrix mixer for Linux
+Exec=open-sound-grid
+Icon=open-sound-grid
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;mixer;pulseaudio;pipewire;streaming;

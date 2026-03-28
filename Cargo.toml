@@ -1,0 +1,45 @@
+[package]
+name = "open-sound-grid"
+version = "0.1.0"
+edition = "2024"
+description = "Professional audio matrix mixer for Linux"
+license = "MIT"
+repository = "https://github.com/user/open-sound-grid"
+keywords = ["audio", "mixer", "pulseaudio", "pipewire", "linux"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+# UI
+iced = { version = "0.14", features = ["canvas", "tokio", "svg", "image"] }
+iced_aw = { version = "0.13", default-features = false, features = ["tab_bar", "context_menu", "number_input", "menu", "card"] }
+
+# Audio
+libpulse-binding = "2.30"
+
+# Serialization & Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+confy = "0.6"
+directories = "6"
+
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# System Integration
+ksni = "0.3"
+zbus = "5"
+notify-rust = "4"
+freedesktop-desktop-entry = "0.8"
+freedesktop-icons = "0.4"
+single-instance = "0.3"
+
+# Logging & Errors
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
