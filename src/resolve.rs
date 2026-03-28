@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use tracing::{debug, warn};
+use tracing::warn;
 
 /// Maps application binary names to their desktop entry display names and icon paths.
 ///
@@ -41,7 +41,7 @@ impl AppResolver {
             }
         }
 
-        debug!("[AppResolver] cached {} desktop entries", cache.len());
+        tracing::info!(entries = cache.len(), "AppResolver cache built from desktop entries");
         Self { cache }
     }
 
@@ -59,6 +59,7 @@ impl AppResolver {
     ) -> (String, Option<PathBuf>) {
         if let Some((display_name, icon_name)) = self.cache.get(binary) {
             let icon_path = icon_name.as_deref().and_then(resolve_icon_path);
+            tracing::debug!(binary, display_name = %display_name, has_icon = icon_path.is_some(), "resolve hit (binary match)");
             return (display_name.clone(), icon_path);
         }
 
@@ -66,6 +67,7 @@ impl AppResolver {
             let pa_lower = pa_name.to_lowercase();
             if let Some((display_name, icon_name)) = self.cache.get(&pa_lower) {
                 let icon_path = icon_name.as_deref().and_then(resolve_icon_path);
+                tracing::debug!(binary, pa_name, display_name = %display_name, "resolve hit (PA name match)");
                 return (display_name.clone(), icon_path);
             }
         }
@@ -74,6 +76,7 @@ impl AppResolver {
             .map(String::from)
             .unwrap_or_else(|| capitalize(binary));
 
+        tracing::debug!(binary, display_name = %display_name, "resolve miss, using fallback name");
         (display_name, None)
     }
 }
@@ -87,13 +90,14 @@ fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
     if icon_name.starts_with('/') {
         let path = PathBuf::from(icon_name);
         if path.exists() {
+            tracing::debug!(icon_name, "icon resolved from absolute path");
             return Some(path);
         }
         warn!("[AppResolver] absolute icon path does not exist: {icon_name}");
         return None;
     }
 
-    freedesktop_icons::lookup(icon_name)
+    let result = freedesktop_icons::lookup(icon_name)
         .with_size(48)
         .with_cache()
         .find()
@@ -101,7 +105,10 @@ fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
             freedesktop_icons::lookup(icon_name)
                 .with_cache()
                 .find()
-        })
+        });
+
+    tracing::debug!(icon_name, found = result.is_some(), "icon lookup result");
+    result
 }
 
 /// Extract the bare binary name from a desktop entry `Exec` value.

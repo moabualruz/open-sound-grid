@@ -36,6 +36,7 @@ impl Tray for OsgTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
+        tracing::debug!("tray icon activated (clicked)");
         self.send(TrayCommand::Show);
     }
 
@@ -43,21 +44,30 @@ impl Tray for OsgTray {
         vec![
             StandardItem {
                 label: "Show".into(),
-                activate: Box::new(|t: &mut Self| t.send(TrayCommand::Show)),
+                activate: Box::new(|t: &mut Self| {
+                    tracing::debug!("tray menu: Show clicked");
+                    t.send(TrayCommand::Show);
+                }),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: "Mute All".into(),
                 icon_name: "audio-volume-muted".into(),
-                activate: Box::new(|t: &mut Self| t.send(TrayCommand::MuteAll)),
+                activate: Box::new(|t: &mut Self| {
+                    tracing::debug!("tray menu: Mute All clicked");
+                    t.send(TrayCommand::MuteAll);
+                }),
                 ..Default::default()
             }
             .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
-                activate: Box::new(|t: &mut Self| t.send(TrayCommand::Quit)),
+                activate: Box::new(|t: &mut Self| {
+                    tracing::debug!("tray menu: Quit clicked");
+                    t.send(TrayCommand::Quit);
+                }),
                 ..Default::default()
             }
             .into(),
@@ -70,6 +80,7 @@ impl Tray for OsgTray {
 /// Returns a receiver for tray user actions.
 /// If the tray fails to start, logs a warning — the app still works without it.
 pub fn spawn_tray() -> mpsc::UnboundedReceiver<TrayCommand> {
+    tracing::info!("spawning system tray");
     let (tx, rx) = mpsc::unbounded_channel();
     let tray = OsgTray { tx };
 

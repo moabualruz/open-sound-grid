@@ -17,13 +17,19 @@ impl AppDetector {
     /// Filters out sink-inputs with no `application.name` and those
     /// whose `media.name` contains "loopback" (our loopback modules).
     pub fn list_applications(&self) -> Result<Vec<AudioApplication>> {
+        tracing::debug!("listing audio applications via pactl");
+
         let output = Command::new("pactl")
             .args(["list", "sink-inputs"])
             .output()
-            .map_err(|e| OsgError::PulseAudio(format!("failed to run pactl: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(err = %e, "pactl list sink-inputs failed to execute");
+                OsgError::PulseAudio(format!("failed to run pactl: {e}"))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(status = %output.status, stderr = %stderr, "pactl list sink-inputs returned error");
             return Err(OsgError::PulseAudio(format!(
                 "pactl exited with {}: {stderr}",
                 output.status
@@ -31,7 +37,17 @@ impl AppDetector {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(parse_sink_inputs(&stdout))
+        let apps = parse_sink_inputs(&stdout);
+        tracing::debug!(count = apps.len(), "audio applications detected");
+        for app in &apps {
+            tracing::debug!(
+                app_name = %app.name,
+                binary = %app.binary,
+                stream_index = app.stream_index,
+                "detected audio application"
+            );
+        }
+        Ok(apps)
     }
 }
 
@@ -58,11 +74,18 @@ impl SinkInputEntry {
     /// Convert to `AudioApplication` if this entry passes filters.
     fn into_application(self) -> Option<AudioApplication> {
         // Filter: must have an application name.
-        let name = self.app_name?;
+        let name = match self.app_name {
+            Some(n) => n,
+            None => {
+                tracing::trace!(index = self.index, "skipping sink-input with no application.name");
+                return None;
+            }
+        };
 
         // Filter: skip loopback streams (our loopback modules).
         if let Some(ref media) = self.media_name {
             if media.to_lowercase().contains("loopback") {
+                tracing::trace!(index = self.index, app_name = %name, media_name = %media, "filtering out loopback stream");
                 return None;
             }
         }

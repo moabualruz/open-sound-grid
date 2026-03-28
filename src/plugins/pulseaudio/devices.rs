@@ -31,26 +31,33 @@ impl DeviceEnumerator {
     /// Filters out sinks whose Name contains any of the patterns in
     /// [`SINK_EXCLUDE_PATTERNS`] (virtual sinks created by OSG, OBS, etc.).
     pub fn list_outputs() -> Vec<HardwareOutput> {
+        tracing::debug!("enumerating hardware outputs via pactl list sinks");
+
         let output = match Command::new("pactl")
             .args(["list", "sinks"])
             .output()
         {
             Ok(o) => o,
             Err(e) => {
-                tracing::error!("[DeviceEnumerator] pactl list sinks failed: {e}");
+                tracing::error!(err = %e, "pactl list sinks failed to execute");
                 return Vec::new();
             }
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let devices = parse_sections(&stdout, "Sink");
+        let all_devices = parse_sections(&stdout, "Sink");
+        tracing::trace!(total = all_devices.len(), "raw sinks parsed from pactl");
 
-        devices
+        let results: Vec<HardwareOutput> = all_devices
             .into_iter()
             .filter(|d| {
-                !SINK_EXCLUDE_PATTERNS
+                let excluded = SINK_EXCLUDE_PATTERNS
                     .iter()
-                    .any(|pat| d.name.contains(pat))
+                    .any(|pat| d.name.contains(pat));
+                if excluded {
+                    tracing::trace!(sink_name = %d.name, "filtering out virtual sink");
+                }
+                !excluded
             })
             .map(|d| HardwareOutput {
                 id: d.index,
@@ -58,7 +65,13 @@ impl DeviceEnumerator {
                 description: d.description,
                 device_id: d.name,
             })
-            .collect()
+            .collect();
+
+        tracing::debug!(count = results.len(), "hardware outputs enumerated");
+        for dev in &results {
+            tracing::debug!(device_id = %dev.device_id, name = %dev.name, "found output device");
+        }
+        results
     }
 
     /// List hardware audio inputs by parsing `pactl list sources`.
@@ -66,33 +79,46 @@ impl DeviceEnumerator {
     /// Filters out sources whose Name contains `.monitor` (PA creates
     /// a monitor source for every sink automatically).
     pub fn list_inputs() -> Vec<HardwareInput> {
+        tracing::debug!("enumerating hardware inputs via pactl list sources");
+
         let output = match Command::new("pactl")
             .args(["list", "sources"])
             .output()
         {
             Ok(o) => o,
             Err(e) => {
-                tracing::error!("[DeviceEnumerator] pactl list sources failed: {e}");
+                tracing::error!(err = %e, "pactl list sources failed to execute");
                 return Vec::new();
             }
         };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let devices = parse_sections(&stdout, "Source");
+        let all_devices = parse_sections(&stdout, "Source");
+        tracing::trace!(total = all_devices.len(), "raw sources parsed from pactl");
 
-        devices
+        let results: Vec<HardwareInput> = all_devices
             .into_iter()
             .filter(|d| {
-                !SOURCE_EXCLUDE_PATTERNS
+                let excluded = SOURCE_EXCLUDE_PATTERNS
                     .iter()
-                    .any(|pat| d.name.contains(pat))
+                    .any(|pat| d.name.contains(pat));
+                if excluded {
+                    tracing::trace!(source_name = %d.name, "filtering out monitor source");
+                }
+                !excluded
             })
             .map(|d| HardwareInput {
                 id: d.index,
                 name: d.description.clone(),
                 description: d.description,
             })
-            .collect()
+            .collect();
+
+        tracing::debug!(count = results.len(), "hardware inputs enumerated");
+        for dev in &results {
+            tracing::debug!(name = %dev.name, "found input device");
+        }
+        results
     }
 }
 

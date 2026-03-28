@@ -27,6 +27,7 @@ impl PeakMonitor {
     /// If the sink is not found or the command fails, stores 0.0.
     pub fn update_level(&mut self, sink_name: &str, source_id: SourceId) {
         let level = read_sink_volume(sink_name).unwrap_or(0.0);
+        tracing::trace!(sink_name = %sink_name, source_id = ?source_id, level = level, "peak level updated");
         self.levels.insert(source_id, level);
     }
 
@@ -37,6 +38,7 @@ impl PeakMonitor {
 
     /// Clear all stored levels.
     pub fn clear(&mut self) {
+        tracing::debug!(count = self.levels.len(), "clearing all peak levels");
         self.levels.clear();
     }
 }
@@ -54,11 +56,16 @@ fn read_sink_volume(sink_name: &str) -> Option<f32> {
         .ok()?;
 
     if !output.status.success() {
+        tracing::warn!(sink_name = %sink_name, "pactl list sinks returned non-zero status");
         return None;
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_sink_volume(&stdout, sink_name)
+    let result = parse_sink_volume(&stdout, sink_name);
+    if result.is_none() {
+        tracing::warn!(sink_name = %sink_name, "sink not found in pactl output");
+    }
+    result
 }
 
 /// Parse `pactl list sinks` text to find the volume for `sink_name`.

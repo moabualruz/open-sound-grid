@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, rule, text, Space};
+use iced::widget::{button, column, container, rule, text, Space};
 use iced::{Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
@@ -17,23 +17,21 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput]) -> Ele
         expanded_view(hardware_inputs)
     };
 
-    row![
-        container(content)
-            .width(width)
-            .height(Length::Fill)
-            .padding([12, 8])
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(BG_SECONDARY)),
-                ..Default::default()
-            }),
-        rule::vertical(1).style(|_: &Theme| rule::Style {
-            color: BORDER,
-            radius: 0.0.into(),
-            fill_mode: rule::FillMode::Full,
-            snap: true,
-        }),
-    ]
-    .into()
+    // Sidebar container with right border baked in (no separate rule widget)
+    container(content)
+        .width(width)
+        .height(Length::Fill)
+        .padding([12, 12])
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(BG_SECONDARY)),
+            border: Border {
+                color: BORDER,
+                width: 0.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput]) -> Element<'a, Message> {

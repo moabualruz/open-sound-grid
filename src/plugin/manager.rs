@@ -67,15 +67,19 @@ impl PluginManager {
 
 /// Plugin thread main loop.
 fn run_plugin_thread(plugin: &mut dyn AudioPlugin, mut handle: PluginThreadHandle) {
+    tracing::info!("plugin thread started");
     // Initialize
     if let Err(e) = plugin.init() {
+        tracing::error!(error = %e, "plugin init failed");
         let _ = handle.event_tx.send(PluginEvent::Error(format!("Init failed: {e}")));
         return;
     }
+    tracing::info!("plugin initialized successfully");
 
     loop {
         // Process commands (non-blocking batch)
         while let Ok(cmd) = handle.command_rx.try_recv() {
+            tracing::debug!(command = ?cmd, "plugin thread received command");
             match cmd {
                 PluginCommand::GetState => {
                     // For state queries, we send the response as an event
@@ -106,7 +110,9 @@ fn run_plugin_thread(plugin: &mut dyn AudioPlugin, mut handle: PluginThreadHandl
         }
 
         // Poll events from the plugin
-        for event in plugin.poll_events() {
+        let events = plugin.poll_events();
+        for event in events {
+            tracing::debug!(event = ?event, "plugin thread forwarding event");
             if handle.event_tx.send(event).is_err() {
                 // UI side dropped — shut down
                 tracing::info!("Plugin bridge closed, shutting down");
@@ -115,6 +121,7 @@ fn run_plugin_thread(plugin: &mut dyn AudioPlugin, mut handle: PluginThreadHandl
             }
         }
 
+        tracing::trace!("plugin poll loop tick");
         // Sleep briefly to avoid busy-spin (plugin thread is not latency-critical)
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60Hz poll
     }

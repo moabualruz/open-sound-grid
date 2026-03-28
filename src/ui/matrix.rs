@@ -100,15 +100,10 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
 
     scrollable(
         container(grid)
-            .padding(8)
+            .padding([12, 16])
             .width(Length::Fill)
             .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(BG_ELEVATED)),
-                border: Border {
-                    color: BORDER,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
+                background: Some(Background::Color(BG_PRIMARY)),
                 ..Default::default()
             }),
     )
@@ -303,12 +298,7 @@ fn empty_matrix<'a>() -> Element<'a, Message> {
     .center_x(Length::Fill)
     .center_y(Length::Fill)
     .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(BG_ELEVATED)),
-        border: Border {
-            color: BORDER,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
+        background: Some(Background::Color(BG_PRIMARY)),
         ..Default::default()
     })
     .into()

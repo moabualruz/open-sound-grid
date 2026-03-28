@@ -26,6 +26,15 @@ pub struct MixerState {
 impl MixerState {
     /// Apply a plugin snapshot, replacing all state.
     pub fn apply_snapshot(&mut self, snap: MixerSnapshot) {
+        tracing::info!(
+            channels = snap.channels.len(),
+            mixes = snap.mixes.len(),
+            routes = snap.routes.len(),
+            hardware_inputs = snap.hardware_inputs.len(),
+            hardware_outputs = snap.hardware_outputs.len(),
+            applications = snap.applications.len(),
+            "applied snapshot"
+        );
         self.channels = snap.channels;
         self.mixes = snap.mixes;
         self.hardware_inputs = snap.hardware_inputs;
@@ -43,11 +52,13 @@ impl MixerState {
 
     /// Update peak levels without replacing everything else.
     pub fn update_peaks(&mut self, levels: HashMap<SourceId, f32>) {
+        tracing::trace!(count = levels.len(), "updating peak levels");
         self.peak_levels = levels;
     }
 
     /// Update application list.
     pub fn update_applications(&mut self, apps: Vec<AudioApplication>) {
+        tracing::debug!(count = apps.len(), "updating application list");
         self.applications = apps;
     }
 }

@@ -73,11 +73,27 @@ impl Default for AppConfig {
 
 impl AppConfig {
     pub fn load() -> Self {
-        confy::load("open-sound-grid", None).unwrap_or_default()
+        match confy::load::<Self>("open-sound-grid", None) {
+            Ok(config) => {
+                let path = confy::get_configuration_file_path("open-sound-grid", None)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "<unknown>".into());
+                tracing::info!(path = %path, "config loaded");
+                config
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to load config, using defaults");
+                Self::default()
+            }
+        }
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
         confy::store("open-sound-grid", None, self)?;
+        let path = confy::get_configuration_file_path("open-sound-grid", None)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".into());
+        tracing::info!(path = %path, "config saved");
         Ok(())
     }
 }

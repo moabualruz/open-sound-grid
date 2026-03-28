@@ -12,12 +12,24 @@ mod tray;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
-    // Initialize logging
+    // Initialize logging.
+    // Default: info level. Override with RUST_LOG env var.
+    // Examples:
+    //   RUST_LOG=debug                          — all modules at debug
+    //   RUST_LOG=open_sound_grid=trace          — trace-level for our code only
+    //   RUST_LOG=open_sound_grid::plugins=debug — debug PA plugin only
+    //   RUST_LOG=warn                           — quiet mode
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            tracing_subscriber::EnvFilter::new("open_sound_grid=info")
+        });
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("open_sound_grid=info".parse().unwrap()),
-        )
+        .with_env_filter(env_filter)
+        .with_target(true)
+        .with_thread_names(true)
+        .with_file(true)
+        .with_line_number(true)
         .init();
 
     // Single instance check

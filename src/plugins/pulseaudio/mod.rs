@@ -128,8 +128,11 @@ impl AudioPlugin for PulseAudioPlugin {
     }
 
     fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
+        tracing::debug!(cmd = ?cmd, "received plugin command");
+
         match cmd {
             PluginCommand::GetState => {
+                tracing::debug!("building mixer snapshot");
                 Ok(PluginResponse::State(self.build_snapshot()))
             }
 
@@ -143,6 +146,7 @@ impl AudioPlugin for PulseAudioPlugin {
 
             PluginCommand::ListApplications => {
                 let apps = self.apps.list_applications()?;
+                tracing::debug!(count = apps.len(), "listing applications");
                 Ok(PluginResponse::Applications(apps))
             }
 
@@ -155,11 +159,11 @@ impl AudioPlugin for PulseAudioPlugin {
 
                 match self.modules.create_null_sink(&sink_name, &description) {
                     Ok(_module_id) => {
-                        tracing::info!("Created channel '{name}' (id={id}, sink={sink_name})");
+                        tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, "channel created");
                         self.channel_sinks.insert(id, sink_name);
                     }
                     Err(e) => {
-                        tracing::error!("Failed to create null sink for channel '{name}': {e}");
+                        tracing::error!(channel_name = %name, err = %e, "failed to create null sink for channel");
                         return Err(e);
                     }
                 }
@@ -175,6 +179,7 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::RemoveChannel { id } => {
+                tracing::info!(channel_id = id, "removing channel");
                 self.channels.retain(|c| c.id != id);
                 self.channel_sinks.remove(&id);
 
@@ -186,6 +191,7 @@ impl AudioPlugin for PulseAudioPlugin {
                     .filter(|(src, _)| *src == source)
                     .cloned()
                     .collect();
+                tracing::debug!(channel_id = id, loopbacks_to_remove = keys_to_remove.len(), "cleaning up channel loopbacks");
                 for key in &keys_to_remove {
                     if let Some(module_id) = self.loopback_modules.remove(key) {
                         let _ = self.modules.unload_module(module_id);
@@ -206,11 +212,11 @@ impl AudioPlugin for PulseAudioPlugin {
 
                 match self.modules.create_null_sink(&sink_name, &description) {
                     Ok(_module_id) => {
-                        tracing::info!("Created mix '{name}' (id={id}, sink={sink_name})");
+                        tracing::info!(mix_name = %name, mix_id = id, sink_name = %sink_name, "mix created");
                         self.mix_sinks.insert(id, sink_name);
                     }
                     Err(e) => {
-                        tracing::error!("Failed to create null sink for mix '{name}': {e}");
+                        tracing::error!(mix_name = %name, err = %e, "failed to create null sink for mix");
                         return Err(e);
                     }
                 }
@@ -227,6 +233,7 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::RemoveMix { id } => {
+                tracing::info!(mix_id = id, "removing mix");
                 self.mixes.retain(|m| m.id != id);
                 self.mix_sinks.remove(&id);
 
@@ -237,6 +244,7 @@ impl AudioPlugin for PulseAudioPlugin {
                     .filter(|(_, mix)| *mix == id)
                     .cloned()
                     .collect();
+                tracing::debug!(mix_id = id, loopbacks_to_remove = keys_to_remove.len(), "cleaning up mix loopbacks");
                 for key in &keys_to_remove {
                     if let Some(module_id) = self.loopback_modules.remove(key) {
                         let _ = self.modules.unload_module(module_id);
@@ -250,12 +258,13 @@ impl AudioPlugin for PulseAudioPlugin {
 
             PluginCommand::SetRouteVolume { source, mix, volume } => {
                 let volume = volume.clamp(0.0, 1.0);
+                tracing::debug!(source = ?source, mix = mix, volume = volume, "setting route volume");
                 self.routes.entry((source, mix)).or_default().volume = volume;
 
                 // Apply via PA if we have a sink-input for this route
                 if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
                     if let Err(e) = self.modules.set_sink_input_volume(sink_input_idx, volume) {
-                        tracing::warn!("Failed to set volume: {e}");
+                        tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set route volume via PA");
                     }
                 }
 
@@ -263,17 +272,19 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetRouteEnabled { source, mix, enabled } => {
+                tracing::debug!(source = ?source, mix = mix, enabled = enabled, "setting route enabled");
                 self.routes.entry((source, mix)).or_default().enabled = enabled;
                 // TODO: load/unload loopback module based on enabled state
                 Ok(PluginResponse::Ok)
             }
 
             PluginCommand::SetRouteMuted { source, mix, muted } => {
+                tracing::debug!(source = ?source, mix = mix, muted = muted, "setting route muted");
                 self.routes.entry((source, mix)).or_default().muted = muted;
 
                 if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
                     if let Err(e) = self.modules.set_sink_input_mute(sink_input_idx, muted) {
-                        tracing::warn!("Failed to set mute: {e}");
+                        tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set route mute via PA");
                     }
                 }
 
@@ -281,14 +292,18 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::RouteApp { app, channel } => {
+                tracing::debug!(app_id = app, channel_id = channel, "routing app to channel");
                 let sink_name = self
                     .channel_sinks
                     .get(&channel)
                     .cloned()
-                    .ok_or(OsgError::ChannelNotFound(channel))?;
+                    .ok_or_else(|| {
+                        tracing::error!(channel_id = channel, "channel not found for app routing");
+                        OsgError::ChannelNotFound(channel)
+                    })?;
 
                 if let Err(e) = self.modules.move_sink_input(app, &sink_name) {
-                    tracing::warn!("Failed to move sink-input {app} -> {sink_name}: {e}");
+                    tracing::warn!(app_id = app, sink_name = %sink_name, err = %e, "failed to move sink-input for app routing");
                 }
 
                 if let Some(ch) = self.channels.iter_mut().find(|c| c.id == channel) {
@@ -301,6 +316,7 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::UnrouteApp { app } => {
+                tracing::debug!(app_id = app, "unrouting app from all channels");
                 for ch in &mut self.channels {
                     ch.apps.retain(|&a| a != app);
                 }
@@ -308,33 +324,40 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetMixOutput { mix, output } => {
+                tracing::debug!(mix_id = mix, output = ?output, "setting mix output");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.output = Some(output);
                     Ok(PluginResponse::Ok)
                 } else {
+                    tracing::error!(mix_id = mix, "mix not found for SetMixOutput");
                     Err(OsgError::MixNotFound(mix))
                 }
             }
 
             PluginCommand::SetMixMasterVolume { mix, volume } => {
+                tracing::debug!(mix_id = mix, volume = volume, "setting mix master volume");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.master_volume = volume.clamp(0.0, 1.0);
                     Ok(PluginResponse::Ok)
                 } else {
+                    tracing::error!(mix_id = mix, "mix not found for SetMixMasterVolume");
                     Err(OsgError::MixNotFound(mix))
                 }
             }
 
             PluginCommand::SetMixMuted { mix, muted } => {
+                tracing::debug!(mix_id = mix, muted = muted, "setting mix muted");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.muted = muted;
                     Ok(PluginResponse::Ok)
                 } else {
+                    tracing::error!(mix_id = mix, "mix not found for SetMixMuted");
                     Err(OsgError::MixNotFound(mix))
                 }
             }
 
             PluginCommand::SetSourceMuted { source, muted } => {
+                tracing::debug!(source = ?source, muted = muted, "setting source muted across all routes");
                 for ((src, _), route) in &mut self.routes {
                     if *src == source {
                         route.muted = muted;
@@ -358,7 +381,11 @@ impl AudioPlugin for PulseAudioPlugin {
             self.pending_events.push(PluginEvent::PeakLevels(levels));
         }
 
-        self.pending_events.drain(..).collect()
+        let events: Vec<PluginEvent> = self.pending_events.drain(..).collect();
+        for event in &events {
+            tracing::trace!(event = ?event, "emitting plugin event");
+        }
+        events
     }
 
     fn cleanup(&mut self) -> Result<()> {
@@ -367,6 +394,7 @@ impl AudioPlugin for PulseAudioPlugin {
         if let Some(mut conn) = self.connection.take() {
             conn.disconnect();
         }
+        tracing::info!("PulseAudio plugin cleanup complete");
         Ok(())
     }
 }

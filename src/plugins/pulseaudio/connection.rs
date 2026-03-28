@@ -25,6 +25,8 @@ pub struct PulseConnection {
 impl PulseConnection {
     /// Connect to the default PulseAudio server.
     pub fn connect() -> Result<Self> {
+        tracing::debug!("attempting PulseAudio connection");
+
         let mut mainloop = Mainloop::new()
             .ok_or_else(|| OsgError::PulseAudio("failed to create threaded mainloop".into()))?;
 
@@ -46,6 +48,7 @@ impl PulseConnection {
 
         if mainloop.start().is_err() {
             mainloop.unlock();
+            tracing::error!("failed to start PulseAudio threaded mainloop");
             return Err(OsgError::PulseAudio("failed to start threaded mainloop".into()));
         }
 
@@ -56,6 +59,7 @@ impl PulseConnection {
         {
             mainloop.unlock();
             mainloop.stop();
+            tracing::error!("PulseAudio context connect call failed");
             return Err(OsgError::PulseAudio("context connect call failed".into()));
         }
 
@@ -68,6 +72,7 @@ impl PulseConnection {
                 context::State::Failed | context::State::Terminated => {
                     mainloop.unlock();
                     mainloop.stop();
+                    tracing::error!(state = ?state, "PulseAudio context entered terminal state");
                     return Err(OsgError::PulseAudio(format!(
                         "context entered terminal state: {state:?}"
                     )));
@@ -76,6 +81,7 @@ impl PulseConnection {
                     if Instant::now() >= deadline {
                         mainloop.unlock();
                         mainloop.stop();
+                        tracing::error!(timeout_secs = CONNECT_TIMEOUT.as_secs(), "timed out waiting for PulseAudio context Ready");
                         return Err(OsgError::PulseAudio(
                             "timed out waiting for context Ready".into(),
                         ));
@@ -98,6 +104,7 @@ impl PulseConnection {
     /// Disconnect and stop the mainloop. Safe to call multiple times.
     pub fn disconnect(&mut self) {
         if !self.connected {
+            tracing::debug!("disconnect called but already disconnected");
             return;
         }
         self.mainloop.lock();

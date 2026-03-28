@@ -27,6 +27,7 @@ impl MixerEngine {
 
     /// Attach a plugin bridge (called after PluginManager::start).
     pub fn attach(&mut self, bridge: PluginBridge) {
+        tracing::info!("plugin bridge attached");
         self.bridge = Some(bridge);
         // Request initial state
         self.send_command(PluginCommand::GetState);
@@ -34,15 +35,24 @@ impl MixerEngine {
 
     /// Send a command to the plugin.
     pub fn send_command(&self, cmd: PluginCommand) {
+        tracing::debug!(command = ?cmd, "sending plugin command");
         if let Some(bridge) = &self.bridge {
             if bridge.command_tx.send(cmd).is_err() {
                 tracing::error!("Plugin bridge disconnected");
             }
+        } else {
+            tracing::warn!("send_command called with no bridge attached");
         }
     }
 
     /// Apply a snapshot from the plugin to the engine state.
     pub fn apply_snapshot(&mut self, snapshot: MixerSnapshot) {
+        tracing::info!(
+            channels = snapshot.channels.len(),
+            mixes = snapshot.mixes.len(),
+            routes = snapshot.routes.len(),
+            "applying snapshot to engine"
+        );
         self.state.apply_snapshot(snapshot);
     }
 
