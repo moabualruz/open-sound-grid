@@ -8,36 +8,39 @@ pub mod state;
 
 pub use state::*;
 
-use crate::plugin::api::{MixerSnapshot, PluginCommand};
+use tokio::sync::mpsc;
+
+use crate::plugin::api::{MixerSnapshot, PluginCommand, PluginEvent};
 use crate::plugin::manager::PluginBridge;
 
 /// The mixer engine sits between the UI and the plugin.
 pub struct MixerEngine {
     pub state: MixerState,
-    bridge: Option<PluginBridge>,
+    command_tx: Option<mpsc::UnboundedSender<PluginCommand>>,
 }
 
 impl MixerEngine {
     pub fn new() -> Self {
         Self {
             state: MixerState::default(),
-            bridge: None,
+            command_tx: None,
         }
     }
 
-    /// Attach a plugin bridge (called after PluginManager::start).
-    pub fn attach(&mut self, bridge: PluginBridge) {
+    /// Attach a plugin bridge. Returns the event receiver for use in subscriptions.
+    pub fn attach(&mut self, bridge: PluginBridge) -> mpsc::UnboundedReceiver<PluginEvent> {
         tracing::info!("plugin bridge attached");
-        self.bridge = Some(bridge);
+        self.command_tx = Some(bridge.command_tx);
         // Request initial state
         self.send_command(PluginCommand::GetState);
+        bridge.event_rx
     }
 
     /// Send a command to the plugin.
     pub fn send_command(&self, cmd: PluginCommand) {
         tracing::debug!(command = ?cmd, "sending plugin command");
-        if let Some(bridge) = &self.bridge {
-            if bridge.command_tx.send(cmd).is_err() {
+        if let Some(tx) = &self.command_tx {
+            if tx.send(cmd).is_err() {
                 tracing::error!("Plugin bridge disconnected");
             }
         } else {
@@ -58,6 +61,6 @@ impl MixerEngine {
 
     /// Check if plugin is connected.
     pub fn is_connected(&self) -> bool {
-        self.bridge.is_some()
+        self.command_tx.is_some()
     }
 }

@@ -82,20 +82,17 @@ fn run_plugin_thread(plugin: &mut dyn AudioPlugin, mut handle: PluginThreadHandl
             tracing::debug!(command = ?cmd, "plugin thread received command");
             match cmd {
                 PluginCommand::GetState => {
-                    // For state queries, we send the response as an event
-                    // since the bridge is async
                     match plugin.handle_command(PluginCommand::GetState) {
                         Ok(PluginResponse::State(snapshot)) => {
-                            // State is delivered via the event channel
-                            // The engine will handle this
-                            let _ = handle.event_tx.send(PluginEvent::DevicesChanged);
-                            // TODO: dedicated StateRefreshed event
+                            let _ = handle
+                                .event_tx
+                                .send(PluginEvent::StateRefreshed(snapshot));
                         }
                         Ok(_) => {}
                         Err(e) => {
                             let _ = handle
                                 .event_tx
-                                .send(PluginEvent::Error(format!("Command error: {e}")));
+                                .send(PluginEvent::Error(format!("GetState error: {e}")));
                         }
                     }
                 }

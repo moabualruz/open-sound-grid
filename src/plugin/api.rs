@@ -157,6 +157,8 @@ pub enum PluginResponse {
 
 #[derive(Debug, Clone)]
 pub enum PluginEvent {
+    /// Full state snapshot from the plugin.
+    StateRefreshed(MixerSnapshot),
     /// Devices were added, removed, or changed.
     DevicesChanged,
     /// Running audio applications changed.

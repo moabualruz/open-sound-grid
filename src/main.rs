@@ -67,24 +67,37 @@ fn main() -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    // Use a Mutex to hand the bridge into the boot closure (Fn, called once)
-    let bridge_cell = std::sync::Mutex::new(bridge);
+    // Store event receiver in global slot BEFORE iced starts.
+    // The subscription will consume it on first tick.
+    if let Some(bridge) = bridge {
+        // Split: command_tx stays with engine, event_rx goes to subscription
+        let bridge_cell = std::sync::Mutex::new(Some(bridge));
 
-    iced::application(
-        move || {
-            let mut app = app::App::new();
-            if let Some(bridge) = bridge_cell.lock().unwrap().take() {
-                app.engine.attach(bridge);
-                tracing::info!("Plugin bridge attached to engine");
-            }
-            app
-        },
-        app::App::update,
-        app::App::view,
-    )
-    .theme(app::App::theme)
-    .window(window_settings)
-    .run()?;
+        iced::application(
+            move || {
+                let mut app = app::App::new();
+                if let Some(bridge) = bridge_cell.lock().unwrap().take() {
+                    let event_rx = app.engine.attach(bridge);
+                    app::App::set_event_receiver(event_rx);
+                    tracing::info!("Plugin bridge attached to engine");
+                }
+                app
+            },
+            app::App::update,
+            app::App::view,
+        )
+        .subscription(app::App::subscription)
+        .theme(app::App::theme)
+        .window(window_settings)
+        .run()?;
+    } else {
+        // No plugin — run UI without audio backend
+        iced::application(app::App::new, app::App::update, app::App::view)
+            .subscription(app::App::subscription)
+            .theme(app::App::theme)
+            .window(window_settings)
+            .run()?;
+    }
 
     tracing::info!("OpenSoundGrid exiting");
     Ok(())
