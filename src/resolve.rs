@@ -18,7 +18,20 @@ impl AppResolver {
     pub fn new() -> Self {
         let mut cache = HashMap::new();
 
-        let locales: &[&str] = &[];
+        let lang_env = std::env::var("LANG").unwrap_or_default();
+        let lang_base = lang_env.split('.').next().unwrap_or("");
+        let lang_short = lang_base.split('_').next().unwrap_or("");
+        let locale_vec: Vec<&str> = if lang_base.is_empty() {
+            vec![]
+        } else if lang_short == lang_base {
+            vec![lang_base]
+        } else {
+            vec![lang_base, lang_short]
+        };
+        let locales: &[&str] = &locale_vec;
+
+        tracing::debug!(locales = ?locales, "AppResolver using system locales");
+
         let entries = freedesktop_desktop_entry::Iter::new(
             freedesktop_desktop_entry::default_paths(),
         )

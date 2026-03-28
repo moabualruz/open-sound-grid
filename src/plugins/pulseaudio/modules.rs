@@ -20,6 +20,7 @@ impl ModuleManager {
         self.loaded_modules.len()
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn create_null_sink(&mut self, name: &str, description: &str) -> Result<u32> {
         tracing::debug!(sink_name = %name, description = %description, "creating null sink");
 
@@ -50,6 +51,7 @@ impl ModuleManager {
         Ok(module_id)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn create_loopback(
         &mut self,
         source_monitor: &str,
@@ -86,6 +88,7 @@ impl ModuleManager {
         Ok(module_id)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn unload_module(&mut self, module_id: u32) -> Result<()> {
         tracing::debug!(module_id = module_id, "unloading module");
 
@@ -125,6 +128,7 @@ impl ModuleManager {
     /// Retries up to 3 times with 100ms delay between attempts because
     /// PipeWire can take a moment to register the sink-input after the
     /// module is loaded.
+    #[tracing::instrument(skip(self))]
     pub fn find_loopback_sink_input(&self, module_id: u32) -> Result<Option<u32>> {
         let target = format!("\"{}\"", module_id);
 

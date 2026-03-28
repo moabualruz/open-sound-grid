@@ -523,11 +523,51 @@ impl App {
             ..Default::default()
         });
 
-        // Right panel: flush stack — header, sep, body, app panel, sep, status
-        let right_panel = column![header, sep(), matrix, app_panel, sep(), status_bar,]
+        // Settings overlay — shown when settings_open is true
+        let settings_panel: Option<Element<'_, Message>> = if self.settings_open {
+            tracing::trace!(settings_open = true, "rendering settings panel");
+            let latency_text = format!("Latency: {}ms", self.config.audio.latency_ms);
+            let panel = container(
+                column![
+                    text("Settings").size(14).color(ui::theme::TEXT_PRIMARY),
+                    Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
+                    text(latency_text).size(12).color(ui::theme::TEXT_SECONDARY),
+                    text(format!("Config: ~/.config/open-sound-grid/")).size(11).color(ui::theme::TEXT_MUTED),
+                    Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
+                    text(format!("Plugin: {}", if self.engine.is_connected() { "PulseAudio" } else { "None" }))
+                        .size(12).color(ui::theme::TEXT_SECONDARY),
+                    text(format!("Channels: {} / Mixes: {}", self.engine.state.channels.len(), self.engine.state.mixes.len()))
+                        .size(12).color(ui::theme::TEXT_SECONDARY),
+                ]
+                .spacing(4)
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(|_: &Theme| container::Style {
+                background: Some(iced::Background::Color(ui::theme::BG_ELEVATED)),
+                border: iced::Border {
+                    color: ui::theme::BORDER,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            });
+            Some(panel.into())
+        } else {
+            None
+        };
+
+        // Right panel: flush stack — header, sep, body, [settings], app panel, sep, status
+        let mut right_panel = column![header, sep(), matrix, app_panel]
             .spacing(0)
             .width(Length::Fill)
             .height(Length::Fill);
+
+        if let Some(settings) = settings_panel {
+            right_panel = right_panel.push(settings);
+        }
+
+        let right_panel = right_panel.push(sep()).push(status_bar);
 
         let content = row![sidebar, right_panel];
 

@@ -53,11 +53,6 @@ pub struct PulseAudioPlugin {
     loopback_sink_inputs: HashMap<(SourceId, MixId), u32>,
     /// Maps mix_id -> (loopback module_id, output device_id) for mix-to-hardware output.
     mix_output_modules: HashMap<MixId, u32>,
-    #[allow(dead_code)]
-    pending_events: Vec<PluginEvent>,
-    /// Last emitted peak levels, used to suppress unchanged/insignificant updates.
-    #[allow(dead_code)]
-    last_emitted_peaks: HashMap<SourceId, f32>,
     /// `pactl subscribe` child process for PA event notifications.
     subscribe_process: Option<Child>,
     /// Sender for pushing PA subscribe events into the plugin thread's unified channel.
@@ -87,8 +82,6 @@ impl PulseAudioPlugin {
             loopback_modules: HashMap::new(),
             loopback_sink_inputs: HashMap::new(),
             mix_output_modules: HashMap::new(),
-            pending_events: Vec::new(),
-            last_emitted_peaks: HashMap::new(),
             subscribe_process: None,
             unified_tx: None,
         }
@@ -652,9 +645,8 @@ impl AudioPlugin for PulseAudioPlugin {
     fn poll_events(&mut self) -> Vec<PluginEvent> {
         // Called once after init to drain any startup events.
         // After that, all events flow through the unified channel (no polling).
-        let events: Vec<PluginEvent> = self.pending_events.drain(..).collect();
-        tracing::trace!(event_count = events.len(), "poll_events draining pending events");
-        events
+        // No pending_events field anymore — events go through the unified channel.
+        Vec::new()
     }
 
     fn cleanup(&mut self) -> Result<()> {
