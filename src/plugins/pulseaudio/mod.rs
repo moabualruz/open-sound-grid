@@ -21,8 +21,6 @@ use std::collections::HashMap;
 use std::io::BufRead;
 use std::process::{Child, Stdio};
 use std::sync::mpsc as std_mpsc;
-use std::thread;
-use std::time::Duration;
 
 use crate::effects::EffectsChain;
 use crate::error::{OsgError, Result};
@@ -114,13 +112,24 @@ impl PulseAudioPlugin {
             }
             v
         };
-        let applications = match self.apps.list_applications(self.connection.as_mut()) {
+        let mut applications = match self.apps.list_applications(self.connection.as_mut()) {
             Ok(apps) => apps,
             Err(e) => {
                 tracing::warn!(err = %e, "build_snapshot: list_applications failed — returning empty list");
                 Vec::new()
             }
         };
+
+        // Populate AudioApplication.channel from channel.apps
+        for app in &mut applications {
+            for channel in &self.channels {
+                if channel.apps.contains(&app.stream_index) {
+                    app.channel = Some(channel.id);
+                    tracing::trace!(app_name = %app.name, channel_id = channel.id, "app routed to channel in snapshot");
+                    break;
+                }
+            }
+        }
 
         // Refresh peak levels for all known channel sinks before snapshotting.
         // NOTE: These levels reflect the sink's configured volume, not the actual
@@ -354,10 +363,7 @@ impl PulseAudioPlugin {
                     tracing::debug!(module_id = module_id, source = ?source, mix = mix, "loopback module created");
                     self.loopback_modules.insert((source, mix), module_id);
 
-                    // Small delay for PipeWire/PA to register the sink-input
-                    tracing::debug!(module_id = module_id, "waiting 50ms for PA to register sink-input");
-                    thread::sleep(Duration::from_millis(50));
-
+                    // find_loopback_sink_input has its own retry logic (3 attempts, 100ms each)
                     match self.modules.find_loopback_sink_input(module_id)? {
                         Some(idx) => {
                             tracing::debug!(module_id, sink_input_idx = idx, "found loopback sink-input");
@@ -423,7 +429,11 @@ impl PulseAudioPlugin {
             }
 
             PluginCommand::UnrouteApp { app } => {
-                tracing::debug!(app_id = app, "unrouting app from all channels");
+                tracing::debug!(app_id = app, "unrouting app — moving to default sink");
+                // Move the app's stream back to the default PA sink
+                if let Err(e) = self.modules.move_sink_input(app, "@DEFAULT_SINK@") {
+                    tracing::warn!(app_id = app, err = %e, "failed to move sink-input to default sink during unroute");
+                }
                 for ch in &mut self.channels {
                     ch.apps.retain(|&a| a != app);
                 }

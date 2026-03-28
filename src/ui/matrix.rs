@@ -50,7 +50,7 @@ pub fn matrix_grid<'a>(
         // Corner cell (channel name column)
         container(text("").size(12))
             .width(Length::Fixed(120.0))
-            .height(Length::Fixed(80.0))
+            .height(Length::Fixed(96.0))
     ]
     .spacing(1);
 
@@ -94,9 +94,9 @@ pub fn matrix_grid<'a>(
     header_row = header_row.push(
         container(add_mix_btn)
             .width(Length::Fixed(140.0))
-            .height(Length::Fixed(80.0))
+            .height(Length::Fixed(96.0))
             .center_x(Length::Fixed(140.0))
-            .center_y(Length::Fixed(80.0)),
+            .center_y(Length::Fixed(96.0)),
     );
 
     grid = grid.push(
@@ -290,6 +290,11 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
     tracing::trace!(name, muted, source = ?source, "rendering channel label");
     let name_color = if muted { TEXT_MUTED } else { TEXT_PRIMARY };
 
+    let channel_id = match source {
+        SourceId::Channel(id) => Some(id),
+        _ => None,
+    };
+
     let mute_label = if muted { "M" } else { " " };
     let mute_btn = button(
         text(mute_label)
@@ -316,8 +321,8 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
     });
 
     // Remove button — only shown for named channels (SourceId::Channel)
-    let remove_btn: Option<Element<'a, Message>> = if let SourceId::Channel(channel_id) = source {
-        tracing::trace!(channel_id, "rendering channel remove button");
+    let remove_btn: Option<Element<'a, Message>> = if let Some(cid) = channel_id {
+        tracing::trace!(channel_id = cid, "rendering channel remove button");
         Some(
             button(
                 text("×")
@@ -327,7 +332,7 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
             )
             .width(12)
             .height(12)
-            .on_press(Message::RemoveChannel(channel_id))
+            .on_press(Message::RemoveChannel(cid))
             .padding(0)
             .style(|_: &Theme, status| button::Style {
                 background: match status {
@@ -358,21 +363,34 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId) -> Element<'a, M
         label_row = label_row.push(Space::new().width(Length::Fill)).push(btn);
     }
 
-    container(label_row)
-    .width(Length::Fixed(120.0))
-    .height(Length::Fixed(72.0))
-    .padding([4, 8])
-    .center_y(Length::Fixed(72.0))
-    .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(BG_PRIMARY)),
-        border: Border {
-            color: BORDER,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
-    })
-    .into()
+    let inner = container(label_row)
+        .width(Length::Fixed(120.0))
+        .height(Length::Fixed(96.0))
+        .padding([4, 8])
+        .center_y(Length::Fixed(96.0))
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(BG_PRIMARY)),
+            border: Border {
+                color: BORDER,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        });
+
+    if let Some(cid) = channel_id {
+        tracing::trace!(channel_id = cid, "channel label is clickable, will emit SelectedChannel");
+        button(inner)
+            .on_press(Message::SelectedChannel(Some(cid)))
+            .padding(0)
+            .style(|_: &Theme, _status| button::Style {
+                background: None,
+                ..Default::default()
+            })
+            .into()
+    } else {
+        inner.into()
+    }
 }
 
 /// A single matrix intersection cell: mute icon + slider + VU meter.
@@ -461,10 +479,10 @@ fn matrix_cell<'a>(
 
     container(cell_content)
         .width(Length::Fixed(140.0))
-        .height(Length::Fixed(72.0))
+        .height(Length::Fixed(96.0))
         .padding(4)
         .center_x(Length::Fixed(140.0))
-        .center_y(Length::Fixed(72.0))
+        .center_y(Length::Fixed(96.0))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(BG_ELEVATED)),
             border: Border {

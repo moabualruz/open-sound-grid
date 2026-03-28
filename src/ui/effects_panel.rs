@@ -4,8 +4,8 @@
 //! Parameters are stored and sent to the plugin; audio processing is wired
 //! when PA stream capture is available.
 
-use iced::widget::{column, container, row, slider, text, toggler, Space};
-use iced::{Element, Length, Theme};
+use iced::widget::{button, column, container, row, slider, text, toggler, Space};
+use iced::{Background, Element, Length, Theme};
 
 use crate::app::Message;
 use crate::effects::EffectsParams;
@@ -16,6 +16,27 @@ use crate::ui::theme;
 pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
+    tracing::trace!(channel_id = ch_id, name = %channel.name, effects_enabled = params.enabled, "rendering effects panel");
+
+    let close_btn = button(
+        text("×").size(13).color(theme::TEXT_MUTED).center(),
+    )
+    .width(20)
+    .height(20)
+    .on_press(Message::SelectedChannel(None))
+    .padding(0)
+    .style(|_: &Theme, status| button::Style {
+        background: match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                Some(Background::Color(theme::BG_HOVER))
+            }
+            _ => None,
+        },
+        text_color: theme::TEXT_MUTED,
+        ..Default::default()
+    });
+
+    tracing::trace!(channel_id = ch_id, "rendering effects panel close button");
 
     let header = row![
         text("Effects").size(13).color(theme::TEXT_PRIMARY),
@@ -23,6 +44,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
         toggler(params.enabled)
             .on_toggle(move |enabled| Message::EffectsToggled { channel: ch_id, enabled })
             .size(16),
+        close_btn,
     ]
     .align_y(iced::Alignment::Center)
     .spacing(8);
@@ -98,6 +120,28 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
         .step(0.1)
     };
 
+    let comp_attack_label = text(format!("Attack: {:.1} ms", params.comp_attack_ms))
+        .size(11)
+        .color(theme::TEXT_MUTED);
+    let comp_attack = {
+        let id = ch_id;
+        slider(0.1_f32..=100.0, params.comp_attack_ms, move |v| {
+            Message::EffectsParamChanged { channel: id, param: "comp_attack_ms".into(), value: v }
+        })
+        .step(0.1)
+    };
+
+    let comp_release_label = text(format!("Release: {:.0} ms", params.comp_release_ms))
+        .size(11)
+        .color(theme::TEXT_MUTED);
+    let comp_release = {
+        let id = ch_id;
+        slider(10.0_f32..=1000.0, params.comp_release_ms, move |v| {
+            Message::EffectsParamChanged { channel: id, param: "comp_release_ms".into(), value: v }
+        })
+        .step(1.0)
+    };
+
     // --- Noise gate section ---
     let gate_label = text("Noise Gate").size(11).color(theme::TEXT_SECONDARY);
 
@@ -110,6 +154,17 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
             Message::EffectsParamChanged { channel: id, param: "gate_threshold_db".into(), value: v }
         })
         .step(0.5)
+    };
+
+    let gate_hold_label = text(format!("Hold: {:.0} ms", params.gate_hold_ms))
+        .size(11)
+        .color(theme::TEXT_MUTED);
+    let gate_hold = {
+        let id = ch_id;
+        slider(1.0_f32..=500.0, params.gate_hold_ms, move |v| {
+            Message::EffectsParamChanged { channel: id, param: "gate_hold_ms".into(), value: v }
+        })
+        .step(1.0)
     };
 
     let channel_label = text(format!("Channel: {}", channel.name))
@@ -137,12 +192,18 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo) -> Element<'a, Message> {
         comp_thresh,
         comp_ratio_label,
         comp_ratio,
+        comp_attack_label,
+        comp_attack,
+        comp_release_label,
+        comp_release,
         Space::new().height(Length::Fixed(4.0)),
         sep(),
         Space::new().height(Length::Fixed(4.0)),
         gate_label,
         gate_thresh_label,
         gate_thresh,
+        gate_hold_label,
+        gate_hold,
     ]
     .spacing(2)
     .padding(8);

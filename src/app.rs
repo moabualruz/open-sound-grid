@@ -4,7 +4,7 @@ use iced::widget::{button, column, container, pick_list, row, text, text_input, 
 use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
-use crate::config::{AppConfig, ChannelConfig, MixConfig};
+use crate::config::{AppConfig, ChannelConfig, MixConfig, RouteConfig};
 use crate::engine::MixerEngine;
 use crate::plugin::api::{ChannelId, MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
 use crate::resolve::AppResolver;
@@ -110,6 +110,8 @@ pub struct App {
     pub sidebar_collapsed: bool,
     /// (mix_name, device_name) pairs waiting to be applied after first StateRefreshed.
     pub pending_output_restores: Vec<(String, String)>,
+    /// Routes waiting to be replayed after next StateRefreshed (used by LoadPreset).
+    pub pending_route_restores: Vec<RouteConfig>,
     /// Keyboard focus: channel row index.
     pub focused_row: Option<usize>,
     /// Keyboard focus: mix column index.
@@ -138,6 +140,7 @@ impl App {
             settings_open: false,
             sidebar_collapsed,
             pending_output_restores: Vec::new(),
+            pending_route_restores: Vec::new(),
             focused_row: None,
             focused_col: None,
             preset_name_input: String::new(),
@@ -381,13 +384,95 @@ impl App {
                     }
                 }
 
-                // Only persist when the channel or mix list actually changed
-                if new_channels != self.config.channels || new_mixes != self.config.mixes {
+                // Apply any pending route restores (from LoadPreset)
+                if !self.pending_route_restores.is_empty() {
+                    let restores = std::mem::take(&mut self.pending_route_restores);
+                    tracing::info!(count = restores.len(), "applying pending route restores");
+                    for route in restores {
+                        let ch_id = self.engine.state.channels.iter()
+                            .find(|c| c.name == route.channel_name)
+                            .map(|c| c.id);
+                        let mix_id = self.engine.state.mixes.iter()
+                            .find(|m| m.name == route.mix_name)
+                            .map(|m| m.id);
+                        match (ch_id, mix_id) {
+                            (Some(ch), Some(mix)) => {
+                                let source = SourceId::Channel(ch);
+                                tracing::debug!(
+                                    channel = %route.channel_name,
+                                    mix = %route.mix_name,
+                                    volume = route.volume,
+                                    enabled = route.enabled,
+                                    muted = route.muted,
+                                    "restoring route from preset"
+                                );
+                                if route.enabled {
+                                    self.engine.send_command(PluginCommand::SetRouteEnabled {
+                                        source,
+                                        mix,
+                                        enabled: true,
+                                    });
+                                    self.engine.send_command(PluginCommand::SetRouteVolume {
+                                        source,
+                                        mix,
+                                        volume: route.volume,
+                                    });
+                                    if route.muted {
+                                        self.engine.send_command(PluginCommand::SetRouteMuted {
+                                            source,
+                                            mix,
+                                            muted: true,
+                                        });
+                                    }
+                                }
+                            }
+                            _ => {
+                                tracing::warn!(
+                                    channel = %route.channel_name,
+                                    mix = %route.mix_name,
+                                    channel_found = ch_id.is_some(),
+                                    mix_found = mix_id.is_some(),
+                                    "pending route restore: channel or mix not found"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Rebuild route config from current engine state
+                let new_routes: Vec<RouteConfig> = self.engine.state.routes.iter()
+                    .filter_map(|((source, mix_id), route)| {
+                        let channel_name = match source {
+                            SourceId::Channel(id) => self.engine.state.channels.iter()
+                                .find(|c| c.id == *id)
+                                .map(|c| c.name.clone())?,
+                            _ => return None,
+                        };
+                        let mix_name = self.engine.state.mixes.iter()
+                            .find(|m| m.id == *mix_id)
+                            .map(|m| m.name.clone())?;
+                        Some(RouteConfig {
+                            channel_name,
+                            mix_name,
+                            volume: route.volume,
+                            enabled: route.enabled,
+                            muted: route.muted,
+                        })
+                    })
+                    .collect();
+
+                // Only persist when channel, mix, or route lists actually changed
+                if new_channels != self.config.channels
+                    || new_mixes != self.config.mixes
+                    || new_routes != self.config.routes
+                {
                     self.config.channels = new_channels;
                     self.config.mixes = new_mixes;
+                    self.config.routes = new_routes;
                     tracing::debug!(
                         channels = self.config.channels.len(),
                         mixes = self.config.mixes.len(),
+                        routes = self.config.routes.len(),
                         "config changed, saving"
                     );
                     if let Err(e) = self.config.save() {
@@ -700,8 +785,28 @@ impl App {
                 tracing::info!(name = %name, "loading preset");
                 match crate::presets::MixerPreset::load(&name) {
                     Ok(preset) => {
+                        tracing::debug!(
+                            channels = preset.channels.len(),
+                            mixes = preset.mixes.len(),
+                            routes = preset.routes.len(),
+                            "preset loaded, queuing route restores"
+                        );
                         self.config.channels = preset.channels;
                         self.config.mixes = preset.mixes;
+                        // Queue route restores for deferred application after next StateRefreshed
+                        self.pending_route_restores = preset.routes.iter()
+                            .map(|r| RouteConfig {
+                                channel_name: r.channel_name.clone(),
+                                mix_name: r.mix_name.clone(),
+                                volume: r.volume,
+                                enabled: r.enabled,
+                                muted: r.muted,
+                            })
+                            .collect();
+                        tracing::debug!(
+                            count = self.pending_route_restores.len(),
+                            "route restores queued for next StateRefreshed"
+                        );
                         let _ = self.config.save();
                         self.restore_from_config();
                     }
@@ -753,9 +858,11 @@ impl App {
                 }
                 _ => None,
             }),
-            iced::keyboard::listen().map(|event| match event {
-                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => Message::KeyPressed(key, modifiers),
-                _ => Message::WindowResized(0, 0),
+            iced::keyboard::listen().filter_map(|event| match event {
+                iced::keyboard::Event::KeyPressed { key, modifiers, .. } => {
+                    Some(Message::KeyPressed(key, modifiers))
+                }
+                _ => None,
             }),
         ])
     }
@@ -989,23 +1096,27 @@ impl App {
             None
         };
 
-        // Right panel: flush stack — header, sep, body, [settings], app panel, sep, status
-        let mut right_panel = column![header, sep(), matrix, app_panel]
+        // Right panel: flush stack — header, sep, matrix, [settings], [effects], app panel, sep, status
+        let mut right_panel = column![header, sep(), matrix]
             .spacing(0)
             .width(Length::Fill)
             .height(Length::Fill);
 
+        // Settings panel before app panel
         if let Some(settings) = settings_panel {
             right_panel = right_panel.push(settings);
         }
 
-        // Effects panel — shown below the matrix when a channel is selected
+        // Effects panel — shown below settings, before app panel
         if let Some(ch_id) = self.selected_channel {
             if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
                 tracing::trace!(channel_id = ch_id, "rendering effects panel");
                 right_panel = right_panel.push(ui::effects_panel::effects_panel(ch));
             }
         }
+
+        // App panel after settings/effects
+        right_panel = right_panel.push(app_panel);
 
         let right_panel = right_panel.push(sep()).push(status_bar);
 

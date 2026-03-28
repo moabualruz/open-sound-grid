@@ -9,6 +9,18 @@ pub struct AppConfig {
     pub mixes: Vec<MixConfig>,
     pub audio: AudioConfig,
     pub ui: UiConfig,
+    #[serde(default)]
+    pub routes: Vec<RouteConfig>,
+}
+
+/// A persisted route between a channel and a mix.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteConfig {
+    pub channel_name: String,
+    pub mix_name: String,
+    pub volume: f32,
+    pub enabled: bool,
+    pub muted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +84,7 @@ impl Default for AppConfig {
                 window_width: 1000,
                 window_height: 600,
             },
+            routes: Vec::new(),
         }
     }
 }
@@ -87,6 +100,7 @@ impl AppConfig {
                     path = %path,
                     channels = config.channels.len(),
                     mixes = config.mixes.len(),
+                    routes = config.routes.len(),
                     "config loaded"
                 );
                 for ch in &config.channels {
