@@ -176,7 +176,6 @@ impl App {
             row![
                 text("OpenSoundGrid").size(18).color(ui::theme::TEXT_PRIMARY),
                 Space::new().width(Length::Fill),
-                text("Settings").size(13).color(ui::theme::TEXT_SECONDARY),
             ]
             .padding([10, 16])
             .align_y(iced::Alignment::Center),
@@ -241,6 +240,15 @@ impl App {
             .height(Length::Fill)
             .style(|_theme: &Theme| container::Style {
                 background: Some(iced::Background::Color(ui::theme::BG_PRIMARY)),
+                border: iced::Border {
+                    radius: iced::border::Radius {
+                        top_left: 0.0,
+                        top_right: 0.0,
+                        bottom_right: 8.0,
+                        bottom_left: 8.0,
+                    },
+                    ..Default::default()
+                },
                 ..Default::default()
             })
             .into()
