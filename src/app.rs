@@ -1,8 +1,9 @@
 use iced::widget::{column, container, row, rule, text, Space};
 use iced::{Element, Length, Task, Theme};
 
-use crate::audio::types::{AudioApplication, MixId, MixerState, SourceId};
 use crate::config::AppConfig;
+use crate::engine::MixerEngine;
+use crate::plugin::api::{MixId, PluginCommand, SourceId};
 use crate::ui;
 
 /// All possible UI messages.
@@ -36,9 +37,8 @@ pub enum Message {
     },
     RefreshApps,
 
-    // Backend events
-    BackendStateUpdate(MixerState),
-    BackendError(String),
+    // Plugin events
+    PluginError(String),
 
     // UI
     SettingsToggled,
@@ -48,8 +48,7 @@ pub enum Message {
 /// Application state.
 pub struct App {
     pub config: AppConfig,
-    pub mixer: MixerState,
-    pub applications: Vec<AudioApplication>,
+    pub engine: MixerEngine,
     pub settings_open: bool,
 }
 
@@ -59,8 +58,7 @@ impl App {
 
         Self {
             config,
-            mixer: MixerState::default(),
-            applications: Vec::new(),
+            engine: MixerEngine::new(),
             settings_open: false,
         }
     }
@@ -72,46 +70,69 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::RouteVolumeChanged { source, mix, volume } => {
-                if let Some(route) = self.mixer.routes.get_mut(&(source, mix)) {
-                    route.volume = volume;
-                }
-                // TODO: send BackendCommand::SetRouteVolume via bridge
+                self.engine.send_command(PluginCommand::SetRouteVolume {
+                    source,
+                    mix,
+                    volume,
+                });
             }
             Message::RouteToggled { source, mix } => {
-                if let Some(route) = self.mixer.routes.get_mut(&(source, mix)) {
-                    route.enabled = !route.enabled;
-                }
+                let currently_enabled = self
+                    .engine
+                    .state
+                    .routes
+                    .get(&(source, mix))
+                    .map_or(true, |r| r.enabled);
+                self.engine.send_command(PluginCommand::SetRouteEnabled {
+                    source,
+                    mix,
+                    enabled: !currently_enabled,
+                });
             }
             Message::MixMasterVolumeChanged { mix, volume } => {
-                if let Some(m) = self.mixer.mixes.iter_mut().find(|m| m.id == mix) {
-                    m.master_volume = volume;
-                }
+                self.engine
+                    .send_command(PluginCommand::SetMixMasterVolume { mix, volume });
             }
             Message::MixMuteToggled(mix) => {
-                if let Some(m) = self.mixer.mixes.iter_mut().find(|m| m.id == mix) {
-                    m.muted = !m.muted;
-                }
+                let currently_muted = self
+                    .engine
+                    .state
+                    .mixes
+                    .iter()
+                    .find(|m| m.id == mix)
+                    .map_or(false, |m| m.muted);
+                self.engine.send_command(PluginCommand::SetMixMuted {
+                    mix,
+                    muted: !currently_muted,
+                });
             }
-            Message::SourceMuteToggled(_source) => {
-                // TODO: toggle mute for source across all mixes
+            Message::SourceMuteToggled(source) => {
+                self.engine.send_command(PluginCommand::SetSourceMuted {
+                    source,
+                    muted: true, // TODO: toggle
+                });
             }
-            Message::AppRouteChanged { .. } => {
-                // TODO: route app to channel via bridge
+            Message::AppRouteChanged {
+                app_index,
+                channel_index,
+            } => {
+                self.engine.send_command(PluginCommand::RouteApp {
+                    app: app_index,
+                    channel: channel_index,
+                });
             }
             Message::RefreshApps => {
-                // TODO: request app list refresh via bridge
+                self.engine
+                    .send_command(PluginCommand::ListApplications);
             }
-            Message::BackendStateUpdate(state) => {
-                self.mixer = state;
-            }
-            Message::BackendError(err) => {
-                tracing::error!("Backend error: {}", err);
+            Message::PluginError(err) => {
+                tracing::error!("Plugin error: {}", err);
             }
             Message::SettingsToggled => {
                 self.settings_open = !self.settings_open;
             }
             Message::Tick => {
-                // TODO: poll peak levels from bridge
+                // TODO: poll events from plugin bridge
             }
         }
         Task::none()
@@ -129,17 +150,23 @@ impl App {
         )
         .width(Length::Fill)
         .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_DARK)),
+            background: Some(iced::Background::Color(ui::theme::BG_SECONDARY)),
             ..Default::default()
         });
 
         let matrix = ui::matrix::matrix_placeholder();
 
-        let apps = ui::app_list::app_list_panel(&self.applications);
+        let apps = ui::app_list::app_list_panel(&self.engine.state.applications);
+
+        let status_text = if self.engine.is_connected() {
+            "Connected"
+        } else {
+            "Disconnected"
+        };
 
         let status_bar = container(
             row![
-                text("Ready").size(11),
+                text(status_text).size(11),
                 Space::new().width(Length::Fill),
                 text(format!("{} channels", self.config.channels.len())).size(11),
             ]
@@ -147,25 +174,18 @@ impl App {
         )
         .width(Length::Fill)
         .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(ui::theme::BG_DARKEST)),
+            background: Some(iced::Background::Color(ui::theme::BG_PRIMARY)),
             ..Default::default()
         });
 
-        let content = column![
-            header,
-            rule::horizontal(1),
-            matrix,
-            rule::horizontal(1),
-            apps,
-            status_bar,
-        ]
-        .spacing(0);
+        let content = column![header, rule::horizontal(1), matrix, rule::horizontal(1), apps, status_bar,]
+            .spacing(0);
 
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(ui::theme::BG_DARKEST)),
+                background: Some(iced::Background::Color(ui::theme::BG_PRIMARY)),
                 ..Default::default()
             })
             .into()

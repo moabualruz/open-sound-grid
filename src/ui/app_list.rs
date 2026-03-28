@@ -2,7 +2,7 @@ use iced::widget::{column, container, text};
 use iced::{Element, Length};
 
 use crate::app::Message;
-use crate::audio::types::AudioApplication;
+use crate::plugin::api::AudioApplication;
 
 /// Panel showing detected audio applications.
 ///
@@ -17,7 +17,7 @@ pub fn app_list_panel<'a>(apps: &[AudioApplication]) -> Element<'a, Message> {
     } else {
         let mut col = column![text("Applications").size(14)].spacing(4);
         for app in apps {
-            col = col.push(text(format!("  {} (PID: {})", app.name, app.id.0)).size(12));
+            col = col.push(text(format!("  {} (PID: {})", app.name, app.id)).size(12));
         }
         col
     };

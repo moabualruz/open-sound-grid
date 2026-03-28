@@ -2,9 +2,11 @@ use iced::window;
 use iced::Size;
 
 mod app;
-mod audio;
 mod config;
+mod engine;
 mod error;
+mod plugin;
+mod plugins;
 mod tray;
 mod ui;
 
