@@ -1,23 +1,39 @@
 //! System tray via ksni (StatusNotifierItem).
-//! Communicates with the iced app via an mpsc channel.
+//! Runs in its own thread with a dedicated tokio runtime.
 
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Tray, TrayMethods};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TrayCommand { Show, Hide, Quit, MuteAll }
+pub enum TrayCommand {
+    Show,
+    #[allow(dead_code)]
+    Hide,
+    Quit,
+    MuteAll,
+}
 
-struct OsgTray { tx: mpsc::UnboundedSender<TrayCommand> }
+struct OsgTray {
+    tx: mpsc::UnboundedSender<TrayCommand>,
+}
 
 impl OsgTray {
-    fn send(&self, cmd: TrayCommand) { let _ = self.tx.send(cmd); }
+    fn send(&self, cmd: TrayCommand) {
+        let _ = self.tx.send(cmd);
+    }
 }
 
 impl Tray for OsgTray {
-    fn id(&self) -> String { "open-sound-grid".into() }
-    fn title(&self) -> String { "OpenSoundGrid".into() }
-    fn icon_name(&self) -> String { "audio-volume-high".into() }
+    fn id(&self) -> String {
+        "open-sound-grid".into()
+    }
+    fn title(&self) -> String {
+        "OpenSoundGrid".into()
+    }
+    fn icon_name(&self) -> String {
+        "audio-volume-high".into()
+    }
 
     fn activate(&mut self, _x: i32, _y: i32) {
         self.send(TrayCommand::Show);
@@ -29,40 +45,59 @@ impl Tray for OsgTray {
                 label: "Show".into(),
                 activate: Box::new(|t: &mut Self| t.send(TrayCommand::Show)),
                 ..Default::default()
-            }.into(),
+            }
+            .into(),
             StandardItem {
                 label: "Mute All".into(),
                 icon_name: "audio-volume-muted".into(),
                 activate: Box::new(|t: &mut Self| t.send(TrayCommand::MuteAll)),
                 ..Default::default()
-            }.into(),
+            }
+            .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Quit".into(),
                 activate: Box::new(|t: &mut Self| t.send(TrayCommand::Quit)),
                 ..Default::default()
-            }.into(),
+            }
+            .into(),
         ]
     }
 }
 
-/// Spawn the system tray and return a receiver for user actions.
+/// Spawn the system tray in its own thread with a dedicated tokio runtime.
 ///
-/// If the tray fails to start (no SNI host), logs a warning and
-/// returns a receiver from a dummy channel (never yields).
+/// Returns a receiver for tray user actions.
+/// If the tray fails to start, logs a warning — the app still works without it.
 pub fn spawn_tray() -> mpsc::UnboundedReceiver<TrayCommand> {
     let (tx, rx) = mpsc::unbounded_channel();
     let tray = OsgTray { tx };
 
-    tokio::spawn(async move {
-        match tray.spawn().await {
-            Ok(handle) => {
-                tracing::info!("System tray started");
-                handle.shutdown().await;
-            }
-            Err(e) => tracing::warn!("System tray unavailable: {e}"),
-        }
-    });
+    std::thread::Builder::new()
+        .name("osg-tray".into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    tracing::warn!("Failed to create tray runtime: {e}");
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                match tray.spawn().await {
+                    Ok(handle) => {
+                        tracing::info!("System tray started");
+                        handle.shutdown().await;
+                    }
+                    Err(e) => tracing::warn!("System tray unavailable: {e}"),
+                }
+            });
+        })
+        .ok();
 
     rx
 }
