@@ -20,6 +20,9 @@ libpulse-binding = "2.30"
 
 # DSP Effects
 fundsp = "0.23"
+spectrum-analyzer = "1.7"
+realfft = "3.5"
+audio-gate = "0.2"
 
 # Serialization & Config
 serde = { version = "1", features = ["derive"] }

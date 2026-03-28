@@ -23,6 +23,9 @@ pub struct MixerState {
     pub applications: Vec<AudioApplication>,
     pub peak_levels: HashMap<SourceId, f32>,
     pub connected: bool,
+    /// Proportional ratio for linked slider behavior.
+    /// ratio = channel_volume / mix_master_volume at the time the channel fader was set.
+    pub route_ratios: HashMap<(SourceId, u32), f32>,
 }
 
 impl MixerState {
@@ -60,6 +63,18 @@ impl MixerState {
             tracing::trace!(source = ?source, mix, enabled = route.enabled, volume = route.volume, "route state applied");
             self.routes.insert((source, mix), route);
         }
+
+        // Compute ratios from current volumes for linked slider behavior
+        self.route_ratios.clear();
+        for ((source, mix_id), route) in &self.routes {
+            let master = self.mixes.iter()
+                .find(|m| m.id == *mix_id)
+                .map_or(1.0, |m| m.master_volume);
+            let ratio = if master > 0.001 { route.volume / master } else { 1.0 };
+            tracing::trace!(source = ?source, mix_id, ratio, "snapshot: route ratio computed");
+            self.route_ratios.insert((*source, *mix_id), ratio);
+        }
+        tracing::debug!(count = self.route_ratios.len(), "route ratios initialized from snapshot");
     }
 
     /// Update peak levels without replacing everything else.

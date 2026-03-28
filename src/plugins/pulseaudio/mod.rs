@@ -19,7 +19,7 @@ mod peaks;
 
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc as std_mpsc;
 
 use crate::effects::EffectsChain;
@@ -209,7 +209,7 @@ impl PulseAudioPlugin {
                 let sink_name = Self::channel_sink_name(&name);
                 let description = format!("OSG {name} Channel");
 
-                match self.modules.create_null_sink(&sink_name, &description) {
+                match self.modules.create_null_sink(self.connection.as_mut(), &sink_name, &description) {
                     Ok(_module_id) => {
                         tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, "channel created");
                         self.channel_sinks.insert(id, sink_name);
@@ -249,7 +249,7 @@ impl PulseAudioPlugin {
                 tracing::debug!(channel_id = id, loopbacks_to_remove = keys_to_remove.len(), "cleaning up channel loopbacks");
                 for key in &keys_to_remove {
                     if let Some(module_id) = self.loopback_modules.remove(key) {
-                        let _ = self.modules.unload_module(module_id);
+                        let _ = self.modules.unload_module(self.connection.as_mut(), module_id);
                     }
                     self.loopback_sink_inputs.remove(key);
                 }
@@ -267,7 +267,7 @@ impl PulseAudioPlugin {
                 let sink_name = Self::mix_sink_name(&name);
                 let description = format!("OSG {name} Mix");
 
-                match self.modules.create_null_sink(&sink_name, &description) {
+                match self.modules.create_null_sink(self.connection.as_mut(), &sink_name, &description) {
                     Ok(_module_id) => {
                         tracing::info!(mix_name = %name, mix_id = id, sink_name = %sink_name, "mix created");
                         self.mix_sinks.insert(id, sink_name);
@@ -304,7 +304,7 @@ impl PulseAudioPlugin {
                 tracing::debug!(mix_id = id, loopbacks_to_remove = keys_to_remove.len(), "cleaning up mix loopbacks");
                 for key in &keys_to_remove {
                     if let Some(module_id) = self.loopback_modules.remove(key) {
-                        let _ = self.modules.unload_module(module_id);
+                        let _ = self.modules.unload_module(self.connection.as_mut(), module_id);
                     }
                     self.loopback_sink_inputs.remove(key);
                 }
@@ -320,7 +320,7 @@ impl PulseAudioPlugin {
 
                 // Apply via PA if we have a sink-input for this route
                 if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
-                    if let Err(e) = self.modules.set_sink_input_volume(sink_input_idx, volume) {
+                    if let Err(e) = self.modules.set_sink_input_volume(self.connection.as_mut(), sink_input_idx, volume) {
                         tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set route volume via PA");
                     }
                 }
@@ -359,12 +359,12 @@ impl PulseAudioPlugin {
                     let source_monitor = format!("{channel_sink}.monitor");
                     tracing::debug!(source_monitor = %source_monitor, mix_sink = %mix_sink, "creating loopback for route");
 
-                    let module_id = self.modules.create_loopback(&source_monitor, &mix_sink, 20)?;
+                    let module_id = self.modules.create_loopback(self.connection.as_mut(), &source_monitor, &mix_sink, 20)?;
                     tracing::debug!(module_id = module_id, source = ?source, mix = mix, "loopback module created");
                     self.loopback_modules.insert((source, mix), module_id);
 
                     // find_loopback_sink_input has its own retry logic (3 attempts, 100ms each)
-                    match self.modules.find_loopback_sink_input(module_id)? {
+                    match self.modules.find_loopback_sink_input(self.connection.as_mut(), module_id)? {
                         Some(idx) => {
                             tracing::debug!(module_id, sink_input_idx = idx, "found loopback sink-input");
                             self.loopback_sink_inputs.insert((source, mix), idx);
@@ -379,7 +379,7 @@ impl PulseAudioPlugin {
                     // Disable: tear down loopback
                     if let Some(module_id) = self.loopback_modules.remove(&(source, mix)) {
                         tracing::debug!(module_id = module_id, source = ?source, mix = mix, "unloading loopback module for route disable");
-                        if let Err(e) = self.modules.unload_module(module_id) {
+                        if let Err(e) = self.modules.unload_module(self.connection.as_mut(), module_id) {
                             tracing::warn!(module_id = module_id, err = %e, "failed to unload loopback module");
                         }
                     }
@@ -396,7 +396,7 @@ impl PulseAudioPlugin {
                 self.routes.entry((source, mix)).or_default().muted = muted;
 
                 if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
-                    if let Err(e) = self.modules.set_sink_input_mute(sink_input_idx, muted) {
+                    if let Err(e) = self.modules.set_sink_input_mute(self.connection.as_mut(), sink_input_idx, muted) {
                         tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set route mute via PA");
                     }
                 }
@@ -415,7 +415,7 @@ impl PulseAudioPlugin {
                         OsgError::ChannelNotFound(channel)
                     })?;
 
-                if let Err(e) = self.modules.move_sink_input(app, &sink_name) {
+                if let Err(e) = self.modules.move_sink_input(self.connection.as_mut(), app, &sink_name) {
                     tracing::warn!(app_id = app, sink_name = %sink_name, err = %e, "failed to move sink-input for app routing");
                 }
 
@@ -431,7 +431,7 @@ impl PulseAudioPlugin {
             PluginCommand::UnrouteApp { app } => {
                 tracing::debug!(app_id = app, "unrouting app — moving to default sink");
                 // Move the app's stream back to the default PA sink
-                if let Err(e) = self.modules.move_sink_input(app, "@DEFAULT_SINK@") {
+                if let Err(e) = self.modules.move_sink_input(self.connection.as_mut(), app, "@DEFAULT_SINK@") {
                     tracing::warn!(app_id = app, err = %e, "failed to move sink-input to default sink during unroute");
                 }
                 for ch in &mut self.channels {
@@ -458,7 +458,7 @@ impl PulseAudioPlugin {
                 // Tear down previous output loopback if any
                 if let Some(old_module_id) = self.mix_output_modules.remove(&mix) {
                     tracing::debug!(mix_id = mix, old_module_id = old_module_id, "unloading previous mix output loopback");
-                    if let Err(e) = self.modules.unload_module(old_module_id) {
+                    if let Err(e) = self.modules.unload_module(self.connection.as_mut(), old_module_id) {
                         tracing::warn!(mix_id = mix, old_module_id = old_module_id, err = %e, "failed to unload previous mix output loopback");
                     }
                 }
@@ -467,7 +467,7 @@ impl PulseAudioPlugin {
                 let source_monitor = format!("{mix_sink}.monitor");
                 tracing::debug!(source_monitor = %source_monitor, hw_sink = %hw_device.device_id, "creating mix output loopback");
 
-                let module_id = self.modules.create_loopback(&source_monitor, &hw_device.device_id, 20)?;
+                let module_id = self.modules.create_loopback(self.connection.as_mut(), &source_monitor, &hw_device.device_id, 20)?;
                 tracing::debug!(mix_id = mix, module_id = module_id, hw_sink = %hw_device.device_id, "mix output loopback created");
                 self.mix_output_modules.insert(mix, module_id);
 
@@ -482,21 +482,30 @@ impl PulseAudioPlugin {
                 tracing::debug!(mix_id = mix, volume = volume, "setting mix master volume");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.master_volume = volume.clamp(0.0, 1.0);
-                    // Apply via PA: set volume on the mix null sink itself
-                    if let Some(sink_name) = self.mix_sinks.get(&mix) {
-                        let percent = (m.master_volume * 100.0) as u32;
-                        let output = std::process::Command::new("pactl")
-                            .args(["set-sink-volume", sink_name, &format!("{percent}%")])
-                            .output();
-                        match output {
-                            Ok(o) if o.status.success() => {
-                                tracing::debug!(mix_id = mix, percent, sink = %sink_name, "PA set-sink-volume applied");
+                    let clamped = m.master_volume;
+                    // Apply via PA: set volume on the mix null sink itself.
+                    if let Some(sink_name) = self.mix_sinks.get(&mix).cloned() {
+                        if let Some(conn) = self.connection.as_mut() {
+                            if let Err(e) = introspect::set_sink_volume_by_name_sync(conn, &sink_name, clamped) {
+                                tracing::warn!(mix_id = mix, err = %e, "set_sink_volume_by_name_sync failed");
+                            } else {
+                                tracing::debug!(mix_id = mix, volume = clamped, sink = %sink_name, "PA set-sink-volume applied via introspect");
                             }
-                            Ok(o) => {
-                                tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-volume failed");
-                            }
-                            Err(e) => {
-                                tracing::warn!(mix_id = mix, err = %e, "PA set-sink-volume command error");
+                        } else {
+                            let percent = (clamped * 100.0) as u32;
+                            let output = Command::new("pactl")
+                                .args(["set-sink-volume", &sink_name, &format!("{percent}%")])
+                                .output();
+                            match output {
+                                Ok(o) if o.status.success() => {
+                                    tracing::debug!(mix_id = mix, percent, sink = %sink_name, "PA set-sink-volume applied via pactl (fallback)");
+                                }
+                                Ok(o) => {
+                                    tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-volume failed");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(mix_id = mix, err = %e, "PA set-sink-volume command error");
+                                }
                             }
                         }
                     }
@@ -511,21 +520,29 @@ impl PulseAudioPlugin {
                 tracing::debug!(mix_id = mix, muted = muted, "setting mix muted");
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.muted = muted;
-                    // Apply via PA: mute the mix null sink
-                    if let Some(sink_name) = self.mix_sinks.get(&mix) {
-                        let mute_val = if muted { "1" } else { "0" };
-                        let output = std::process::Command::new("pactl")
-                            .args(["set-sink-mute", sink_name, mute_val])
-                            .output();
-                        match output {
-                            Ok(o) if o.status.success() => {
-                                tracing::debug!(mix_id = mix, muted, sink = %sink_name, "PA set-sink-mute applied to mix");
+                    // Apply via PA: mute the mix null sink.
+                    if let Some(sink_name) = self.mix_sinks.get(&mix).cloned() {
+                        if let Some(conn) = self.connection.as_mut() {
+                            if let Err(e) = introspect::set_sink_mute_by_name_sync(conn, &sink_name, muted) {
+                                tracing::warn!(mix_id = mix, err = %e, "set_sink_mute_by_name_sync failed");
+                            } else {
+                                tracing::debug!(mix_id = mix, muted, sink = %sink_name, "PA set-sink-mute applied to mix via introspect");
                             }
-                            Ok(o) => {
-                                tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed on mix");
-                            }
-                            Err(e) => {
-                                tracing::warn!(mix_id = mix, err = %e, "PA set-sink-mute command error on mix");
+                        } else {
+                            let mute_val = if muted { "1" } else { "0" };
+                            let output = Command::new("pactl")
+                                .args(["set-sink-mute", &sink_name, mute_val])
+                                .output();
+                            match output {
+                                Ok(o) if o.status.success() => {
+                                    tracing::debug!(mix_id = mix, muted, sink = %sink_name, "PA set-sink-mute applied to mix via pactl (fallback)");
+                                }
+                                Ok(o) => {
+                                    tracing::warn!(mix_id = mix, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed on mix");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(mix_id = mix, err = %e, "PA set-sink-mute command error on mix");
+                                }
                             }
                         }
                     }
@@ -544,22 +561,30 @@ impl PulseAudioPlugin {
                         route.muted = muted;
                     }
                 }
-                // Apply via PA: mute the channel's null sink directly
+                // Apply via PA: mute the channel's null sink directly.
                 if let SourceId::Channel(id) = source {
-                    if let Some(sink_name) = self.channel_sinks.get(&id) {
-                        let mute_val = if muted { "1" } else { "0" };
-                        let output = std::process::Command::new("pactl")
-                            .args(["set-sink-mute", sink_name, mute_val])
-                            .output();
-                        match output {
-                            Ok(o) if o.status.success() => {
-                                tracing::debug!(source = ?source, muted, sink = %sink_name, "PA set-sink-mute applied");
+                    if let Some(sink_name) = self.channel_sinks.get(&id).cloned() {
+                        if let Some(conn) = self.connection.as_mut() {
+                            if let Err(e) = introspect::set_sink_mute_by_name_sync(conn, &sink_name, muted) {
+                                tracing::warn!(source = ?source, err = %e, "set_sink_mute_by_name_sync failed for channel");
+                            } else {
+                                tracing::debug!(source = ?source, muted, sink = %sink_name, "PA set-sink-mute applied via introspect");
                             }
-                            Ok(o) => {
-                                tracing::warn!(source = ?source, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed");
-                            }
-                            Err(e) => {
-                                tracing::warn!(source = ?source, err = %e, "PA set-sink-mute command error");
+                        } else {
+                            let mute_val = if muted { "1" } else { "0" };
+                            let output = Command::new("pactl")
+                                .args(["set-sink-mute", &sink_name, mute_val])
+                                .output();
+                            match output {
+                                Ok(o) if o.status.success() => {
+                                    tracing::debug!(source = ?source, muted, sink = %sink_name, "PA set-sink-mute applied via pactl (fallback)");
+                                }
+                                Ok(o) => {
+                                    tracing::warn!(source = ?source, stderr = %String::from_utf8_lossy(&o.stderr), "PA set-sink-mute failed");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(source = ?source, err = %e, "PA set-sink-mute command error");
+                                }
                             }
                         }
                     }
@@ -746,7 +771,7 @@ impl AudioPlugin for PulseAudioPlugin {
             let _ = child.wait();
         }
 
-        self.modules.unload_all();
+        self.modules.unload_all(self.connection.as_mut());
         // Disconnect the PA verification connection
         if let Some(mut conn) = self.connection.take() {
             conn.disconnect();

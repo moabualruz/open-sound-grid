@@ -10,6 +10,7 @@ use iced::{Background, Element, Length, Theme};
 use crate::app::Message;
 use crate::effects::EffectsParams;
 use crate::plugin::api::ChannelInfo;
+use crate::ui::eq_widget::eq_canvas;
 use crate::ui::theme::{
     bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary, ThemeMode,
 };
@@ -96,6 +97,9 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         })
         .step(0.1)
     };
+
+    let eq_viz = eq_canvas(ch_id, params);
+    tracing::trace!(channel_id = ch_id, "rendering eq_viz canvas");
 
     // --- Compressor section ---
     let comp_label = text("Compressor").size(11).color(text_secondary(theme_mode));
@@ -186,6 +190,8 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         eq_q,
         eq_gain_label,
         eq_gain,
+        Space::new().height(Length::Fixed(6.0)),
+        eq_viz,
         Space::new().height(Length::Fixed(4.0)),
         sep(),
         Space::new().height(Length::Fixed(4.0)),

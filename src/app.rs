@@ -237,6 +237,14 @@ impl App {
                     mix,
                     volume,
                 });
+
+                // Update ratio for linked slider behavior
+                let master_vol = self.engine.state.mixes.iter()
+                    .find(|m| m.id == mix)
+                    .map_or(1.0, |m| m.master_volume);
+                let new_ratio = if master_vol > 0.001 { volume / master_vol } else { 1.0 };
+                self.engine.state.route_ratios.insert((source, mix), new_ratio);
+                tracing::debug!(?source, ?mix, new_ratio, "linked slider: ratio updated");
             }
             Message::RouteToggled { source, mix } => {
                 tracing::debug!(?source, ?mix, "route toggled");
@@ -246,6 +254,15 @@ impl App {
                     .routes
                     .get(&(source, mix))
                     .map_or(true, |r| r.enabled);
+                if !currently_enabled {
+                    // Route is being enabled (created); set initial ratio to 1.0
+                    self.engine.state.route_ratios.insert((source, mix), 1.0);
+                    tracing::debug!(?source, ?mix, "linked slider: new route ratio initialised to 1.0");
+                } else {
+                    // Route is being disabled (removed); clean up ratio entry
+                    self.engine.state.route_ratios.remove(&(source, mix));
+                    tracing::debug!(?source, ?mix, "linked slider: ratio removed for disabled route");
+                }
                 self.engine.send_command(PluginCommand::SetRouteEnabled {
                     source,
                     mix,
@@ -256,6 +273,22 @@ impl App {
                 tracing::debug!(?mix, volume, "mix master volume changed");
                 self.engine
                     .send_command(PluginCommand::SetMixMasterVolume { mix, volume });
+
+                // Linked sliders: scale all channel faders in this mix proportionally
+                let ratios: Vec<(SourceId, f32)> = self.engine.state.route_ratios.iter()
+                    .filter(|((_, m), _)| *m == mix)
+                    .map(|((s, _), ratio)| (*s, *ratio))
+                    .collect();
+
+                for (source, ratio) in ratios {
+                    let new_vol = (volume * ratio).clamp(0.0, 1.0);
+                    tracing::debug!(?source, ?mix, ratio, new_vol, "linked slider: scaling channel volume");
+                    self.engine.send_command(PluginCommand::SetRouteVolume {
+                        source,
+                        mix,
+                        volume: new_vol,
+                    });
+                }
             }
             Message::MixMuteToggled(mix) => {
                 tracing::debug!(?mix, "mix mute toggled");
