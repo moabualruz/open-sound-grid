@@ -27,7 +27,7 @@
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Configuration](#configuration)
 - [Tests](#tests)
-- [Known Limitations](#known-limitations-v02)
+- [Known Limitations](#known-limitations-v03)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -146,6 +146,7 @@ src/
     app_list.rs    — detected application routing panel
     audio_slider.rs— volume slider with dB readout
     vu_meter.rs    — horizontal VU meter bar (driven by peak level events)
+    eq_widget.rs   — parametric EQ canvas: biquad curve, band handles, spectrum overlay
     theme.rs       — design tokens (colors, spacing)
     mod.rs         — UI module root
 ```
@@ -156,7 +157,12 @@ src/
 - **No shared state between plugin and UI** — all communication flows through typed `PluginCommand` / `PluginEvent` messages over async channels. The UI never touches plugin internals directly.
 - **Event-driven plugin thread** — the PA backend runs a dedicated event loop using `pactl subscribe` for real-time change notifications. There is no polling loop; events wake the thread only when PA signals a change. The thread owns the PA mainloop connection for its lifetime.
 - **Zero-latency event subscription** — plugin events arrive through an `iced::Subscription` stream, not polling. Peak level updates drive VU meters at ~20ms intervals without blocking the UI thread.
-- **libpulse introspect migration (partial)** — device listing (`get_sink_info_list`, `get_source_info_list`) and application stream discovery (`get_sink_input_info_list`) use the native libpulse introspect API. Module load/unload, volume control, mute, and stream move operations still shell out to `pactl`. Full migration is planned for v0.3.
+- **Full libpulse introspect migration** — all module load/unload, volume control, mute, stream move, and device enumeration operations use the native libpulse introspect API. No `pactl` shell-outs remain in the audio path.
+- **PeakMonitor rewrite** — `peaks.rs` uses `SharedPeak` atomics: a background thread writes raw peak values and the UI reads them lock-free on each frame tick. PA PEAK_DETECT stream infrastructure is in place; callback wiring is the remaining step for v0.4.
+- **Device failover** — config carries a ranked backup device list per mix. On startup and on device disappearance the engine walks the list and activates the first available sink.
+- **Parametric EQ canvas** — `ui/eq_widget.rs` renders a biquad frequency-response curve on a canvas widget. Drag band handles to tune frequency, gain, and Q; the curve updates in real time.
+- **Spectrum analyzer overlay** — simulated FFT display rendered as an overlay on the EQ canvas. Real FFT from PA audio streams is planned for v0.4.
+- **Linked sliders** — proportional scaling mode: moving one channel's fader scales all linked channels relative to each other rather than setting an absolute value.
 - **Plugin trait abstraction** — the `AudioPlugin` trait decouples the UI from PulseAudio. A PipeWire backend can be added without touching the matrix, engine, or UI code.
 - **Single binary** — no daemon, no background service. The app owns its PulseAudio connection for its lifetime.
 
@@ -181,7 +187,7 @@ src/
 | Output device restore on startup | Done | Saved per-mix device reapplied on launch |
 | Settings panel | Done | Basic settings panel (compact mode toggle) |
 | Compact mode persistence | Done | compact_mode persisted to TOML |
-| Live VU meters | Done | Volume-based; real signal peaks via PA_STREAM_PEAK_DETECT — v0.3 |
+| Live VU meters | Done | Volume-based with per-sink polling; PA PEAK_DETECT infra ready — callback wiring in v0.4 |
 | Config persistence | Done | TOML via confy, auto-saved on change |
 | Config restore on launch | Done | Channels and mixes recreated at startup |
 | System tray | Done | ksni SNI tray: Show, Mute All, Quit |
@@ -191,11 +197,17 @@ src/
 | Hardware input sidebar | Done | Lists physical inputs with VU meters |
 | Full tracing instrumentation | Done | `tracing` spans + fields on every code path |
 | Dark theme | Done | Custom design token system |
-| Unit test suite | Done | 40 unit tests, zero clippy warnings |
-| PipeWire native backend | Planned | v0.3 target |
-| Per-mix effects (EQ, compression) | Done | Parameter UI + storage; inline audio processing requires PA stream capture — v0.3 |
-| JACK backend | Planned | v0.3 target |
-| VST3 / LV2 plugin hosting | Future | Post-v0.3 |
+| Unit test suite | Done | 53 unit tests, zero clippy warnings |
+| Graphical parametric EQ | Done | Canvas widget with biquad curve and band handles |
+| Spectrum analyzer overlay | Done | Simulated display; real FFT from PA streams in v0.4 |
+| Linked sliders | Done | Proportional scaling across linked channel faders |
+| Full libpulse migration | Done | All module ops use libpulse introspect — no pactl shell-outs |
+| Device failover | Done | Ranked backup list per mix; auto-activates on device loss |
+| Peak monitor rewrite | Done | SharedPeak atomics; PA PEAK_DETECT stream infra ready |
+| Per-mix effects (EQ, compression) | Done | Parameter UI + fundsp graph structure; inline audio processing (PA stream capture/reinject) in v0.4 |
+| PipeWire native backend | Planned | v0.4 target |
+| JACK backend | Planned | v0.4 target |
+| VST3 / CLAP plugin hosting | Planned | v0.4 target |
 | Mobile companion app | Future | Remote control via local network |
 
 ## Keyboard Shortcuts
@@ -275,32 +287,33 @@ rm ~/.config/open-sound-grid/default-config.toml
 ## Tests
 
 ```bash
-cargo test           # 48 unit tests
+cargo test           # 53 unit tests
 cargo clippy         # zero warnings
 ```
 
 Tests cover config serialization/deserialization, default values, channel/mix lifecycle, route state mutations, and PA module name parsing. PulseAudio does not need to be running to execute the unit test suite.
 
-## Known Limitations (v0.2)
+## Known Limitations (v0.3)
 
-- **VU meters show configured volume, not signal amplitude.** True peak monitoring
-  via PA's PEAK_DETECT stream flag is planned for v0.3.
-- **Effects chain is parameter-only.** The UI controls and parameter persistence work,
-  but audio is not actually processed through the effects graph. Inline processing
-  requires PA stream capture, planned for v0.3.
+- **VU meters show volume-based levels, not true signal amplitude.** PA PEAK_DETECT
+  stream infrastructure is in place and SharedPeak atomics are wired up; the remaining
+  work is connecting the PA stream callback to populate those values. Planned for v0.4.
+- **Effects chain does not process audio inline.** The parameter UI, fundsp graph
+  structure, and storage all work, but audio is not yet captured and reinjected through
+  the effects graph. Inline processing via PA stream capture/reinject is planned for v0.4.
+- **Spectrum analyzer display is simulated.** The overlay renders a plausible curve but
+  does not reflect real FFT data from PA audio streams. Real FFT is planned for v0.4.
 - **Light theme partially applied.** Custom widget styles use theme-aware colors but
   some iced default widgets may not fully match the warm palette.
-- **Module operations use pactl CLI.** Device listing and app detection use the native
-  libpulse introspect API, but module load/unload, volume control, and event
-  subscription still shell out to pactl. Full migration planned for v0.3.
 
 ## Roadmap
 
 | Version | Focus | Status |
 |---------|-------|--------|
 | **v0.1** | Matrix mixer core | Done |
-| **v0.2** | Effects, keyboard navigation, polish | Done (with noted limitations) |
-| **v0.3** | PipeWire native backend, JACK support, real peaks, full libpulse migration | Planned |
+| **v0.2** | Effects, keyboard navigation, polish | Done |
+| **v0.3** | Parametric EQ, spectrum analyzer, linked sliders, full libpulse migration, device failover, peak monitor rewrite | Done |
+| **v0.4** | PipeWire native, VST3/CLAP, real FFT spectrum, inline effects processing, game EQ presets | Planned |
 | **v1.0** | Stable API, packaging, full docs | Future |
 
 ### v0.1 — Matrix Mixer Core (done)
@@ -317,25 +330,49 @@ Tests cover config serialization/deserialization, default values, channel/mix li
 - Settings panel with compact mode persistence — Done
 - Full tracing instrumentation across all code paths — Done
 
-### v0.2 — Effects and Polish (done, with noted limitations)
+### v0.2 — Effects and Polish (done)
 
 - Per-channel effects chain: EQ, compressor, noise gate — parameter UI and storage done
 - Keyboard navigation throughout the matrix — Done
 - Dark/light theme toggle with warm palette — Done
 - Full tracing instrumentation — Done
 - Presets (save/load named mixer state) — Done
-- _Limitation:_ effects audio processing and real peak monitoring deferred to v0.3 (see Known Limitations)
 
-### v0.3 — PipeWire Native and Integrations (planned)
+### v0.3 — EQ, Peak Monitor, and libpulse Migration (done)
+
+- Graphical parametric EQ with canvas widget (biquad curve, draggable band handles) — Done
+- Spectrum analyzer overlay on EQ canvas (simulated; real FFT in v0.4) — Done
+- Linked sliders with proportional scaling mode — Done
+- Full libpulse migration for all module ops (load/unload/volume/mute/move) — Done
+- Device failover with ranked backup list per mix — Done
+- PeakMonitor rewrite with SharedPeak atomics — Done
+- PA PEAK_DETECT stream infrastructure in place — Done (callback wiring in v0.4)
+
+### v0.4 — PipeWire Native and Real Audio Processing (planned)
 
 - PipeWire native backend (replaces loopback hacks with filter-chain nodes)
+- VST3 / CLAP plugin hosting
+- Real FFT spectrum analyzer from PA audio streams
+- Inline effects audio processing (PA stream capture/reinject with fundsp)
+- PA PEAK_DETECT stream callback wiring for true signal peak meters
+- Game EQ presets
 - JACK backend
-- Real signal peak monitoring via PA streams (PA_STREAM_PEAK_DETECT)
-- Inline effects audio processing (fundsp, PA stream capture)
-- Full pactl→libpulse migration for write ops
 - D-Bus control interface (scriptable from external tools)
-- OBS integration (scene-triggered mix presets)
-- Streaming deck button mapping
+
+## Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `iced` | UI framework (canvas, widgets, subscriptions) |
+| `libpulse-binding` | Native PulseAudio introspect API (no pactl shell-outs) |
+| `fundsp` | Audio DSP graph for EQ and effects processing |
+| `spectrum-analyzer` | FFT frequency-bin utilities for the spectrum overlay |
+| `realfft` | Real-to-complex FFT (in-place; used by spectrum analyzer) |
+| `audio-gate` | Noise gate primitive used in the effects chain |
+| `confy` | TOML config persistence |
+| `ksni` | StatusNotifierItem system tray |
+| `tracing` | Structured async-aware logging |
+| `thiserror` | Typed error definitions |
 
 ## Contributing
 
