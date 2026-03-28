@@ -26,6 +26,7 @@
 - [Features](#features)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Configuration](#configuration)
+- [Tests](#tests)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
@@ -51,6 +52,14 @@ cargo run
 ```
 
 PulseAudio must be running. The app auto-discovers hardware inputs/outputs and running audio applications on startup.
+
+```bash
+# Run with full debug tracing
+RUST_LOG=open_sound_grid=debug cargo run
+
+# Run with trace-level (very verbose)
+RUST_LOG=open_sound_grid=trace cargo run
+```
 
 ## Installation
 
@@ -123,7 +132,13 @@ src/
     api.rs         — PluginCommand / PluginResponse / PluginEvent protocol (no shared state)
     manager.rs     — event-driven plugin thread, unified command/event channel
   plugins/
-    pulseaudio/    — PulseAudio backend (null sinks + loopback routing)
+    pulseaudio/
+      mod.rs       — PulseAudio backend: channel/mix lifecycle, loopback routing
+      connection.rs— PA mainloop connection wrapper
+      apps.rs      — running application stream discovery and routing
+      devices.rs   — hardware sink/source enumeration, output device selection
+      modules.rs   — null sink and loopback module management
+      peaks.rs     — pactl subscribe listener for real-time peak level events
   ui/
     matrix.rs      — matrix grid widget: the core routing surface
     sidebar.rs     — collapsible hardware input sidebar
@@ -136,7 +151,9 @@ src/
 
 **Key design decisions:**
 
+- **Unified channel architecture** — channels and mixes are both first-class objects in `MixerState`. Every route cell (channel × mix) carries its own volume and mute state. Add or remove channels/mixes at runtime; the matrix redraws and PA state updates atomically.
 - **No shared state between plugin and UI** — all communication flows through typed `PluginCommand` / `PluginEvent` messages over async channels. The UI never touches plugin internals directly.
+- **Event-driven plugin thread** — the PA backend runs `pactl subscribe` to receive real-time change notifications from PulseAudio. There is no polling loop; events wake the thread only when PA signals a change.
 - **Zero-latency event subscription** — plugin events arrive through an `iced::Subscription` stream, not polling. Peak level updates drive VU meters at ~20ms intervals without blocking the UI thread.
 - **Plugin trait abstraction** — the `AudioPlugin` trait decouples the UI from PulseAudio. A PipeWire backend can be added without touching the matrix, engine, or UI code.
 - **Single binary** — no daemon, no background service. The app owns its PulseAudio connection for its lifetime.
@@ -153,9 +170,15 @@ src/
 | Mix master volume | Done | Scales all loopbacks in the mix |
 | Mix mute | Done | Mutes the mix output |
 | Source mute | Done | Mutes a channel across all mixes |
+| Per-route mute | Done | Mute individual channel→mix routes independently |
+| Add / remove channel | Done | Runtime add and remove with PA cleanup |
+| Add / remove mix | Done | Runtime add and remove with PA cleanup |
 | Application routing panel | Done | Route any running app to any channel |
-| App name resolution | Done | freedesktop desktop entry lookup |
-| Hardware output selection | Done | Per-mix output device picker |
+| App name resolution | Done | freedesktop desktop entry lookup, locale-aware |
+| Per-mix output device selection | Done | Pick any PA sink per mix at runtime |
+| Output device restore on startup | Done | Saved per-mix device reapplied on launch |
+| Settings panel | Done | Basic settings panel (compact mode toggle) |
+| Compact mode persistence | Done | compact_mode persisted to TOML |
 | Live VU meters | Done | Driven by async peak level events |
 | Config persistence | Done | TOML via confy, auto-saved on change |
 | Config restore on launch | Done | Channels and mixes recreated at startup |
@@ -164,7 +187,9 @@ src/
 | Collapsible sidebar | Done | Hardware input panel, toggle button |
 | Connection status indicator | Done | Live dot + text in status bar |
 | Hardware input sidebar | Done | Lists physical inputs with VU meters |
+| Full tracing instrumentation | Done | `tracing` spans + fields on every code path |
 | Dark theme | Done | Custom design token system |
+| Unit test suite | Done | 40 unit tests, zero clippy warnings |
 | PipeWire native backend | Planned | v0.3 target |
 | Per-mix effects (EQ, compression) | Planned | v0.2 target |
 | JACK backend | Planned | v0.3 target |
@@ -190,7 +215,7 @@ Keyboard navigation is planned for v0.2. Currently all interaction is mouse-driv
 
 ## Configuration
 
-OpenSoundGrid stores its config at `~/.config/open-sound-grid/default-config.toml` (managed by `confy`). The file is created on first launch and auto-saved whenever channels or mixes change.
+OpenSoundGrid stores its config at `~/.config/open-sound-grid/default-config.toml` (managed by `confy`). The file is created on first launch and auto-saved whenever channels, mixes, or UI state change.
 
 ```toml
 [[channels]]
@@ -207,13 +232,13 @@ name = "System"
 
 [[mixes]]
 name = "Monitor"
-icon = ""
+icon = "🎧"
 color = [100, 149, 237]
 output_device = "alsa_output.pci-0000_00_1f.3.analog-stereo"
 
 [[mixes]]
 name = "Stream"
-icon = ""
+icon = "📡"
 color = [255, 99, 71]
 output_device = ""
 
@@ -233,10 +258,11 @@ window_height = 600
 |-------|-------------|---------|
 | `channels[].name` | Display name for the channel (null sink) | — |
 | `mixes[].name` | Display name for the output mix | — |
+| `mixes[].icon` | Emoji or single character shown in the mix header | `""` |
 | `mixes[].color` | RGB accent color `[r, g, b]` | `[128, 128, 128]` |
-| `mixes[].output_device` | PulseAudio sink name for this mix | `""` (auto) |
+| `mixes[].output_device` | PulseAudio sink name for this mix; omit or `""` for auto | `null` (auto) |
 | `audio.latency_ms` | Loopback latency in milliseconds | `20` |
-| `audio.output_device` | Default output device | `"auto"` |
+| `audio.output_device` | Default fallback output device | `"auto"` |
 | `ui.window_width` / `ui.window_height` | Window dimensions | `1000 x 600` |
 | `ui.compact_mode` | Compact layout toggle | `false` |
 
@@ -246,24 +272,37 @@ To reset to defaults, delete the config file and relaunch:
 rm ~/.config/open-sound-grid/default-config.toml
 ```
 
+## Tests
+
+```bash
+cargo test           # 40 unit tests
+cargo clippy         # zero warnings
+```
+
+Tests cover config serialization/deserialization, default values, channel/mix lifecycle, route state mutations, and PA module name parsing. PulseAudio does not need to be running to execute the unit test suite.
+
 ## Roadmap
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| **v0.1** | Matrix mixer core | Current |
+| **v0.1** | Matrix mixer core | Done |
 | **v0.2** | Effects, keyboard navigation, polish | Planned |
 | **v0.3** | PipeWire native backend, JACK support | Future |
 | **v1.0** | Stable API, packaging, full docs | Future |
 
-### v0.1 — Matrix Mixer Core (current)
+### v0.1 — Matrix Mixer Core (done)
 
-- PulseAudio null sink channels + loopback routing
-- Full matrix grid with per-cell volume and enable/disable
-- Application routing panel with freedesktop name resolution
-- Config persistence and restore on launch
-- System tray (ksni SNI), single-instance guard
-- Live VU meters via async peak level events
-- Hardware output selection per mix
+- PulseAudio null sink channels + loopback routing — Done
+- Full matrix grid with per-cell volume and enable/disable — Done
+- Application routing panel with freedesktop name resolution — Done
+- Config persistence and restore on launch — Done
+- System tray (ksni SNI), single-instance guard — Done
+- Live VU meters via async peak level events — Done
+- Per-mix output device selection and restore on startup — Done
+- Add / remove channels and mixes at runtime — Done
+- Per-route mute (independent of channel and mix mute) — Done
+- Settings panel with compact mode persistence — Done
+- Full tracing instrumentation across all code paths — Done
 
 ### v0.2 — Effects and Polish (planned)
 
@@ -287,15 +326,16 @@ rm ~/.config/open-sound-grid/default-config.toml
 ```bash
 cargo check                    # Type-check without building
 cargo build                    # Debug build
-cargo test                     # Run all tests
+cargo test                     # Run all unit tests (no PA required)
 cargo fmt --all                # Format (required before commit)
 cargo clippy -- -D warnings    # Lint (must pass clean)
 ```
 
-PulseAudio must be running when building or running integration tests. Set `RUST_LOG=debug` for verbose tracing output:
+PulseAudio must be running for integration and end-to-end testing. The unit test suite runs without PA. Set `RUST_LOG` for verbose tracing output when debugging:
 
 ```bash
 RUST_LOG=open_sound_grid=debug cargo run
+RUST_LOG=open_sound_grid=trace cargo run
 ```
 
 All changes go through a pull request. Follow [conventional commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `refactor:`, `chore:`, etc.

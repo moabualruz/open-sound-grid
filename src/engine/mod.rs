@@ -74,3 +74,21 @@ impl MixerEngine {
         connected
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_engine_not_connected_by_default() {
+        let engine = MixerEngine::new();
+        assert!(!engine.is_connected());
+    }
+
+    #[test]
+    fn test_send_command_without_bridge_does_not_panic() {
+        let engine = MixerEngine::new();
+        engine.send_command(PluginCommand::GetState);
+        // Should not panic — just logs a warning
+    }
+}

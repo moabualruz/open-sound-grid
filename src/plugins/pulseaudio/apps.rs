@@ -1,14 +1,22 @@
+use std::collections::{HashMap, HashSet};
 use std::process::Command;
 
 use crate::error::{OsgError, Result};
 use crate::plugin::api::AudioApplication;
 
 /// Detects running audio applications via PulseAudio sink-inputs.
-pub struct AppDetector;
+pub struct AppDetector {
+    next_app_id: u32,
+    /// Maps PA sink-input index → stable AppId for continuity across refreshes.
+    index_to_id: HashMap<u32, u32>,
+}
 
 impl AppDetector {
     pub fn new() -> Self {
-        Self
+        Self {
+            next_app_id: 1,
+            index_to_id: HashMap::new(),
+        }
     }
 
     /// List all running audio applications visible to PulseAudio.
@@ -16,7 +24,11 @@ impl AppDetector {
     /// Shells out to `pactl list sink-inputs` and parses the output.
     /// Filters out sink-inputs with no `application.name` and those
     /// whose `media.name` contains "loopback" (our loopback modules).
-    pub fn list_applications(&self) -> Result<Vec<AudioApplication>> {
+    ///
+    /// `app.id` is a stable internal counter independent of the PA sink-input
+    /// index. The same sink-input gets the same stable id across refreshes;
+    /// new sink-inputs receive a fresh incrementing id.
+    pub fn list_applications(&mut self) -> Result<Vec<AudioApplication>> {
         tracing::debug!("listing audio applications via pactl");
 
         let output = Command::new("pactl")
@@ -37,13 +49,38 @@ impl AppDetector {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let apps = parse_sink_inputs(&stdout);
+        let mut apps = parse_sink_inputs(&stdout);
+
+        // Assign stable IDs: reuse existing ID for known sink-input indices,
+        // assign new ID for newly seen indices.
+        for app in &mut apps {
+            let stable_id = self
+                .index_to_id
+                .entry(app.stream_index)
+                .or_insert_with(|| {
+                    let id = self.next_app_id;
+                    self.next_app_id += 1;
+                    id
+                });
+            app.id = *stable_id;
+            tracing::debug!(
+                stream_index = app.stream_index,
+                stable_id = app.id,
+                "assigned stable AppId"
+            );
+        }
+
+        // Clean up stale entries (sink-input indices that disappeared).
+        let current_indices: HashSet<u32> = apps.iter().map(|a| a.stream_index).collect();
+        self.index_to_id.retain(|idx, _| current_indices.contains(idx));
+
         tracing::debug!(count = apps.len(), "audio applications detected");
         for app in &apps {
             tracing::debug!(
                 app_name = %app.name,
                 binary = %app.binary,
                 stream_index = app.stream_index,
+                app_id = app.id,
                 "detected audio application"
             );
         }

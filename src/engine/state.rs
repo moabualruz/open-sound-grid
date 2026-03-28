@@ -76,3 +76,60 @@ impl MixerState {
         self.applications = apps;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_apply_snapshot_sets_connected() {
+        let mut state = MixerState::default();
+        assert!(!state.connected);
+        state.apply_snapshot(MixerSnapshot::default());
+        assert!(state.connected);
+    }
+
+    #[test]
+    fn test_apply_snapshot_replaces_channels() {
+        let mut state = MixerState::default();
+        let snapshot = MixerSnapshot {
+            channels: vec![ChannelInfo { id: 1, name: "Test".into(), apps: vec![], muted: false }],
+            ..Default::default()
+        };
+        state.apply_snapshot(snapshot);
+        assert_eq!(state.channels.len(), 1);
+        assert_eq!(state.channels[0].name, "Test");
+    }
+
+    #[test]
+    fn test_update_peaks_replaces_all() {
+        let mut state = MixerState::default();
+        let mut levels = HashMap::new();
+        levels.insert(SourceId::Channel(1), 0.5);
+        state.update_peaks(levels.clone());
+        assert_eq!(state.peak_levels.get(&SourceId::Channel(1)), Some(&0.5));
+        // Replace with different
+        let mut levels2 = HashMap::new();
+        levels2.insert(SourceId::Channel(2), 0.8);
+        state.update_peaks(levels2);
+        assert!(state.peak_levels.get(&SourceId::Channel(1)).is_none());
+        assert_eq!(state.peak_levels.get(&SourceId::Channel(2)), Some(&0.8));
+    }
+
+    #[test]
+    fn test_update_applications() {
+        let mut state = MixerState::default();
+        let apps = vec![AudioApplication {
+            id: 1,
+            name: "Firefox".into(),
+            binary: "firefox".into(),
+            icon_name: None,
+            stream_index: 42,
+            channel: None,
+        }];
+        state.update_applications(apps);
+        assert_eq!(state.applications.len(), 1);
+        assert_eq!(state.applications[0].name, "Firefox");
+    }
+}

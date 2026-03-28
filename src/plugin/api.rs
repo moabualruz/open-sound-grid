@@ -220,3 +220,30 @@ impl fmt::Display for PluginEvent {
         f.write_str(name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_command_display() {
+        let cmd = PluginCommand::GetState;
+        assert_eq!(format!("{cmd}"), "GetState");
+        let cmd2 = PluginCommand::CreateChannel { name: "Music".into() };
+        assert_eq!(format!("{cmd2}"), "CreateChannel");
+    }
+
+    #[test]
+    fn test_plugin_event_display() {
+        let evt = PluginEvent::DevicesChanged;
+        assert_eq!(format!("{evt}"), "DevicesChanged");
+    }
+
+    #[test]
+    fn test_route_state_default() {
+        let rs = RouteState::default();
+        assert_eq!(rs.volume, 1.0);
+        assert!(rs.enabled);
+        assert!(!rs.muted);
+    }
+}

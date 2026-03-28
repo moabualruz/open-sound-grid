@@ -573,7 +573,13 @@ impl AudioPlugin for PulseAudioPlugin {
     fn init(&mut self) -> Result<()> {
         tracing::debug!("initializing PulseAudio plugin");
         let conn = PulseConnection::connect()?;
+        tracing::info!(
+            connected = conn.is_connected(),
+            "PulseAudio server reachable via libpulse"
+        );
         self.connection = Some(conn);
+        // Connection established to verify PA is running.
+        // Actual operations use pactl CLI (v0.2 will migrate to libpulse API).
         tracing::info!(
             plugin_id = "pulseaudio",
             version = "0.1.0",
@@ -668,6 +674,7 @@ impl AudioPlugin for PulseAudioPlugin {
         }
 
         self.modules.unload_all();
+        // Disconnect the PA verification connection
         if let Some(mut conn) = self.connection.take() {
             conn.disconnect();
         }

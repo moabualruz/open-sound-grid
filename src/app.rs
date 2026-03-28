@@ -75,6 +75,9 @@ pub enum Message {
     TrayQuit,
     TrayMuteAll,
 
+    // Window events
+    WindowResized(u32, u32),
+
     // Output device selection
     MixOutputDeviceSelected { mix: MixId, device_name: String },
 
@@ -402,7 +405,8 @@ impl App {
                 // the tray "Show" is a no-op for now (window is always visible)
             }
             Message::TrayQuit => {
-                tracing::info!("tray: quit requested");
+                tracing::info!("tray: quit requested — saving config");
+                let _ = self.config.save();
                 return iced::exit();
             }
             Message::TrayMuteAll => {
@@ -455,6 +459,12 @@ impl App {
                 tracing::debug!(settings_open = !self.settings_open, "settings toggled");
                 self.settings_open = !self.settings_open;
             }
+            Message::WindowResized(width, height) => {
+                tracing::trace!(width, height, "window resized");
+                self.config.ui.window_width = width;
+                self.config.ui.window_height = height;
+                // Don't save on every resize event — too frequent. Config saved on quit.
+            }
             Message::SidebarToggleCollapse => {
                 tracing::debug!(
                     collapsed = !self.sidebar_collapsed,
@@ -470,11 +480,17 @@ impl App {
         Task::none()
     }
 
-    /// Async subscriptions: plugin events + tray commands.
+    /// Async subscriptions: plugin events + tray commands + window events.
     pub fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             Subscription::run(plugin_event_stream),
             Subscription::run(tray_event_stream),
+            iced::event::listen_with(|event, _status, _id| match event {
+                iced::Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Message::WindowResized(size.width as u32, size.height as u32))
+                }
+                _ => None,
+            }),
         ])
     }
 
@@ -765,13 +781,18 @@ fn tray_event_stream() -> impl iced::futures::Stream<Item = Message> {
                 Some(cmd) => {
                     tracing::debug!(cmd = ?cmd, "tray command received");
                     let msg = match cmd {
-                        tray::TrayCommand::Show => Message::TrayShow,
-                        tray::TrayCommand::Hide => Message::TrayShow, // treat as show
-                        tray::TrayCommand::Quit => Message::TrayQuit,
-                        tray::TrayCommand::MuteAll => Message::TrayMuteAll,
+                        tray::TrayCommand::Show => Some(Message::TrayShow),
+                        tray::TrayCommand::Hide => {
+                            tracing::debug!("tray hide — no-op (iced has no hide API)");
+                            None
+                        }
+                        tray::TrayCommand::Quit => Some(Message::TrayQuit),
+                        tray::TrayCommand::MuteAll => Some(Message::TrayMuteAll),
                     };
-                    if sender.try_send(msg).is_err() {
-                        tracing::warn!("tray subscription sender full, dropping command");
+                    if let Some(msg) = msg {
+                        if sender.try_send(msg).is_err() {
+                            tracing::warn!("tray subscription sender full, dropping command");
+                        }
                     }
                 }
                 None => {

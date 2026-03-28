@@ -126,7 +126,6 @@ impl PulseConnection {
         tracing::info!("PulseAudio connection closed");
     }
 
-    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.connected
     }
