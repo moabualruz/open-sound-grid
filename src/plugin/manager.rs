@@ -97,10 +97,26 @@ fn run_plugin_thread(plugin: &mut dyn AudioPlugin, mut handle: PluginThreadHandl
                     }
                 }
                 other => {
-                    if let Err(e) = plugin.handle_command(other) {
-                        let _ = handle
-                            .event_tx
-                            .send(PluginEvent::Error(format!("Command error: {e}")));
+                    match plugin.handle_command(other) {
+                        Ok(_) => {
+                            // Mutation succeeded — refresh state so the UI updates
+                            match plugin.handle_command(PluginCommand::GetState) {
+                                Ok(PluginResponse::State(snapshot)) => {
+                                    let _ = handle
+                                        .event_tx
+                                        .send(PluginEvent::StateRefreshed(snapshot));
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "post-mutation GetState failed");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = handle
+                                .event_tx
+                                .send(PluginEvent::Error(format!("Command error: {e}")));
+                        }
                     }
                 }
             }

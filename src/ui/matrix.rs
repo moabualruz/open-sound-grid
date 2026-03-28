@@ -47,6 +47,38 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
         header_row = header_row.push(mix_header(&mix.name, color));
     }
 
+    // "+ Add Mix" button in header row
+    let mix_count = state.mixes.len();
+    let add_mix_btn = button(
+        text("+ Add Mix")
+            .size(11)
+            .color(TEXT_SECONDARY)
+            .center(),
+    )
+    .on_press(Message::CreateMix(format!("Mix {}", mix_count + 1)))
+    .padding([4, 8])
+    .style(|_: &Theme, status| button::Style {
+        background: match status {
+            button::Status::Hovered => Some(Background::Color(BG_HOVER)),
+            _ => None,
+        },
+        text_color: TEXT_SECONDARY,
+        border: Border {
+            color: BORDER,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    });
+
+    header_row = header_row.push(
+        container(add_mix_btn)
+            .width(Length::Fixed(140.0))
+            .height(Length::Fixed(48.0))
+            .center_x(Length::Fixed(140.0))
+            .center_y(Length::Fixed(48.0)),
+    );
+
     grid = grid.push(
         container(header_row)
             .style(|_: &Theme| container::Style {
@@ -80,7 +112,7 @@ pub fn matrix_grid<'a>(state: &'a MixerState) -> Element<'a, Message> {
             .size(12)
             .color(TEXT_SECONDARY),
     )
-    .on_press(Message::CreateChannel("New".into()))
+    .on_press(Message::CreateChannel(format!("Channel {}", state.channels.len() + 1)))
     .padding([6, 12])
     .style(|_: &Theme, status| button::Style {
         background: match status {

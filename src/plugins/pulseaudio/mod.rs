@@ -17,6 +17,8 @@ mod modules;
 mod peaks;
 
 use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
 
 use crate::error::{OsgError, Result};
 use crate::plugin::api::*;
@@ -46,6 +48,8 @@ pub struct PulseAudioPlugin {
     loopback_modules: HashMap<(SourceId, MixId), u32>,
     /// Maps (source, mix) -> sink-input index for volume control.
     loopback_sink_inputs: HashMap<(SourceId, MixId), u32>,
+    /// Maps mix_id -> (loopback module_id, output device_id) for mix-to-hardware output.
+    mix_output_modules: HashMap<MixId, u32>,
     pending_events: Vec<PluginEvent>,
 }
 
@@ -70,6 +74,7 @@ impl PulseAudioPlugin {
             mix_sinks: HashMap::new(),
             loopback_modules: HashMap::new(),
             loopback_sink_inputs: HashMap::new(),
+            mix_output_modules: HashMap::new(),
             pending_events: Vec::new(),
         }
     }
@@ -273,8 +278,62 @@ impl AudioPlugin for PulseAudioPlugin {
 
             PluginCommand::SetRouteEnabled { source, mix, enabled } => {
                 tracing::debug!(source = ?source, mix = mix, enabled = enabled, "setting route enabled");
-                self.routes.entry((source, mix)).or_default().enabled = enabled;
-                // TODO: load/unload loopback module based on enabled state
+
+                if enabled {
+                    // Resolve the source sink name for the monitor
+                    let channel_id = match source {
+                        SourceId::Channel(id) => id,
+                        SourceId::Hardware(_) => {
+                            tracing::warn!(source = ?source, "hardware source routing not yet supported");
+                            self.routes.entry((source, mix)).or_default().enabled = true;
+                            return Ok(PluginResponse::Ok);
+                        }
+                    };
+
+                    let channel_sink = self.channel_sinks.get(&channel_id).cloned().ok_or_else(|| {
+                        tracing::error!(channel_id = channel_id, "channel sink not found for route enable");
+                        OsgError::ChannelNotFound(channel_id)
+                    })?;
+
+                    let mix_sink = self.mix_sinks.get(&mix).cloned().ok_or_else(|| {
+                        tracing::error!(mix_id = mix, "mix sink not found for route enable");
+                        OsgError::MixNotFound(mix)
+                    })?;
+
+                    let source_monitor = format!("{channel_sink}.monitor");
+                    tracing::debug!(source_monitor = %source_monitor, mix_sink = %mix_sink, "creating loopback for route");
+
+                    let module_id = self.modules.create_loopback(&source_monitor, &mix_sink, 20)?;
+                    tracing::debug!(module_id = module_id, source = ?source, mix = mix, "loopback module created");
+                    self.loopback_modules.insert((source, mix), module_id);
+
+                    // Small delay for PipeWire/PA to register the sink-input
+                    thread::sleep(Duration::from_millis(100));
+
+                    match self.modules.find_loopback_sink_input(module_id)? {
+                        Some(sink_input_idx) => {
+                            tracing::debug!(module_id = module_id, sink_input_idx = sink_input_idx, "found loopback sink-input");
+                            self.loopback_sink_inputs.insert((source, mix), sink_input_idx);
+                        }
+                        None => {
+                            tracing::warn!(module_id = module_id, "loopback sink-input not found after creation");
+                        }
+                    }
+
+                    self.routes.entry((source, mix)).or_default().enabled = true;
+                } else {
+                    // Disable: tear down loopback
+                    if let Some(module_id) = self.loopback_modules.remove(&(source, mix)) {
+                        tracing::debug!(module_id = module_id, source = ?source, mix = mix, "unloading loopback module for route disable");
+                        if let Err(e) = self.modules.unload_module(module_id) {
+                            tracing::warn!(module_id = module_id, err = %e, "failed to unload loopback module");
+                        }
+                    }
+                    self.loopback_sink_inputs.remove(&(source, mix));
+                    self.routes.remove(&(source, mix));
+                    tracing::debug!(source = ?source, mix = mix, "route disabled and removed");
+                }
+
                 Ok(PluginResponse::Ok)
             }
 
@@ -324,14 +383,41 @@ impl AudioPlugin for PulseAudioPlugin {
             }
 
             PluginCommand::SetMixOutput { mix, output } => {
-                tracing::debug!(mix_id = mix, output = ?output, "setting mix output");
+                tracing::debug!(mix_id = mix, output = output, "setting mix output");
+
+                let mix_sink = self.mix_sinks.get(&mix).cloned().ok_or_else(|| {
+                    tracing::error!(mix_id = mix, "mix sink not found for SetMixOutput");
+                    OsgError::MixNotFound(mix)
+                })?;
+
+                // Find the hardware output device_id by OutputId
+                let hw_outputs = DeviceEnumerator::list_outputs();
+                let hw_device = hw_outputs.iter().find(|o| o.id == output).ok_or_else(|| {
+                    tracing::error!(output_id = output, "hardware output not found");
+                    OsgError::OutputNotFound(format!("output id {output}"))
+                })?;
+
+                // Tear down previous output loopback if any
+                if let Some(old_module_id) = self.mix_output_modules.remove(&mix) {
+                    tracing::debug!(mix_id = mix, old_module_id = old_module_id, "unloading previous mix output loopback");
+                    if let Err(e) = self.modules.unload_module(old_module_id) {
+                        tracing::warn!(mix_id = mix, old_module_id = old_module_id, err = %e, "failed to unload previous mix output loopback");
+                    }
+                }
+
+                // Create loopback from mix monitor to hardware output
+                let source_monitor = format!("{mix_sink}.monitor");
+                tracing::debug!(source_monitor = %source_monitor, hw_sink = %hw_device.device_id, "creating mix output loopback");
+
+                let module_id = self.modules.create_loopback(&source_monitor, &hw_device.device_id, 20)?;
+                tracing::debug!(mix_id = mix, module_id = module_id, hw_sink = %hw_device.device_id, "mix output loopback created");
+                self.mix_output_modules.insert(mix, module_id);
+
                 if let Some(m) = self.mixes.iter_mut().find(|m| m.id == mix) {
                     m.output = Some(output);
-                    Ok(PluginResponse::Ok)
-                } else {
-                    tracing::error!(mix_id = mix, "mix not found for SetMixOutput");
-                    Err(OsgError::MixNotFound(mix))
                 }
+
+                Ok(PluginResponse::Ok)
             }
 
             PluginCommand::SetMixMasterVolume { mix, volume } => {

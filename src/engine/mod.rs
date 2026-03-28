@@ -54,6 +54,9 @@ impl MixerEngine {
             channels = snapshot.channels.len(),
             mixes = snapshot.mixes.len(),
             routes = snapshot.routes.len(),
+            hardware_inputs = snapshot.hardware_inputs.len(),
+            hardware_outputs = snapshot.hardware_outputs.len(),
+            applications = snapshot.applications.len(),
             "applying snapshot to engine"
         );
         self.state.apply_snapshot(snapshot);

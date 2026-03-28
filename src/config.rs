@@ -9,12 +9,12 @@ pub struct AppConfig {
     pub ui: UiConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChannelConfig {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MixConfig {
     pub name: String,
     pub icon: String,

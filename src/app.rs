@@ -4,7 +4,7 @@ use iced::widget::{column, container, row, text, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
 use tokio::sync::mpsc;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, ChannelConfig, MixConfig};
 use crate::engine::MixerEngine;
 use crate::plugin::api::{MixId, MixerSnapshot, PluginCommand, PluginEvent, SourceId};
 use crate::ui;
@@ -86,6 +86,29 @@ impl App {
     /// Store the plugin event receiver for the subscription to consume.
     pub fn set_event_receiver(rx: mpsc::UnboundedReceiver<PluginEvent>) {
         let _ = EVENT_RX.set(Mutex::new(Some(rx)));
+    }
+
+    /// Recreate channels and mixes from persisted config.
+    /// Call after the plugin bridge is attached.
+    pub fn restore_from_config(&mut self) {
+        for ch in &self.config.channels {
+            tracing::debug!(name = %ch.name, "restoring channel from config");
+            self.engine
+                .send_command(PluginCommand::CreateChannel { name: ch.name.clone() });
+        }
+        for mx in &self.config.mixes {
+            tracing::debug!(name = %mx.name, "restoring mix from config");
+            self.engine
+                .send_command(PluginCommand::CreateMix { name: mx.name.clone() });
+        }
+        if !self.config.channels.is_empty() || !self.config.mixes.is_empty() {
+            tracing::debug!(
+                channels = self.config.channels.len(),
+                mixes = self.config.mixes.len(),
+                "config restore complete, requesting state refresh"
+            );
+            self.engine.send_command(PluginCommand::GetState);
+        }
     }
 
     pub fn theme(&self) -> Theme {
@@ -175,7 +198,39 @@ impl App {
                     mixes = snapshot.mixes.len(),
                     "state refreshed"
                 );
+
+                // Build new config lists from the snapshot before applying it
+                let new_channels: Vec<ChannelConfig> = snapshot
+                    .channels
+                    .iter()
+                    .map(|c| ChannelConfig { name: c.name.clone() })
+                    .collect();
+                let new_mixes: Vec<MixConfig> = snapshot
+                    .mixes
+                    .iter()
+                    .map(|m| MixConfig {
+                        name: m.name.clone(),
+                        icon: String::new(),
+                        color: [128, 128, 128],
+                        output_device: None,
+                    })
+                    .collect();
+
                 self.engine.apply_snapshot(snapshot);
+
+                // Only persist when the channel or mix list actually changed
+                if new_channels != self.config.channels || new_mixes != self.config.mixes {
+                    self.config.channels = new_channels;
+                    self.config.mixes = new_mixes;
+                    tracing::debug!(
+                        channels = self.config.channels.len(),
+                        mixes = self.config.mixes.len(),
+                        "config changed, saving"
+                    );
+                    if let Err(e) = self.config.save() {
+                        tracing::error!(error = %e, "failed to save config");
+                    }
+                }
             }
             Message::PluginDevicesChanged => {
                 tracing::debug!("devices changed, requesting state");
@@ -332,6 +387,12 @@ fn plugin_event_stream() -> impl iced::futures::Stream<Item = Message> {
                 Some(event) => {
                     let msg = match event {
                         PluginEvent::StateRefreshed(snapshot) => {
+                            tracing::info!(
+                                hardware_inputs = snapshot.hardware_inputs.len(),
+                                hardware_outputs = snapshot.hardware_outputs.len(),
+                                channels = snapshot.channels.len(),
+                                "subscription received StateRefreshed"
+                            );
                             Message::PluginStateRefreshed(snapshot)
                         }
                         PluginEvent::DevicesChanged => Message::PluginDevicesChanged,

@@ -80,6 +80,7 @@ fn main() -> anyhow::Result<()> {
                     let event_rx = app.engine.attach(bridge);
                     app::App::set_event_receiver(event_rx);
                     tracing::info!("Plugin bridge attached to engine");
+                    app.restore_from_config();
                 }
                 app
             },
