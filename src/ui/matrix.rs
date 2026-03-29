@@ -2,7 +2,7 @@
 //!
 //! Rows = audio sources (software channels)
 //! Columns = output mixes
-//! Each intersection = mute button + volume slider + VU meter
+//! Each intersection = mute button + volume slider + VU meter (thin bar below slider)
 
 use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Background, Border, Element, Length, Theme};
@@ -16,6 +16,14 @@ use crate::ui::theme::{
     ThemeMode, ACCENT,
 };
 use crate::ui::vu_meter::vu_meter;
+
+/// Height of mix column headers in pixels.
+const HEADER_HEIGHT: f32 = 60.0;
+/// Height of each matrix cell and channel label row in pixels.
+const CELL_HEIGHT: f32 = 50.0;
+/// Width of mix columns and channel label cells in pixels.
+const COL_WIDTH: f32 = 140.0;
+const LABEL_WIDTH: f32 = 120.0;
 
 /// Mix column colors, cycled for each mix.
 const MIX_COLORS: &[iced::Color] = &[
@@ -51,21 +59,19 @@ pub fn matrix_grid<'a>(
     let mut header_row = row![
         // Corner cell (channel name column)
         container(text("").size(12))
-            .width(Length::Fixed(120.0))
-            .height(Length::Fixed(96.0))
+            .width(Length::Fixed(LABEL_WIDTH))
+            .height(Length::Fixed(HEADER_HEIGHT))
     ]
     .spacing(1);
 
     for (i, mix) in state.mixes.iter().enumerate() {
         let color = MIX_COLORS[i % MIX_COLORS.len()];
-        let mix_peak = state.peak_levels.get(&SourceId::Mix(mix.id)).copied().unwrap_or(0.0);
         header_row = header_row.push(mix_header(
             mix.id,
             &mix.name,
             color,
-            mix.master_volume,
+            mix.output.is_some(),
             mix.muted,
-            mix_peak,
             theme_mode,
         ));
     }
@@ -96,10 +102,10 @@ pub fn matrix_grid<'a>(
 
     header_row = header_row.push(
         container(add_mix_btn)
-            .width(Length::Fixed(140.0))
-            .height(Length::Fixed(96.0))
-            .center_x(Length::Fixed(140.0))
-            .center_y(Length::Fixed(96.0)),
+            .width(Length::Fixed(COL_WIDTH))
+            .height(Length::Fixed(HEADER_HEIGHT))
+            .center_x(Length::Fixed(COL_WIDTH))
+            .center_y(Length::Fixed(HEADER_HEIGHT)),
     );
 
     grid = grid.push(
@@ -178,16 +184,18 @@ pub fn matrix_grid<'a>(
 }
 
 /// Header cell for a mix column.
+///
+/// Displays: colored top bar, mix name, output count badge, mute toggle, remove button.
+/// No slider or VU meter — those belong in the matrix cells.
 fn mix_header<'a>(
     mix_id: u32,
     name: &str,
     color: iced::Color,
-    master_volume: f32,
+    has_output: bool,
     muted: bool,
-    peak: f32,
     theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
-    tracing::trace!(mix_id, name = %name, volume = master_volume, muted, peak, "rendering mix header");
+    tracing::trace!(mix_id, name = %name, has_output, muted, "rendering mix header");
 
     let color_bar = container(text("").size(1))
         .width(Length::Fill)
@@ -222,13 +230,6 @@ fn mix_header<'a>(
         ..Default::default()
     });
 
-    let volume_slider = audio_slider(master_volume, move |v| {
-        Message::MixMasterVolumeChanged {
-            mix: mix_id,
-            volume: v,
-        }
-    });
-
     let remove_btn = button(
         text("×")
             .size(10)
@@ -252,12 +253,13 @@ fn mix_header<'a>(
 
     tracing::trace!(mix_id, "rendering mix remove button");
 
-    let meter = vu_meter(peak, 120.0, 4.0, theme_mode);
+    let output_label = if has_output { "1 Output" } else { "0 Outputs" };
 
     container(
         column![
             color_bar,
             row![
+                mute_btn,
                 Space::new().width(Length::Fill),
                 remove_btn,
             ]
@@ -266,16 +268,16 @@ fn mix_header<'a>(
                 .size(12)
                 .color(text_primary(theme_mode))
                 .center(),
-            row![mute_btn, volume_slider]
-                .spacing(4)
-                .align_y(iced::Alignment::Center),
-            meter,
+            text(output_label)
+                .size(10)
+                .color(text_muted(theme_mode))
+                .center(),
         ]
         .spacing(2)
         .align_x(iced::Alignment::Center),
     )
-    .width(Length::Fixed(140.0))
-    .height(Length::Fixed(96.0))
+    .width(Length::Fixed(COL_WIDTH))
+    .height(Length::Fixed(HEADER_HEIGHT))
     .padding([4, 8])
     .style(move |_: &Theme| container::Style {
         background: Some(Background::Color(bg_elevated(theme_mode))),
@@ -368,10 +370,10 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId, theme_mode: Them
     }
 
     let inner = container(label_row)
-        .width(Length::Fixed(120.0))
-        .height(Length::Fixed(96.0))
+        .width(Length::Fixed(LABEL_WIDTH))
+        .height(Length::Fixed(CELL_HEIGHT))
         .padding([4, 8])
-        .center_y(Length::Fixed(96.0))
+        .center_y(Length::Fixed(CELL_HEIGHT))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(bg_primary(theme_mode))),
             border: Border {
@@ -397,7 +399,13 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId, theme_mode: Them
     }
 }
 
-/// A single matrix intersection cell: mute icon + slider + VU meter.
+/// A single matrix intersection cell.
+///
+/// Layout when routed:
+/// ```
+/// [ 🔊  ══●══════════ ]   ← mute btn + slider in a row
+/// [ ▮▮▮▮▮░░░░░░░░░░░ ]   ← 3 px thin VU bar
+/// ```
 ///
 /// If no route exists (source not connected to mix), shows a "+" placeholder.
 /// `focused` adds a 2px ACCENT border to highlight keyboard selection.
@@ -444,12 +452,18 @@ fn matrix_cell<'a>(
                 volume: v,
             });
 
-            let meter = vu_meter(peak, 120.0, 4.0, theme_mode);
+            // Thin VU bar sits directly below the slider row (3 px)
+            let meter = vu_meter(peak, COL_WIDTH - 16.0, 3.0, theme_mode);
 
-            column![mute_btn, fader, meter]
-                .spacing(2)
-                .align_x(iced::Alignment::Center)
-                .into()
+            column![
+                row![mute_btn, fader]
+                    .spacing(4)
+                    .align_y(iced::Alignment::Center),
+                meter,
+            ]
+            .spacing(2)
+            .align_x(iced::Alignment::Center)
+            .into()
         }
         None => {
             // Empty cell -- source not routed to this mix; clicking creates the route
@@ -483,11 +497,11 @@ fn matrix_cell<'a>(
     };
 
     container(cell_content)
-        .width(Length::Fixed(140.0))
-        .height(Length::Fixed(96.0))
+        .width(Length::Fixed(COL_WIDTH))
+        .height(Length::Fixed(CELL_HEIGHT))
         .padding(4)
-        .center_x(Length::Fixed(140.0))
-        .center_y(Length::Fixed(96.0))
+        .center_x(Length::Fixed(COL_WIDTH))
+        .center_y(Length::Fixed(CELL_HEIGHT))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(bg_elevated(theme_mode))),
             border: Border {
