@@ -3378,6 +3378,7 @@ dependencies = [
  "iced",
  "iced_aw",
  "ksni",
+ "libc",
  "libpulse-binding",
  "libspa",
  "lucide-icons",

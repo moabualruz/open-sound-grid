@@ -791,12 +791,19 @@ impl AudioPlugin for PulseAudioPlugin {
         self.unified_tx = Some(tx.clone());
 
         // Spawn `pactl subscribe` for real-time PA event notifications
-        match std::process::Command::new("pactl")
-            .arg("subscribe")
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new("pactl");
+        cmd.arg("subscribe")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+            .stderr(Stdio::null());
+        // Ensure child dies when parent exits (Linux PR_SET_PDEATHSIG)
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+        match cmd.spawn() {
             Ok(mut child) => {
                 let stdout = child.stdout.take().unwrap();
                 // Background thread reads pactl subscribe lines and pushes

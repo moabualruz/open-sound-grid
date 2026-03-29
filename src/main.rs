@@ -33,12 +33,30 @@ fn main() -> anyhow::Result<()> {
         .with_line_number(true)
         .init();
 
-    // Single instance check
+    // Single instance check — with orphaned process recovery
     let instance = single_instance::SingleInstance::new("open-sound-grid")
         .map_err(|e| anyhow::anyhow!("Single instance check failed: {}", e))?;
     if !instance.is_single() {
-        tracing::warn!("Open Sound Grid is already running");
-        return Ok(());
+        // Check if an actual open-sound-grid process is running.
+        // If the lock is held by an orphaned child (e.g. pactl subscribe),
+        // kill it and retry.
+        if is_real_instance_running() {
+            tracing::warn!("Open Sound Grid is already running");
+            return Ok(());
+        }
+        tracing::warn!("Lock held by orphaned process — cleaning up and retrying");
+        kill_orphaned_lock_holders();
+        // Drop old instance and re-acquire
+        drop(instance);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let instance = single_instance::SingleInstance::new("open-sound-grid")
+            .map_err(|e| anyhow::anyhow!("Single instance retry failed: {}", e))?;
+        if !instance.is_single() {
+            tracing::error!("Failed to acquire lock after cleanup");
+            return Ok(());
+        }
+        // Keep instance alive for the rest of main
+        std::mem::forget(instance);
     }
 
     tracing::info!("Starting Open Sound Grid");
@@ -107,4 +125,46 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Open Sound Grid exiting");
     Ok(())
+}
+
+/// Check if a real `open-sound-grid` process (not a child like pactl) is running.
+fn is_real_instance_running() -> bool {
+    let output = std::process::Command::new("pgrep")
+        .args(["-x", "open-sound-gri"]) // pgrep truncates to 15 chars
+        .output();
+    match output {
+        Ok(out) => {
+            let pids = String::from_utf8_lossy(&out.stdout);
+            let own_pid = std::process::id().to_string();
+            // Check if any matching PID is NOT our own process
+            pids.lines()
+                .any(|pid| pid.trim() != own_pid && !pid.trim().is_empty())
+        }
+        Err(_) => false,
+    }
+}
+
+/// Kill processes holding the abstract socket that aren't the real app.
+fn kill_orphaned_lock_holders() {
+    // Use ss to find who holds the @open-sound-grid socket
+    let output = std::process::Command::new("ss").args(["-xlnp"]).output();
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if line.contains("@open-sound-grid") {
+                // Extract pid from users:(("pactl",pid=NNNN,fd=N))
+                if let Some(pid_start) = line.find("pid=") {
+                    let rest = &line[pid_start + 4..];
+                    if let Some(pid_end) = rest.find(',') {
+                        if let Ok(pid) = rest[..pid_end].parse::<u32>() {
+                            tracing::info!(pid, "killing orphaned process holding lock");
+                            let _ = std::process::Command::new("kill")
+                                .arg(pid.to_string())
+                                .status();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
