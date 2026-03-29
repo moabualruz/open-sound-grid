@@ -85,40 +85,44 @@ pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875); // #e5e3df
 ///
 /// Uses the freedesktop portal Settings interface (works on KDE, GNOME, etc.).
 /// Returns `Dark` or `Light`. Falls back to `Dark` if D-Bus is unavailable.
-#[instrument]
-pub fn detect_system_theme() -> ThemeMode {
-    debug!("querying system theme via D-Bus");
-    let result = std::process::Command::new("busctl")
-        .args([
-            "--user",
-            "call",
-            "org.freedesktop.portal.Desktop",
-            "/org/freedesktop/portal/desktop",
-            "org.freedesktop.portal.Settings",
-            "Read",
-            "ss",
-            "org.freedesktop.appearance",
-            "color-scheme",
-        ])
-        .output();
+/// Cached system theme — detected once at startup via D-Bus, not per-frame.
+static CACHED_SYSTEM_THEME: std::sync::OnceLock<ThemeMode> = std::sync::OnceLock::new();
 
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            trace!(raw_output = %stdout, "D-Bus color-scheme response");
-            if stdout.contains('1') {
-                info!("system theme detected: Dark");
+pub fn detect_system_theme() -> ThemeMode {
+    *CACHED_SYSTEM_THEME.get_or_init(|| {
+        debug!("querying system theme via D-Bus (one-time)");
+        let result = std::process::Command::new("busctl")
+            .args([
+                "--user",
+                "call",
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Settings",
+                "Read",
+                "ss",
+                "org.freedesktop.appearance",
+                "color-scheme",
+            ])
+            .output();
+
+        match result {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                trace!(raw_output = %stdout, "D-Bus color-scheme response");
+                if stdout.contains('1') {
+                    info!("system theme detected: Dark (cached)");
+                    ThemeMode::Dark
+                } else {
+                    info!("system theme detected: Light (cached)");
+                    ThemeMode::Light
+                }
+            }
+            Err(e) => {
+                debug!(error = %e, "D-Bus query failed — defaulting to Dark");
                 ThemeMode::Dark
-            } else {
-                info!("system theme detected: Light");
-                ThemeMode::Light
             }
         }
-        Err(e) => {
-            debug!(error = %e, "D-Bus query failed — defaulting to Dark");
-            ThemeMode::Dark
-        }
-    }
+    })
 }
 
 /// Resolve `ThemeMode::System` to a concrete `Dark` or `Light`.

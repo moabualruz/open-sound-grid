@@ -63,15 +63,24 @@ fn main() -> anyhow::Result<()> {
         std::mem::forget(instance);
     }
 
-    tracing::info!("Starting Open Sound Grid");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        rust_log = %std::env::var("RUST_LOG").unwrap_or_else(|_| "open_sound_grid=info".into()),
+        "Starting Open Sound Grid — use RUST_LOG=open_sound_grid=debug for full traces"
+    );
 
     // Spawn system tray. The command receiver is stored in tray::TRAY_RX so
     // the iced subscription can consume it on first tick (BUG-003 fix).
     tray::spawn_tray();
     tracing::debug!("Tray spawned; TRAY_RX ready for subscription");
 
+    // Load config early so we can pass latency to the audio plugin
+    let early_cfg = config::AppConfig::load();
+    let latency_ms = early_cfg.audio.latency_ms;
+
     // Create and start the audio plugin before the iced event loop
-    let audio_plugin = plugins::create_default_plugin();
+    let mut audio_plugin = plugins::create_default_plugin();
+    audio_plugin.set_latency_ms(latency_ms);
     let mut plugin_manager = plugin::manager::PluginManager::new();
     let bridge = match plugin_manager.start(audio_plugin) {
         Ok(b) => {

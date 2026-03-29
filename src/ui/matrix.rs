@@ -33,6 +33,8 @@ use crate::ui::vu_slider::vu_slider;
 const HEADER_HEIGHT: f32 = 64.0;
 /// Height of each matrix cell and channel label row in pixels.
 const CELL_HEIGHT: f32 = 56.0;
+/// Height when stereo L/R sliders are active — taller to fit both sliders.
+const CELL_HEIGHT_STEREO: f32 = 76.0;
 /// Width of mix columns and channel label cells in pixels.
 const COL_WIDTH: f32 = 150.0;
 const LABEL_WIDTH: f32 = 200.0;
@@ -261,6 +263,7 @@ pub fn matrix_grid<'a>(
                 peak,
                 first_mix_id,
                 master_volume,
+                stereo_sliders,
             ),
         ]
         .spacing(CELL_SPACING);
@@ -278,6 +281,7 @@ pub fn matrix_grid<'a>(
                 mix.id,
                 route,
                 cell_ratio,
+                master_volume,
                 peak,
                 cell_focused,
                 theme_mode,
@@ -295,6 +299,10 @@ pub fn matrix_grid<'a>(
             ..Default::default()
         }));
     }
+
+    // NOTE: Solo app rows are no longer rendered here as placeholders.
+    // Unassigned playing apps get auto-created as real channels in PluginAppsChanged,
+    // so they appear as normal channel rows with full volume control.
 
     // Hardware input devices shown as channel rows (mic, line-in, etc.)
     for input in &state.hardware_inputs {
@@ -316,6 +324,7 @@ pub fn matrix_grid<'a>(
             peak,
             first_mix_id,
             master_volume,
+            stereo_sliders,
         )]
         .spacing(CELL_SPACING);
 
@@ -331,6 +340,7 @@ pub fn matrix_grid<'a>(
                 mix.id,
                 route,
                 hw_ratio,
+                master_volume,
                 peak,
                 false,
                 theme_mode,
@@ -344,138 +354,28 @@ pub fn matrix_grid<'a>(
         }));
     }
 
-    // Channel creation: WL3-style dropdown with detected apps + preset submenu
+    // Channel creation: preset channels + custom name input.
+    // No apps listed here — unassigned apps auto-appear as solo rows.
+    // Users group apps via the channel settings panel (click a channel → assign apps).
     if show_channel_picker {
         let mut dropdown_col = column![].spacing(4);
 
-        // Search field (WL3: search bar at top of dropdown)
-        let search_input = text_input("Search apps...", channel_search)
+        // Custom channel name input
+        let search_input = text_input("Custom channel name...", channel_search)
             .on_input(Message::ChannelSearchInput)
+            .on_submit(Message::CreateChannel(channel_search.to_string()))
             .size(12)
             .padding([4, 8]);
         dropdown_col = dropdown_col.push(search_input);
 
-        // Filter apps by search text
-        let search_lower = channel_search.to_lowercase();
-        let filtered_apps: Vec<_> = state
-            .applications
+        // Existing channel names (for filtering out already-created presets)
+        let existing_channel_names: Vec<String> = state
+            .channels
             .iter()
-            .filter(|app| {
-                search_lower.is_empty()
-                    || app.name.to_lowercase().contains(&search_lower)
-                    || app.binary.to_lowercase().contains(&search_lower)
-            })
+            .map(|c| c.name.to_lowercase())
             .collect();
-        tracing::debug!(total_apps = state.applications.len(), filtered = filtered_apps.len(), search = %search_lower, "channel picker: app filter applied");
 
-        // Detected apps section (WL3: apps appear at top of dropdown)
-        if !filtered_apps.is_empty() {
-            dropdown_col =
-                dropdown_col.push(text("Detected Apps").size(10).color(text_muted(theme_mode)));
-            for app in &filtered_apps {
-                let stream_idx = app.stream_index;
-                let app_icon: Element<'a, Message> = if let Some(ref path) = app.icon_path {
-                    image(image::Handle::from_path(path))
-                        .width(Length::Fixed(20.0))
-                        .height(Length::Fixed(20.0))
-                        .into()
-                } else {
-                    icon_headphones()
-                        .size(14)
-                        .color(text_secondary(theme_mode))
-                        .center()
-                        .into()
-                };
-
-                let app_btn = button(
-                    row![
-                        app_icon,
-                        text(&app.name).size(11).color(text_primary(theme_mode)),
-                    ]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
-                )
-                .on_press(Message::CreateChannelFromApp(stream_idx))
-                .width(Length::Fill)
-                .padding([4, 8])
-                .style(move |_: &Theme, status| button::Style {
-                    background: match status {
-                        button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
-                        _ => None,
-                    },
-                    text_color: text_primary(theme_mode),
-                    border: Border {
-                        color: border_color(theme_mode),
-                        width: 0.0,
-                        radius: 4.0.into(),
-                    },
-                    ..Default::default()
-                });
-                dropdown_col = dropdown_col.push(app_btn);
-            }
-        }
-
-        // Seen-but-not-running apps (persistent history, faded)
-        let running_binaries: Vec<&str> = state
-            .applications
-            .iter()
-            .map(|a| a.binary.as_str())
-            .collect();
-        let not_running_seen: Vec<&String> = seen_apps
-            .iter()
-            .filter(|b| !running_binaries.contains(&b.as_str()))
-            .filter(|b| search_lower.is_empty() || b.to_lowercase().contains(&search_lower))
-            .collect();
-        if !not_running_seen.is_empty() {
-            tracing::debug!(
-                count = not_running_seen.len(),
-                "channel picker: rendering not-running seen apps"
-            );
-            for binary in &not_running_seen {
-                let label = text(binary.to_string())
-                    .size(11)
-                    .color(text_muted(theme_mode));
-                let faded_row = row![
-                    icon_headphones()
-                        .size(14)
-                        .color(text_muted(theme_mode))
-                        .center(),
-                    label,
-                    Space::new().width(Length::Fill),
-                    text("not running").size(9).color(text_muted(theme_mode)),
-                ]
-                .spacing(6)
-                .align_y(iced::Alignment::Center);
-
-                dropdown_col = dropdown_col.push(
-                    container(faded_row)
-                        .padding([4, 8])
-                        .width(Length::Fill)
-                        .style(move |_: &Theme| container::Style {
-                            background: Some(Background::Color(bg_primary(theme_mode))),
-                            border: Border {
-                                color: border_color(theme_mode),
-                                width: 0.0,
-                                radius: 4.0.into(),
-                            },
-                            ..Default::default()
-                        }),
-                );
-            }
-        }
-
-        // Separator
-        dropdown_col = dropdown_col.push(
-            container(Space::new())
-                .width(Length::Fill)
-                .height(Length::Fixed(1.0))
-                .style(move |_: &Theme| container::Style {
-                    background: Some(Background::Color(border_color(theme_mode))),
-                    ..Default::default()
-                }),
-        );
-
-        // Empty channel presets section (WL3: "Add empty channel" submenu)
+        // Empty channel presets — only show names NOT already in the channel list
         tracing::debug!(
             presets = CHANNEL_PRESETS.len(),
             "channel picker: rendering empty channel presets"
@@ -487,6 +387,10 @@ pub fn matrix_grid<'a>(
         );
         let mut preset_row = row![].spacing(4);
         for &(label, _tag) in CHANNEL_PRESETS {
+            // Skip presets that already exist as channels (1 of each)
+            if existing_channel_names.contains(&label.to_lowercase()) {
+                continue;
+            }
             let name = label.to_string();
             let btn = button(
                 text(label)
@@ -741,7 +645,8 @@ fn mix_header<'a>(
                         .size(11)
                         .width(Length::Fixed(80.0))
                         .into()
-                } else {
+                } else if is_removable {
+                    // Renameable (all except Main/Monitor)
                     button(
                         text(name.to_string())
                             .size(12)
@@ -752,6 +657,13 @@ fn mix_header<'a>(
                     .padding(0)
                     .style(|_: &Theme, _| button::Style::default())
                     .into()
+                } else {
+                    // Main/Monitor: not renameable, just static text
+                    text(name.to_string())
+                        .size(12)
+                        .color(text_primary(theme_mode))
+                        .center()
+                        .into()
                 };
                 mix_name_el
             },]
@@ -792,6 +704,7 @@ fn channel_label<'a>(
     peak: f32,
     first_mix_id: Option<MixId>,
     master_volume: f32,
+    stereo_sliders: bool,
 ) -> Element<'a, Message> {
     tracing::trace!(name, muted, source = ?source, has_icon = icon_path.is_some(), editing, not_running = not_running_apps.len(), assigned_apps = assigned_app_count, "rendering channel label");
     let name_color = if muted {
@@ -885,25 +798,71 @@ fn channel_label<'a>(
     let volume_pct = (master_volume * 100.0).round() as u32;
     let master_slider_el: Element<'a, Message> = {
         let src = source;
-        let slider_widget = iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
-            Message::ChannelMasterVolumeChanged {
-                source: src,
-                volume: v,
-            }
-        })
-        .step(0.01)
-        .width(Length::Fill);
 
-        row![
-            slider_widget,
-            text(format!("{}%", volume_pct))
-                .size(10)
-                .color(text_secondary(theme_mode))
-                .width(Length::Fixed(30.0)),
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center)
-        .into()
+        if stereo_sliders {
+            // L/R mode: two stacked sliders (both control same value for now)
+            let src_l = source;
+            let src_r = source;
+            let slider_l = row![
+                text("L").size(8).color(text_muted(theme_mode)),
+                iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
+                    Message::ChannelMasterVolumeChanged {
+                        source: src_l,
+                        volume: v,
+                    }
+                })
+                .step(0.01)
+                .width(Length::Fill),
+            ]
+            .spacing(2)
+            .align_y(iced::Alignment::Center);
+
+            let slider_r = row![
+                text("R").size(8).color(text_muted(theme_mode)),
+                iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
+                    Message::ChannelMasterVolumeChanged {
+                        source: src_r,
+                        volume: v,
+                    }
+                })
+                .step(0.01)
+                .width(Length::Fill),
+            ]
+            .spacing(2)
+            .align_y(iced::Alignment::Center);
+
+            column![
+                slider_l,
+                slider_r,
+                text(format!("{}%", volume_pct))
+                    .size(9)
+                    .color(text_secondary(theme_mode)),
+            ]
+            .spacing(1)
+            .into()
+        } else {
+            // Single slider mode
+            let slider_widget =
+                iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
+                    Message::ChannelMasterVolumeChanged {
+                        source: src,
+                        volume: v,
+                    }
+                })
+                .step(0.01)
+                .width(Length::Fill);
+
+            row![
+                slider_widget,
+                text(format!("{}%", volume_pct))
+                    .size(10)
+                    .color(text_secondary(theme_mode))
+                    .width(Length::Fixed(30.0)),
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+            .into()
+        }
     };
 
     // Top row: mute + icon + name
@@ -988,9 +947,10 @@ fn channel_label<'a>(
     // Stack: name row on top, full-width slider below
     let label_col = column![label_row, master_slider_el].spacing(2);
 
+    let label_h = if stereo_sliders { CELL_HEIGHT_STEREO } else { CELL_HEIGHT };
     let inner = container(label_col)
         .width(Length::Fixed(LABEL_WIDTH))
-        .height(Length::Fixed(CELL_HEIGHT))
+        .height(Length::Fixed(label_h))
         .padding([4, 8])
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(bg_primary(theme_mode))),
@@ -1066,15 +1026,17 @@ fn matrix_cell<'a>(
     mix_id: u32,
     route: Option<&'a crate::plugin::api::RouteState>,
     cell_ratio: f32, // WL3: the cell's own percentage (0.0-1.0), NOT the effective PA volume
+    channel_master: f32, // Channel master volume (0.0-1.0)
     peak: f32,
     focused: bool,
     theme_mode: ThemeMode,
     stereo_sliders: bool,
 ) -> Element<'a, Message> {
-    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), cell_ratio, peak, focused, "rendering matrix cell");
+    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), cell_ratio, channel_master, peak, focused, "rendering matrix cell");
     let cell_content: Element<'a, Message> = match route {
         Some(route) => {
-            let vol = cell_ratio; // show ratio, not effective volume
+            let vol = cell_ratio; // slider position = ratio (what user controls)
+            let effective = (cell_ratio * channel_master).clamp(0.0, 1.0); // actual output level
             let muted = route.muted;
 
             let mute_icon = if muted {
@@ -1108,6 +1070,7 @@ fn matrix_cell<'a>(
             let src = source;
             let mid = mix_id;
             let vol_pct = (vol * 100.0).round() as u32;
+            let eff_pct = (effective * 100.0).round() as u32;
 
             if stereo_sliders {
                 // L/R mode: two sliders stacked, labeled L and R
@@ -1149,9 +1112,13 @@ fn matrix_cell<'a>(
                     row![mute_btn].align_y(iced::Alignment::Center),
                     slider_l,
                     slider_r,
-                    text(format!("{}%", vol_pct))
-                        .size(9)
-                        .color(text_muted(theme_mode)),
+                    text(if eff_pct != vol_pct {
+                        format!("{}% (→{}%)", vol_pct, eff_pct)
+                    } else {
+                        format!("{}%", vol_pct)
+                    })
+                    .size(9)
+                    .color(text_muted(theme_mode)),
                 ]
                 .spacing(1)
                 .align_x(iced::Alignment::Center)
@@ -1172,9 +1139,13 @@ fn matrix_cell<'a>(
                     row![mute_btn, fader]
                         .spacing(4)
                         .align_y(iced::Alignment::Center),
-                    text(format!("{}%", vol_pct))
-                        .size(9)
-                        .color(text_muted(theme_mode)),
+                    text(if eff_pct != vol_pct {
+                        format!("{}% (→{}%)", vol_pct, eff_pct)
+                    } else {
+                        format!("{}%", vol_pct)
+                    })
+                    .size(9)
+                    .color(text_muted(theme_mode)),
                 ]
                 .spacing(1)
                 .align_x(iced::Alignment::Center)
@@ -1230,12 +1201,13 @@ fn matrix_cell<'a>(
         bg_elevated(theme_mode)
     };
 
+    let cell_h = if stereo_sliders { CELL_HEIGHT_STEREO } else { CELL_HEIGHT };
     container(cell_content)
         .width(Length::Fixed(COL_WIDTH))
-        .height(Length::Fixed(CELL_HEIGHT))
+        .height(Length::Fixed(cell_h))
         .padding(6)
         .center_x(Length::Fixed(COL_WIDTH))
-        .center_y(Length::Fixed(CELL_HEIGHT))
+        .center_y(Length::Fixed(cell_h))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(cell_bg)),
             border: Border {

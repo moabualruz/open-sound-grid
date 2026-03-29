@@ -30,8 +30,13 @@ pub struct MixerState {
 
 impl MixerState {
     /// Apply a plugin snapshot, replacing all state.
-    #[instrument(skip(self, snap))]
-    pub fn apply_snapshot(&mut self, snap: MixerSnapshot) {
+    /// `channel_masters` maps ChannelId → master volume (0.0–1.0) for ratio computation.
+    #[instrument(skip(self, snap, channel_masters))]
+    pub fn apply_snapshot(
+        &mut self,
+        snap: MixerSnapshot,
+        channel_masters: &std::collections::HashMap<u32, f32>,
+    ) {
         let prev_channel_count = self.channels.len();
         let prev_mix_count = self.mixes.len();
         let new_channel_count = snap.channels.len();
@@ -64,20 +69,23 @@ impl MixerState {
             self.routes.insert((source, mix), route);
         }
 
-        // Compute ratios from current volumes for linked slider behavior
+        // Compute ratios from current volumes for linked slider behavior.
+        // WL3 model: effective_pa_volume = cell_ratio × channel_master.
+        // So: cell_ratio = effective_pa_volume / channel_master.
         self.route_ratios.clear();
         for ((source, mix_id), route) in &self.routes {
-            let master = self
-                .mixes
-                .iter()
-                .find(|m| m.id == *mix_id)
-                .map_or(1.0, |m| m.master_volume);
-            let ratio = if master > 0.001 {
-                route.volume / master
+            let ch_master = match source {
+                crate::plugin::api::SourceId::Channel(ch_id) => {
+                    channel_masters.get(ch_id).copied().unwrap_or(1.0)
+                }
+                _ => 1.0,
+            };
+            let ratio = if ch_master > 0.001 {
+                (route.volume / ch_master).clamp(0.0, 1.0)
             } else {
                 1.0
             };
-            tracing::trace!(source = ?source, mix_id, ratio, "snapshot: route ratio computed");
+            tracing::trace!(source = ?source, mix_id, ch_master, ratio, "snapshot: route ratio computed from channel master");
             self.route_ratios.insert((*source, *mix_id), ratio);
         }
         tracing::debug!(
@@ -115,13 +123,15 @@ mod tests {
     fn test_apply_snapshot_sets_connected() {
         let mut state = MixerState::default();
         assert!(!state.connected);
-        state.apply_snapshot(MixerSnapshot::default());
+        let masters = std::collections::HashMap::new();
+        state.apply_snapshot(MixerSnapshot::default(), &masters);
         assert!(state.connected);
     }
 
     #[test]
     fn test_apply_snapshot_replaces_channels() {
         let mut state = MixerState::default();
+        let masters = std::collections::HashMap::new();
         let snapshot = MixerSnapshot {
             channels: vec![ChannelInfo {
                 id: 1,
@@ -135,7 +145,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        state.apply_snapshot(snapshot);
+        state.apply_snapshot(snapshot, &masters);
         assert_eq!(state.channels.len(), 1);
         assert_eq!(state.channels[0].name, "Test");
     }

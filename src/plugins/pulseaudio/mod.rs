@@ -46,8 +46,12 @@ pub struct PulseAudioPlugin {
     routes: HashMap<(SourceId, MixId), RouteState>,
     /// Maps (channel_id) -> PA sink name for the channel's null sink.
     channel_sinks: HashMap<u32, String>,
+    /// Maps (channel_id) -> null-sink module ID for unloading on remove.
+    channel_null_sink_modules: HashMap<u32, u32>,
     /// Maps (mix_id) -> PA sink name for the mix's null sink.
     mix_sinks: HashMap<u32, String>,
+    /// Maps (mix_id) -> null-sink module ID for unloading on remove.
+    mix_null_sink_modules: HashMap<u32, u32>,
     /// Maps (source, mix) -> loopback module id.
     loopback_modules: HashMap<(SourceId, MixId), u32>,
     /// Maps (source, mix) -> sink-input index for volume control.
@@ -56,6 +60,8 @@ pub struct PulseAudioPlugin {
     mix_output_modules: HashMap<MixId, u32>,
     /// Per-channel effects chains. Keyed by ChannelId.
     effects_chains: HashMap<ChannelId, EffectsChain>,
+    /// Loopback latency in milliseconds (from config).
+    latency_ms: u32,
     /// `pactl subscribe` child process for PA event notifications.
     subscribe_process: Option<Child>,
     /// Sender for pushing PA subscribe events into the plugin thread's unified channel.
@@ -82,11 +88,14 @@ impl PulseAudioPlugin {
             mixes: Vec::new(),
             routes: HashMap::new(),
             channel_sinks: HashMap::new(),
+            channel_null_sink_modules: HashMap::new(),
             mix_sinks: HashMap::new(),
+            mix_null_sink_modules: HashMap::new(),
             loopback_modules: HashMap::new(),
             loopback_sink_inputs: HashMap::new(),
             mix_output_modules: HashMap::new(),
             effects_chains: HashMap::new(),
+            latency_ms: 20,
             subscribe_process: None,
             unified_tx: None,
         }
@@ -202,24 +211,18 @@ impl PulseAudioPlugin {
                     &sink_name,
                     &description,
                 ) {
-                    Ok(_module_id) => {
-                        tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, "channel created");
+                    Ok(null_sink_module_id) => {
+                        tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, null_sink_module_id, "channel created");
                         self.peaks
                             .start_monitoring(&sink_name, SourceId::Channel(id));
 
-                        // Set System channel as default PA sink so all unassigned apps
-                        // route through the matrix automatically (WL3 model)
-                        if sink_name.contains("System") {
-                            tracing::info!(
-                                sink_name = %sink_name,
-                                "setting System channel as default PA sink"
-                            );
-                            let _ = std::process::Command::new("pactl")
-                                .args(["set-default-sink", &sink_name])
-                                .status();
-                        }
+                        // NOTE: We intentionally do NOT set the System channel as
+                        // the default PA sink. The user's chosen OS output device
+                        // must remain as their default. Apps are routed to channels
+                        // explicitly via move-sink-input on assignment.
 
                         self.channel_sinks.insert(id, sink_name);
+                        self.channel_null_sink_modules.insert(id, null_sink_module_id);
                     }
                     Err(e) => {
                         tracing::error!(channel_name = %name, err = %e, "failed to create null sink for channel");
@@ -274,7 +277,12 @@ impl PulseAudioPlugin {
 
                 self.routes.retain(|(src, _), _| *src != source);
                 self.effects_chains.remove(&id);
-                tracing::debug!(channel_id = id, "removed effects chain for channel");
+
+                // Unload the channel's null-sink module (prevents PA resource leak)
+                if let Some(null_sink_mod) = self.channel_null_sink_modules.remove(&id) {
+                    tracing::debug!(channel_id = id, null_sink_mod, "unloading channel null-sink module");
+                    let _ = self.modules.unload_module(self.connection.as_mut(), null_sink_mod);
+                }
                 Ok(PluginResponse::Ok)
             }
 
@@ -287,6 +295,12 @@ impl PulseAudioPlugin {
             }
 
             PluginCommand::CreateMix { name } => {
+                // Skip if a mix with this name already exists (prevents config-load doubling)
+                if self.mixes.iter().any(|m| m.name == name) {
+                    tracing::debug!(name = %name, "mix already exists — skipping creation");
+                    let existing_id = self.mixes.iter().find(|m| m.name == name).unwrap().id;
+                    return Ok(PluginResponse::MixCreated { id: existing_id });
+                }
                 let id = self.next_mix_id;
                 self.next_mix_id += 1;
 
@@ -298,10 +312,11 @@ impl PulseAudioPlugin {
                     &sink_name,
                     &description,
                 ) {
-                    Ok(_module_id) => {
-                        tracing::info!(mix_name = %name, mix_id = id, sink_name = %sink_name, "mix created");
+                    Ok(null_sink_module_id) => {
+                        tracing::info!(mix_name = %name, mix_id = id, sink_name = %sink_name, null_sink_module_id, "mix created");
                         self.peaks.start_monitoring(&sink_name, SourceId::Mix(id));
                         self.mix_sinks.insert(id, sink_name);
+                        self.mix_null_sink_modules.insert(id, null_sink_module_id);
                     }
                     Err(e) => {
                         tracing::error!(mix_name = %name, err = %e, "failed to create null sink for mix");
@@ -348,6 +363,19 @@ impl PulseAudioPlugin {
                 }
 
                 self.routes.retain(|(_, mix), _| *mix != id);
+
+                // Unload mix-to-hardware output loopback (prevents PA resource leak)
+                if let Some(output_mod) = self.mix_output_modules.remove(&id) {
+                    tracing::debug!(mix_id = id, output_mod, "unloading mix output loopback module");
+                    let _ = self.modules.unload_module(self.connection.as_mut(), output_mod);
+                }
+
+                // Unload the mix's null-sink module
+                if let Some(null_sink_mod) = self.mix_null_sink_modules.remove(&id) {
+                    tracing::debug!(mix_id = id, null_sink_mod, "unloading mix null-sink module");
+                    let _ = self.modules.unload_module(self.connection.as_mut(), null_sink_mod);
+                }
+
                 Ok(PluginResponse::Ok)
             }
 
@@ -370,6 +398,10 @@ impl PulseAudioPlugin {
 
                 // Apply via PA if we have a sink-input for this route
                 if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
+                    tracing::debug!(
+                        source = ?source, mix = mix, sink_input_idx, volume,
+                        "applying route volume to PA sink-input"
+                    );
                     if let Err(e) = self.modules.set_sink_input_volume(
                         self.connection.as_mut(),
                         sink_input_idx,
@@ -377,6 +409,12 @@ impl PulseAudioPlugin {
                     ) {
                         tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set route volume via PA");
                     }
+                } else {
+                    tracing::warn!(
+                        source = ?source, mix = mix, volume,
+                        loopback_count = self.loopback_sink_inputs.len(),
+                        "SetRouteVolume: no sink-input found for route — volume change lost"
+                    );
                 }
 
                 Ok(PluginResponse::Ok)
@@ -416,9 +454,21 @@ impl PulseAudioPlugin {
                                     self.connection.as_mut(),
                                     &source_name,
                                     &mix_sink,
-                                    20,
+                                    self.latency_ms,
                                 )?;
                                 self.loopback_modules.insert((source, mix), module_id);
+
+                                // Discover sink-input for volume control (same as software channels)
+                                match self.modules.find_loopback_sink_input(self.connection.as_mut(), module_id)? {
+                                    Some(idx) => {
+                                        tracing::debug!(module_id, sink_input_idx = idx, "found hardware loopback sink-input");
+                                        self.loopback_sink_inputs.insert((source, mix), idx);
+                                    }
+                                    None => {
+                                        tracing::warn!(module_id, "hardware loopback sink-input not found — volume control unavailable");
+                                    }
+                                }
+
                                 self.routes.entry((source, mix)).or_default().enabled = true;
                                 return Ok(PluginResponse::Ok);
                             } else {
@@ -450,13 +500,22 @@ impl PulseAudioPlugin {
                     })?;
 
                     let source_monitor = format!("{channel_sink}.monitor");
+
+                    // Teardown existing loopback if one already exists (prevents module leak
+                    // when SetRouteEnabled is called again for an already-enabled route).
+                    if let Some(old_module_id) = self.loopback_modules.remove(&(source, mix)) {
+                        tracing::debug!(old_module_id, source = ?source, mix, "tearing down existing loopback before re-creation");
+                        let _ = self.modules.unload_module(self.connection.as_mut(), old_module_id);
+                        self.loopback_sink_inputs.remove(&(source, mix));
+                    }
+
                     tracing::debug!(source_monitor = %source_monitor, mix_sink = %mix_sink, "creating loopback for route");
 
                     let module_id = self.modules.create_loopback(
                         self.connection.as_mut(),
                         &source_monitor,
                         &mix_sink,
-                        20,
+                        self.latency_ms,
                     )?;
                     tracing::debug!(module_id = module_id, source = ?source, mix = mix, "loopback module created");
                     self.loopback_modules.insert((source, mix), module_id);
@@ -595,7 +654,7 @@ impl PulseAudioPlugin {
                     self.connection.as_mut(),
                     &source_monitor,
                     &hw_device.device_id,
-                    20,
+                    self.latency_ms,
                 )?;
                 tracing::debug!(mix_id = mix, module_id = module_id, hw_sink = %hw_device.device_id, "mix output loopback created");
                 self.mix_output_modules.insert(mix, module_id);
@@ -688,7 +747,24 @@ impl PulseAudioPlugin {
 
             PluginCommand::SetSourceMuted { source, muted } => {
                 tracing::debug!(source = ?source, muted = muted, "setting source muted across all routes");
-                // Update in-memory state
+                // Update in-memory state AND apply to loopback sink-inputs
+                let sink_input_keys: Vec<(SourceId, MixId)> = self
+                    .loopback_sink_inputs
+                    .keys()
+                    .filter(|(src, _)| *src == source)
+                    .cloned()
+                    .collect();
+                for key in &sink_input_keys {
+                    if let Some(&idx) = self.loopback_sink_inputs.get(key) {
+                        if let Err(e) = self.modules.set_sink_input_mute(
+                            self.connection.as_mut(),
+                            idx,
+                            muted,
+                        ) {
+                            tracing::warn!(source = ?source, sink_input = idx, err = %e, "failed to set sink-input mute via PA");
+                        }
+                    }
+                }
                 for ((src, _), route) in &mut self.routes {
                     if *src == source {
                         route.muted = muted;
@@ -795,6 +871,11 @@ impl Drop for PulseAudioPlugin {
 }
 
 impl AudioPlugin for PulseAudioPlugin {
+    fn set_latency_ms(&mut self, ms: u32) {
+        tracing::info!(latency_ms = ms, "loopback latency configured from settings");
+        self.latency_ms = ms;
+    }
+
     fn info(&self) -> PluginInfo {
         PluginInfo {
             id: "pulseaudio",
@@ -873,14 +954,21 @@ impl AudioPlugin for PulseAudioPlugin {
                         for line in reader.lines() {
                             let Ok(line) = line else { break };
                             tracing::trace!(line = %line, "pactl subscribe raw event");
-                            let kind = if line.contains("sink-input") {
+                            // Only react to 'new' and 'remove' events — 'change' events
+                            // fire on every volume/mute change and cause a feedback storm
+                            // (each SetRouteVolume triggers a state rebuild).
+                            let kind = if line.contains("'new' on sink-input")
+                                || line.contains("'remove' on sink-input")
+                            {
                                 Some(PaSubscribeKind::SinkInput)
-                            } else if line.contains("'change' on sink")
-                                || line.contains("'new' on sink")
+                            } else if line.contains("'new' on sink")
                                 || line.contains("'remove' on sink")
                             {
                                 Some(PaSubscribeKind::Sink)
-                            } else if line.contains("source") {
+                            } else if line.contains("'new' on source #")
+                                || line.contains("'remove' on source #")
+                            {
+                                // Only new/remove — 'change' on source fires on every volume change
                                 Some(PaSubscribeKind::Source)
                             } else {
                                 None

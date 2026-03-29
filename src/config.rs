@@ -54,6 +54,9 @@ pub struct ChannelConfig {
     /// Binary names of apps assigned to this channel (persisted for not-running support).
     #[serde(default)]
     pub assigned_apps: Vec<String>,
+    /// Channel master volume (0.0–1.0). Persisted across restarts.
+    #[serde(default = "default_volume")]
+    pub master_volume: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,24 +102,28 @@ impl Default for AppConfig {
                     effects: Default::default(),
                     muted: false,
                     assigned_apps: vec![],
+                    master_volume: 1.0,
                 },
                 ChannelConfig {
                     name: "Game".into(),
                     effects: Default::default(),
                     muted: false,
                     assigned_apps: vec![],
+                    master_volume: 1.0,
                 },
                 ChannelConfig {
                     name: "Voice".into(),
                     effects: Default::default(),
                     muted: false,
                     assigned_apps: vec![],
+                    master_volume: 1.0,
                 },
                 ChannelConfig {
                     name: "System".into(),
                     effects: Default::default(),
                     muted: false,
                     assigned_apps: vec![],
+                    master_volume: 1.0,
                 },
             ],
             mixes: vec![

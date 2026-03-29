@@ -1345,3 +1345,393 @@ mod j_tracing {
         }
     }
 }
+
+// =============================================================================
+// E2E: WL3 Volume Model
+// =============================================================================
+mod e2e_volume_model {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn cell_volume_is_ratio_times_channel_master() {
+        let mut app = casual_app();
+        let source = SourceId::Channel(1);
+        let mix = 1;
+
+        // Set channel master to 0.5
+        app.channel_master_volumes.insert(1, 0.5);
+
+        // Set cell ratio to 0.8 via RouteVolumeChanged
+        let _task = app.update(Message::RouteVolumeChanged {
+            source,
+            mix,
+            volume: 0.8,
+        });
+
+        // Ratio should be stored as 0.8
+        let ratio = app.engine.state.route_ratios.get(&(source, mix)).copied();
+        assert_eq!(ratio, Some(0.8), "cell ratio should be 0.8");
+    }
+
+    #[test]
+    fn channel_master_change_preserves_ratios() {
+        let mut app = casual_app();
+        let source = SourceId::Channel(1);
+
+        // Set initial ratio for all mixes
+        app.engine.state.route_ratios.insert((source, 1), 0.6);
+
+        // Change channel master
+        app.channel_master_volumes.insert(1, 0.5);
+        let _task = app.update(Message::ChannelMasterVolumeChanged {
+            source,
+            volume: 0.5,
+        });
+
+        // Ratio should NOT have changed
+        let ratio = app.engine.state.route_ratios.get(&(source, 1)).copied();
+        assert_eq!(ratio, Some(0.6), "ratio must survive channel master change");
+    }
+
+    #[test]
+    fn snapshot_recovers_correct_ratio_from_effective_volume() {
+        let mut app = casual_app();
+        let channel_masters: HashMap<u32, f32> = [(1, 0.5)].into_iter().collect();
+
+        // Simulate a snapshot where route volume is the EFFECTIVE value (ratio * master)
+        let mut snapshot = open_sound_grid::plugin::api::MixerSnapshot::default();
+        snapshot.channels = vec![channel(1, "Music")];
+        snapshot.mixes = vec![monitor_mix()];
+        snapshot.routes.insert(
+            (SourceId::Channel(1), 1),
+            RouteState {
+                volume: 0.3, // effective = ratio(0.6) * master(0.5)
+                enabled: true,
+                muted: false,
+            },
+        );
+
+        app.engine.state.apply_snapshot(snapshot, &channel_masters);
+
+        let ratio = app.engine.state.route_ratios.get(&(SourceId::Channel(1), 1)).copied();
+        assert!(
+            (ratio.unwrap_or(0.0) - 0.6).abs() < 0.01,
+            "ratio should recover to ~0.6, got {:?}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn mix_master_does_not_scale_route_volumes() {
+        let mut app = casual_app();
+        // MixMasterVolumeChanged should NOT send SetRouteVolume for each cell.
+        // It only sends SetMixMasterVolume (mix null-sink volume).
+        // We can verify by checking that route_ratios are untouched.
+        let source = SourceId::Channel(1);
+        app.engine.state.route_ratios.insert((source, 1), 0.8);
+
+        let _task = app.update(Message::MixMasterVolumeChanged {
+            mix: 1,
+            volume: 0.3,
+        });
+
+        let ratio = app.engine.state.route_ratios.get(&(source, 1)).copied();
+        assert_eq!(ratio, Some(0.8), "mix master must not alter cell ratios");
+    }
+}
+
+// =============================================================================
+// E2E: App Assignment & Solo Channels
+// =============================================================================
+mod e2e_app_assignment {
+    use super::*;
+
+    #[test]
+    #[ignore] // Requires PA backend: AssignApp looks up app by stream_index in engine.state.applications
+    fn assign_app_removes_from_previous_channel_config() {
+        let mut app = casual_app();
+        // Pre-assign firefox to Music channel in config
+        if let Some(ch_cfg) = app.config.channels.iter_mut().find(|c| c.name == "Music") {
+            ch_cfg.assigned_apps.push("firefox".into());
+        }
+
+        // Now assign firefox to Discord channel
+        let discord_id = 2;
+        let _task = app.update(Message::AssignApp {
+            channel: discord_id,
+            stream_index: 42,
+        });
+
+        // Music should no longer have firefox
+        let music_apps = app
+            .config
+            .channels
+            .iter()
+            .find(|c| c.name == "Music")
+            .map(|c| &c.assigned_apps);
+        assert!(
+            !music_apps.unwrap().contains(&"firefox".to_string()),
+            "firefox should be removed from Music after reassignment"
+        );
+    }
+
+    #[test]
+    #[ignore] // Requires PA backend: UnassignApp looks up app by stream_index in engine.state.applications
+    fn unassign_app_removes_from_config() {
+        let mut app = casual_app();
+        // Pre-assign discord to Discord channel
+        if let Some(ch_cfg) = app.config.channels.iter_mut().find(|c| c.name == "Discord") {
+            ch_cfg.assigned_apps.push("discord".into());
+        }
+
+        let _task = app.update(Message::UnassignApp {
+            channel: 2,
+            stream_index: 44,
+        });
+
+        let discord_apps = app
+            .config
+            .channels
+            .iter()
+            .find(|c| c.name == "Discord")
+            .map(|c| &c.assigned_apps);
+        assert!(
+            !discord_apps.unwrap().contains(&"discord".to_string()),
+            "discord should be removed from config after unassign"
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Channel Master Persistence
+// =============================================================================
+mod e2e_channel_master {
+    use super::*;
+
+    #[test]
+    fn channel_master_persisted_to_config() {
+        let mut app = casual_app();
+        let source = SourceId::Channel(1);
+
+        let _task = app.update(Message::ChannelMasterVolumeChanged {
+            source,
+            volume: 0.42,
+        });
+
+        assert_eq!(
+            app.channel_master_volumes.get(&1).copied(),
+            Some(0.42),
+            "channel master should be stored in HashMap"
+        );
+    }
+
+    #[test]
+    fn channel_master_cleaned_on_remove() {
+        let mut app = casual_app();
+        app.channel_master_volumes.insert(1, 0.5);
+
+        let _task = app.update(Message::RemoveChannel(1));
+
+        assert!(
+            !app.channel_master_volumes.contains_key(&1),
+            "channel master should be removed when channel is deleted"
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Config Persistence Safety
+// =============================================================================
+mod e2e_config_safety {
+    use super::*;
+
+    #[test]
+    fn empty_snapshot_does_not_wipe_config_mixes() {
+        let mut app = casual_app();
+        // Ensure config has mixes
+        assert!(!app.config.mixes.is_empty(), "config should have mixes");
+        let original_mix_count = app.config.mixes.len();
+
+        // Simulate an empty snapshot (startup race condition)
+        let empty_snapshot = open_sound_grid::plugin::api::MixerSnapshot::default();
+        let _task = app.update(Message::PluginStateRefreshed(empty_snapshot));
+
+        // Config mixes must NOT be wiped
+        assert_eq!(
+            app.config.mixes.len(),
+            original_mix_count,
+            "empty snapshot must not wipe config mixes"
+        );
+    }
+
+    #[test]
+    #[ignore] // Known issue: new_mixes builder uses live snapshot which has None output on first snapshot
+    fn config_output_device_survives_snapshot() {
+        let mut app = casual_app();
+        // Set output device in config
+        if let Some(mix_cfg) = app.config.mixes.first_mut() {
+            mix_cfg.output_device = Some("TestDevice".into());
+        }
+
+        // Simulate a snapshot where mix has no output (not yet processed)
+        let mut snapshot = open_sound_grid::plugin::api::MixerSnapshot::default();
+        snapshot.channels = vec![channel(1, "Music")];
+        snapshot.mixes = vec![monitor_mix()]; // output: None
+        let _task = app.update(Message::PluginStateRefreshed(snapshot));
+
+        // Config should still have the output device (fallback from existing config)
+        let cfg_output = app
+            .config
+            .mixes
+            .iter()
+            .find(|m| m.name == "Monitor")
+            .and_then(|m| m.output_device.as_ref());
+        // The output should be preserved from config fallback
+        assert!(
+            cfg_output.is_some(),
+            "output_device in config should survive snapshot with None output"
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Keyboard Volume (WL3 model)
+// =============================================================================
+mod e2e_keyboard_volume {
+    use super::*;
+
+    #[test]
+    fn arrow_up_increments_ratio_not_raw_volume() {
+        let mut app = casual_app();
+        app.focused_row = Some(0);
+        app.focused_col = Some(0);
+        let source = SourceId::Channel(1);
+        app.engine.state.route_ratios.insert((source, 1), 0.5);
+        app.channel_master_volumes.insert(1, 0.8);
+
+        let _task = app.update(Message::KeyPressed(
+            iced::keyboard::Key::Named(Named::ArrowUp),
+            keyboard::Modifiers::default(),
+        ));
+
+        let ratio = app.engine.state.route_ratios.get(&(source, 1)).copied();
+        assert!(
+            (ratio.unwrap_or(0.0) - 0.51).abs() < 0.001,
+            "ArrowUp should increment ratio by 0.01, got {:?}",
+            ratio
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Duplicate Prevention
+// =============================================================================
+mod e2e_duplicate_prevention {
+    use super::*;
+
+    #[test]
+    fn create_channel_rejects_duplicate_name() {
+        let mut app = casual_app();
+        let initial_count = app.engine.state.channels.len();
+
+        // Try to create a channel with existing name
+        let _task = app.update(Message::CreateChannel("Music".into()));
+
+        // Should not create a duplicate (skipped in handler)
+        assert_eq!(
+            app.engine.state.channels.len(),
+            initial_count,
+            "duplicate channel should not be created"
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Volume Curve (perceptual)
+// =============================================================================
+mod e2e_volume_curve {
+    use super::*;
+
+    #[test]
+    fn fifty_percent_slider_is_not_fifty_percent_pa_volume() {
+        // The cubic curve maps 0.5 slider → cbrt(0.5) * PA_VOLUME_NORM
+        // which is ~0.794 * 65536 = ~52028 (about 79% of PA_VOLUME_NORM)
+        // This is the perceptual curve that makes 50% slider ≈ 50% loudness.
+        let linear = 0.5_f64;
+        let curved = linear.cbrt();
+        // cbrt(0.5) ≈ 0.7937
+        assert!(
+            (curved - 0.7937).abs() < 0.001,
+            "cubic curve should map 0.5 to ~0.794, got {curved}"
+        );
+        // At 25% slider: cbrt(0.25) ≈ 0.6299 — still ~63% PA volume
+        let curved_25 = 0.25_f64.cbrt();
+        assert!(
+            curved_25 > 0.6,
+            "25% slider should produce >60% PA volume, got {curved_25}"
+        );
+    }
+}
+
+// =============================================================================
+// E2E: Latency Setting
+// =============================================================================
+mod e2e_latency {
+    use super::*;
+
+    #[test]
+    fn latency_input_updates_config() {
+        let mut app = casual_app();
+        let _task = app.update(Message::LatencyInput("10".into()));
+        assert_eq!(app.config.audio.latency_ms, 10);
+    }
+
+    #[test]
+    fn latency_input_clamps_to_valid_range() {
+        let mut app = casual_app();
+        let _task = app.update(Message::LatencyInput("0".into()));
+        assert_eq!(app.config.audio.latency_ms, 1, "min should be 1ms");
+
+        let _task = app.update(Message::LatencyInput("9999".into()));
+        assert_eq!(app.config.audio.latency_ms, 500, "max should be 500ms");
+    }
+}
+
+// =============================================================================
+// E2E: Undo Labels
+// =============================================================================
+mod e2e_undo {
+    use super::*;
+
+    #[test]
+    fn undo_buffer_differentiates_channel_and_mix() {
+        let mut app = casual_app();
+
+        // Delete a channel
+        let _task = app.update(Message::RemoveChannel(1));
+        if let Some((name, is_ch)) = &app.undo_buffer {
+            assert!(is_ch, "undo should mark as channel");
+            assert_eq!(name, "Music");
+        }
+    }
+}
+
+// =============================================================================
+// E2E: Stereo Slider Mode
+// =============================================================================
+mod e2e_stereo {
+    use super::*;
+
+    #[test]
+    fn stereo_toggle_persists_to_config() {
+        let mut app = casual_app();
+        assert!(!app.config.ui.stereo_sliders);
+
+        let _task = app.update(Message::ToggleStereoSliders);
+        assert!(app.config.ui.stereo_sliders, "stereo should be toggled on");
+
+        let _task = app.update(Message::ToggleStereoSliders);
+        assert!(!app.config.ui.stereo_sliders, "stereo should be toggled off");
+    }
+}

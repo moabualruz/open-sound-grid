@@ -90,6 +90,10 @@ pub trait AudioPlugin: Send {
         Vec::new()
     }
 
+    /// Set the latency in milliseconds for loopback creation.
+    /// Called before init() with the user's configured value.
+    fn set_latency_ms(&mut self, _ms: u32) {}
+
     /// Clean up: unload modules, disconnect.
     fn cleanup(&mut self) -> Result<()>;
 }

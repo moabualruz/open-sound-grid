@@ -404,9 +404,31 @@ pub fn unload_module_sync(conn: &mut PulseConnection, module_id: u32) -> Result<
 // ---------------------------------------------------------------------------
 
 /// Build a mono `ChannelVolumes` with all channels set to `volume` (0.0–1.0+).
+/// Convert a linear slider position (0.0–1.0) to a PA Volume using a cubic
+/// perceptual curve. This matches PulseAudio's `pa_sw_volume_from_linear()`:
+/// perceived loudness scales roughly with the cube root of power, so we apply
+/// a cubic mapping to make the slider feel natural.
+///
+/// Without this, 50% slider = 50% PA_VOLUME_NORM = ~25% perceived loudness.
+/// With cubic: 50% slider ≈ 50% perceived loudness.
+fn linear_to_pa_volume(linear: f32) -> Volume {
+    if linear <= 0.0 {
+        return Volume::MUTED;
+    }
+    if linear >= 1.0 {
+        return Volume::NORMAL;
+    }
+    // PA cubic curve: pa_volume = PA_VOLUME_NORM * cbrt(linear)^3
+    // But that's just linear again. The ACTUAL PA curve from pa_sw_volume_from_linear is:
+    // volume = PA_VOLUME_NORM * (linear)^(1/3) for the "software" curve.
+    // This means small slider values produce larger PA volumes = more audible at low end.
+    let curved = (linear as f64).cbrt();
+    let raw = (curved * Volume::NORMAL.0 as f64) as u32;
+    Volume(raw.min(Volume::NORMAL.0))
+}
+
 fn make_channel_volumes(volume: f32) -> ChannelVolumes {
-    let raw = (volume * Volume::NORMAL.0 as f32) as u32;
-    let vol = Volume(raw);
+    let vol = linear_to_pa_volume(volume);
     let mut cv = ChannelVolumes::default();
     // Must set 2 channels (stereo) — loopbacks and null-sinks are stereo by default.
     // Setting only 1 channel causes libpulse/PipeWire to silently reject the volume change.

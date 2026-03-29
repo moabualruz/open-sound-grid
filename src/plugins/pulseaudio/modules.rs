@@ -186,14 +186,14 @@ impl ModuleManager {
         module_id: u32,
     ) -> Result<Option<u32>> {
         if let Some(conn) = conn {
-            for attempt in 0..3 {
+            for attempt in 0..5 {
                 if attempt > 0 {
                     tracing::debug!(
                         module_id = module_id,
                         attempt = attempt,
                         "retrying sink-input lookup via introspect"
                     );
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(150));
                 }
 
                 match introspect::find_sink_input_by_module_sync(conn, module_id)? {
@@ -217,7 +217,7 @@ impl ModuleManager {
             }
             tracing::warn!(
                 module_id = module_id,
-                "sink-input not found after 3 introspect attempts"
+                "sink-input not found after 5 introspect attempts (750ms total)"
             );
             Ok(None)
         } else {

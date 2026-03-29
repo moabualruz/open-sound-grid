@@ -52,8 +52,13 @@ impl MixerEngine {
     }
 
     /// Apply a snapshot from the plugin to the engine state.
-    #[instrument(skip(self, snapshot))]
-    pub fn apply_snapshot(&mut self, snapshot: MixerSnapshot) {
+    /// `channel_masters` maps ChannelId → master volume for ratio computation.
+    #[instrument(skip(self, snapshot, channel_masters))]
+    pub fn apply_snapshot(
+        &mut self,
+        snapshot: MixerSnapshot,
+        channel_masters: &std::collections::HashMap<u32, f32>,
+    ) {
         tracing::debug!(
             channels = snapshot.channels.len(),
             mixes = snapshot.mixes.len(),
@@ -64,7 +69,7 @@ impl MixerEngine {
             peaks = snapshot.peak_levels.len(),
             "applying snapshot to engine"
         );
-        self.state.apply_snapshot(snapshot);
+        self.state.apply_snapshot(snapshot, channel_masters);
     }
 
     /// Check if plugin is connected.
