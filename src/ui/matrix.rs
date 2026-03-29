@@ -205,6 +205,83 @@ pub fn matrix_grid<'a>(
             );
     }
 
+    // App rows — detected audio apps appear as rows with direct volume control
+    for app in &state.applications {
+        let stream_idx = app.stream_index;
+
+        // App label (icon + name)
+        let app_icon: Element<'a, Message> = if let Some(ref path) = app.icon_path {
+            image(image::Handle::from_path(path))
+                .width(Length::Fixed(18.0))
+                .height(Length::Fixed(18.0))
+                .into()
+        } else {
+            icon_headphones()
+                .size(14)
+                .color(text_secondary(theme_mode))
+                .center()
+                .into()
+        };
+
+        let app_label = container(
+            row![
+                app_icon,
+                text(&app.name).size(12).color(text_primary(theme_mode)),
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fixed(LABEL_WIDTH))
+        .height(Length::Fixed(CELL_HEIGHT))
+        .padding([4, 8])
+        .center_y(Length::Fixed(CELL_HEIGHT))
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(bg_primary(theme_mode))),
+            border: Border {
+                color: border_color(theme_mode),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        });
+
+        let mut app_row = row![app_label].spacing(1);
+
+        // One cell per mix — simple volume slider controlling the stream directly
+        for _mix in &state.mixes {
+            let slider =
+                iced::widget::slider(0.0..=1.0_f32, 1.0_f32, move |v| Message::AppVolumeChanged {
+                    stream_index: stream_idx,
+                    volume: v,
+                })
+                .step(0.01)
+                .width(Length::Fill);
+
+            let cell = container(slider)
+                .width(Length::Fixed(COL_WIDTH))
+                .height(Length::Fixed(CELL_HEIGHT))
+                .padding(8)
+                .center_y(Length::Fixed(CELL_HEIGHT))
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(bg_elevated(theme_mode))),
+                    border: Border {
+                        color: border_color(theme_mode),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                });
+            app_row = app_row.push(cell);
+        }
+
+        grid = grid.push(container(app_row).padding([4, 0]).style(move |_: &Theme| {
+            container::Style {
+                background: Some(Background::Color(bg_primary(theme_mode))),
+                ..Default::default()
+            }
+        }));
+    }
+
     // Channel creation: picker toggle + preset buttons
     if show_channel_picker {
         let mut picker_row = row![].spacing(4);

@@ -1,6 +1,8 @@
-use iced::widget::{Space, button, column, container, rule, text};
+use iced::widget::{Space, button, column, container, row, rule, text};
 use iced::{Background, Border, Element, Length, Theme};
-use lucide_icons::iced::{icon_chevron_left, icon_chevron_right, icon_headphones, icon_settings};
+use lucide_icons::iced::{
+    icon_chevron_left, icon_chevron_right, icon_headphones, icon_mic, icon_settings,
+};
 
 use crate::app::Message;
 use crate::plugin::api::HardwareInput;
@@ -84,8 +86,13 @@ fn expanded_view<'a>(
 
     let mut devices_section = column![devices_header].spacing(4);
     for input in hardware_inputs {
-        devices_section =
-            devices_section.push(text(&input.name).size(12).color(text_primary(theme_mode)));
+        let device_row = row![
+            icon_mic().size(12).color(text_muted(theme_mode)),
+            text(&input.name).size(12).color(text_primary(theme_mode)),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center);
+        devices_section = devices_section.push(device_row);
     }
     if hardware_inputs.is_empty() {
         devices_section =

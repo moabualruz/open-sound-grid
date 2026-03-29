@@ -283,6 +283,20 @@ impl AudioPlugin for PipeWirePlugin {
                 }
                 Ok(PluginResponse::Ok)
             }
+            PluginCommand::SetAppVolume {
+                stream_index,
+                volume,
+            } => {
+                tracing::debug!(stream_index, volume, "PW set app volume (TODO)");
+                Ok(PluginResponse::Ok)
+            }
+            PluginCommand::SetAppMuted {
+                stream_index,
+                muted,
+            } => {
+                tracing::debug!(stream_index, muted, "PW set app mute (TODO)");
+                Ok(PluginResponse::Ok)
+            }
             // Commands that are PA-specific but must still return Ok
             PluginCommand::ListHardwareInputs => Ok(PluginResponse::HardwareInputs(vec![])),
             PluginCommand::ListHardwareOutputs => Ok(PluginResponse::HardwareOutputs(vec![])),

@@ -50,6 +50,13 @@ pub enum Message {
         mix: MixId,
     },
 
+    // Direct app stream controls (no null-sink, controls PA sink-input directly)
+    AppVolumeChanged {
+        stream_index: u32,
+        volume: f32,
+    },
+    AppMuteToggled(u32), // stream_index
+
     // Application routing
     #[allow(dead_code)]
     AppRouteChanged {
@@ -450,6 +457,25 @@ impl App {
                     source,
                     mix,
                     muted: !currently_muted,
+                });
+            }
+            Message::AppVolumeChanged {
+                stream_index,
+                volume,
+            } => {
+                tracing::debug!(stream_index, volume, "app volume changed");
+                self.engine.send_command(PluginCommand::SetAppVolume {
+                    stream_index,
+                    volume,
+                });
+            }
+            Message::AppMuteToggled(stream_index) => {
+                // Toggle: find current mute state from applications list
+                // For now just send mute=true toggle (proper state tracking needed)
+                tracing::debug!(stream_index, "app mute toggled");
+                self.engine.send_command(PluginCommand::SetAppMuted {
+                    stream_index,
+                    muted: true, // TODO: track per-app mute state properly
                 });
             }
             Message::AppRouteChanged {
@@ -986,29 +1012,8 @@ impl App {
                     app.icon_path = icon_path;
                 }
 
-                // Auto-create channels for new apps that don't have one yet
-                let existing_channel_names: Vec<String> = self
-                    .engine
-                    .state
-                    .channels
-                    .iter()
-                    .map(|c| c.name.clone())
-                    .collect();
-                for app in &apps {
-                    if !existing_channel_names.contains(&app.name) {
-                        tracing::info!(
-                            app_name = %app.name,
-                            stream_index = app.stream_index,
-                            "auto-creating channel for new app"
-                        );
-                        self.engine.send_command(PluginCommand::CreateChannel {
-                            name: app.name.clone(),
-                        });
-                        // Route the app to its new channel after state refresh
-                        self.engine.send_command(PluginCommand::GetState);
-                    }
-                }
-
+                // Apps appear as matrix rows directly — no null-sink creation needed.
+                // Volume/mute controlled via set-sink-input-volume on the PA stream.
                 self.engine.state.update_applications(apps);
             }
             Message::PluginPeakLevels(levels) => {
