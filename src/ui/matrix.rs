@@ -1,4 +1,4 @@
-//! Matrix grid widget — the core UI of OpenSoundGrid.
+//! Matrix grid widget — the core UI of Open Sound Grid.
 //!
 //! Rows = audio sources (software channels)
 //! Columns = output mixes

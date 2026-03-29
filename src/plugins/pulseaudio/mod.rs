@@ -1,4 +1,4 @@
-//! PulseAudio plugin — the first audio backend for OpenSoundGrid.
+//! PulseAudio plugin — the first audio backend for Open Sound Grid.
 //!
 //! Uses null sinks for channels, null sinks for mixes,
 //! and module-loopback to connect them. Volume control

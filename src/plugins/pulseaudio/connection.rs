@@ -32,7 +32,7 @@ impl PulseConnection {
         let mut mainloop = Mainloop::new()
             .ok_or_else(|| OsgError::PulseAudio("failed to create threaded mainloop".into()))?;
 
-        let mut context = Context::new(&mainloop, "OpenSoundGrid")
+        let mut context = Context::new(&mainloop, "Open Sound Grid")
             .ok_or_else(|| OsgError::PulseAudio("failed to create context".into()))?;
 
         // State callback: signal the mainloop on every context state transition.

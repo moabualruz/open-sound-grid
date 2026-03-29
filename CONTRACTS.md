@@ -1,4 +1,4 @@
-# OpenSoundGrid — Agent Interface Contracts
+# Open Sound Grid — Agent Interface Contracts
 
 This file defines the boundaries between parallel implementation agents.
 DO NOT DEVIATE from these signatures without explicit instruction.

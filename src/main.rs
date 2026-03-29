@@ -38,11 +38,11 @@ fn main() -> anyhow::Result<()> {
     let instance = single_instance::SingleInstance::new("open-sound-grid")
         .map_err(|e| anyhow::anyhow!("Single instance check failed: {}", e))?;
     if !instance.is_single() {
-        tracing::warn!("OpenSoundGrid is already running");
+        tracing::warn!("Open Sound Grid is already running");
         return Ok(());
     }
 
-    tracing::info!("Starting OpenSoundGrid");
+    tracing::info!("Starting Open Sound Grid");
 
     // Spawn system tray. The command receiver is stored in tray::TRAY_RX so
     // the iced subscription can consume it on first tick (BUG-003 fix).
@@ -104,6 +104,6 @@ fn main() -> anyhow::Result<()> {
             .run()?;
     }
 
-    tracing::info!("OpenSoundGrid exiting");
+    tracing::info!("Open Sound Grid exiting");
     Ok(())
 }

@@ -1,4 +1,4 @@
-# Maintainer: OpenSoundGrid contributors
+# Maintainer: Open Sound Grid contributors
 pkgname=open-sound-grid
 pkgver=0.1.0
 pkgrel=1

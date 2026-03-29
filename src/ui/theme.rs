@@ -2,7 +2,7 @@ use iced::Color;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
-// OpenSoundGrid Theme — Claude/Anthropic Design Language
+// Open Sound Grid Theme — Claude/Anthropic Design Language
 //
 // Wave Link 3.0 UX layout + Anthropic warm neutral tones
 // Dark default, light available

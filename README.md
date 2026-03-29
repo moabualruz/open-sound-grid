@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>OpenSoundGrid</strong>
+  <strong>Open Sound Grid</strong>
 </p>
 
 <p align="center">
@@ -14,11 +14,11 @@
 
 ---
 
-**OpenSoundGrid** is a native Linux audio matrix mixer. It gives streamers, podcasters, and musicians the same per-source, per-mix volume control that Wave Link and GoXLR software provide on other platforms — built on PulseAudio today, with PipeWire native support on the roadmap.
+**Open Sound Grid** is a native Linux audio matrix mixer. It gives streamers, podcasters, and musicians the same per-source, per-mix volume control that Wave Link and GoXLR software provide on other platforms — built on PulseAudio today, with PipeWire native support on the roadmap.
 
 ## Table of Contents
 
-- [Why OpenSoundGrid](#why-opensoundgrid)
+- [Why Open Sound Grid](#why-open-sound-grid)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
 - [How It Works](#how-it-works)
@@ -32,17 +32,17 @@
 - [Contributing](#contributing)
 - [License](#license)
 
-## Why OpenSoundGrid
+## Why Open Sound Grid
 
 Linux has no Wave Link equivalent. Every tool that exists is either too technical for non-engineers or too limited for real production use.
 
-- **PulseAudio module-loopback routing** requires manual `pactl` commands and breaks on daemon restart. OpenSoundGrid manages it automatically.
-- **pavucontrol** shows streams but has no matrix, no per-destination volumes, and no persistent routing. OpenSoundGrid persists everything across sessions.
-- **JACK** is powerful but requires a complete audio stack replacement and deep technical knowledge. OpenSoundGrid works on top of your existing PulseAudio setup.
-- **Existing mixers target hardware** — GoXLR, Rodecaster, Wave Link all require proprietary hardware. OpenSoundGrid is software-only.
-- **No app routing** — nothing on Linux lets you send specific applications to specific mixes (e.g., Discord to Monitor only, game audio to Stream + Monitor). OpenSoundGrid does this with a single pick list.
+- **PulseAudio module-loopback routing** requires manual `pactl` commands and breaks on daemon restart. Open Sound Grid manages it automatically.
+- **pavucontrol** shows streams but has no matrix, no per-destination volumes, and no persistent routing. Open Sound Grid persists everything across sessions.
+- **JACK** is powerful but requires a complete audio stack replacement and deep technical knowledge. Open Sound Grid works on top of your existing PulseAudio setup.
+- **Existing mixers target hardware** — GoXLR, Rodecaster, Wave Link all require proprietary hardware. Open Sound Grid is software-only.
+- **No app routing** — nothing on Linux lets you send specific applications to specific mixes (e.g., Discord to Monitor only, game audio to Stream + Monitor). Open Sound Grid does this with a single pick list.
 
-OpenSoundGrid fixes all of this with a single native binary, zero daemon changes, and a purpose-built matrix UI.
+Open Sound Grid fixes all of this with a single native binary, zero daemon changes, and a purpose-built matrix UI.
 
 ## Quick Start
 
@@ -91,7 +91,7 @@ paru -S open-sound-grid
 
 ## How It Works
 
-OpenSoundGrid models audio as a **matrix**: sources on the left, mixes across the top. Every intersection is an independent volume control backed by a PulseAudio `module-loopback` instance.
+Open Sound Grid models audio as a **matrix**: sources on the left, mixes across the top. Every intersection is an independent volume control backed by a PulseAudio `module-loopback` instance.
 
 ```
                   ┌───────────┬───────────┬───────────┐
@@ -227,7 +227,7 @@ src/
 
 ## Configuration
 
-OpenSoundGrid stores its config at `~/.config/open-sound-grid/default-config.toml` (managed by `confy`). The file is created on first launch and auto-saved whenever channels, mixes, or UI state change.
+Open Sound Grid stores its config at `~/.config/open-sound-grid/default-config.toml` (managed by `confy`). The file is created on first launch and auto-saved whenever channels, mixes, or UI state change.
 
 ```toml
 [[channels]]

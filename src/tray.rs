@@ -40,7 +40,7 @@ impl Tray for OsgTray {
         "open-sound-grid".into()
     }
     fn title(&self) -> String {
-        "OpenSoundGrid".into()
+        "Open Sound Grid".into()
     }
     fn icon_name(&self) -> String {
         "audio-volume-high".into()

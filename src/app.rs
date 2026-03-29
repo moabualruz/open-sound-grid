@@ -1088,9 +1088,9 @@ impl App {
 
         // Header — flush, same bg as sidebar for visual continuity
         let header_title = if self.engine.is_connected() {
-            "OpenSoundGrid — PulseAudio"
+            "Open Sound Grid — PulseAudio"
         } else {
-            "OpenSoundGrid"
+            "Open Sound Grid"
         };
         let compact_btn = button(
             text("⊟").size(13).color(ui::theme::text_secondary(tm)),
