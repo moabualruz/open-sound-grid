@@ -33,9 +33,7 @@ impl ModuleManager {
         tracing::debug!(sink_name = %name, description = %description, "creating null sink");
 
         let module_id = if let Some(conn) = conn {
-            let args = format!(
-                "sink_name={name} sink_properties=device.description={description}"
-            );
+            let args = format!("sink_name={name} sink_properties=device.description={description}");
             introspect::load_module_sync(conn, "module-null-sink", &args)?
         } else {
             tracing::debug!(sink_name = %name, "no PA connection — falling back to pactl for null sink");
@@ -79,8 +77,7 @@ impl ModuleManager {
         tracing::debug!(source = %source_monitor, sink = %sink, latency_ms = latency_ms, "creating loopback");
 
         let module_id = if let Some(conn) = conn {
-            let args =
-                format!("source={source_monitor} sink={sink} latency_msec={latency_ms}");
+            let args = format!("source={source_monitor} sink={sink} latency_msec={latency_ms}");
             introspect::load_module_sync(conn, "module-loopback", &args)?
         } else {
             tracing::debug!(source = %source_monitor, sink = %sink, "no PA connection — falling back to pactl for loopback");
@@ -125,7 +122,10 @@ impl ModuleManager {
         if let Some(conn) = conn {
             introspect::unload_module_sync(conn, module_id)?;
         } else {
-            tracing::debug!(module_id = module_id, "no PA connection — falling back to pactl for unload");
+            tracing::debug!(
+                module_id = module_id,
+                "no PA connection — falling back to pactl for unload"
+            );
             let output = Command::new("pactl")
                 .args(["unload-module", &module_id.to_string()])
                 .output()
@@ -185,21 +185,37 @@ impl ModuleManager {
         if let Some(conn) = conn {
             for attempt in 0..3 {
                 if attempt > 0 {
-                    tracing::debug!(module_id = module_id, attempt = attempt, "retrying sink-input lookup via introspect");
+                    tracing::debug!(
+                        module_id = module_id,
+                        attempt = attempt,
+                        "retrying sink-input lookup via introspect"
+                    );
                     thread::sleep(Duration::from_millis(100));
                 }
 
                 match introspect::find_sink_input_by_module_sync(conn, module_id)? {
                     Some(idx) => {
-                        tracing::debug!(module_id = module_id, sink_input_idx = idx, attempt = attempt, "found sink-input via introspect");
+                        tracing::debug!(
+                            module_id = module_id,
+                            sink_input_idx = idx,
+                            attempt = attempt,
+                            "found sink-input via introspect"
+                        );
                         return Ok(Some(idx));
                     }
                     None => {
-                        tracing::debug!(module_id = module_id, attempt = attempt, "sink-input not found yet via introspect");
+                        tracing::debug!(
+                            module_id = module_id,
+                            attempt = attempt,
+                            "sink-input not found yet via introspect"
+                        );
                     }
                 }
             }
-            tracing::warn!(module_id = module_id, "sink-input not found after 3 introspect attempts");
+            tracing::warn!(
+                module_id = module_id,
+                "sink-input not found after 3 introspect attempts"
+            );
             Ok(None)
         } else {
             self.find_loopback_sink_input_pactl(module_id)
@@ -218,7 +234,12 @@ impl ModuleManager {
         }
 
         let percent = (volume * 100.0) as u32;
-        tracing::debug!(sink_input_idx = sink_input_idx, volume = volume, percent = percent, "setting sink-input volume via pactl (fallback)");
+        tracing::debug!(
+            sink_input_idx = sink_input_idx,
+            volume = volume,
+            percent = percent,
+            "setting sink-input volume via pactl (fallback)"
+        );
 
         let output = Command::new("pactl")
             .args([
@@ -255,7 +276,11 @@ impl ModuleManager {
         }
 
         let mute_val = if muted { "1" } else { "0" };
-        tracing::debug!(sink_input_idx = sink_input_idx, muted = muted, "setting sink-input mute via pactl (fallback)");
+        tracing::debug!(
+            sink_input_idx = sink_input_idx,
+            muted = muted,
+            "setting sink-input mute via pactl (fallback)"
+        );
 
         let output = Command::new("pactl")
             .args([
@@ -326,7 +351,11 @@ impl ModuleManager {
 
         for attempt in 0..3 {
             if attempt > 0 {
-                tracing::debug!(module_id = module_id, attempt = attempt, "retrying sink-input lookup via pactl");
+                tracing::debug!(
+                    module_id = module_id,
+                    attempt = attempt,
+                    "retrying sink-input lookup via pactl"
+                );
                 thread::sleep(Duration::from_millis(100));
             }
 
@@ -341,21 +370,31 @@ impl ModuleManager {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 tracing::error!(module_id = module_id, stderr = %stderr, "pactl list sink-inputs returned error");
-                return Err(OsgError::PulseAudio(format!(
-                    "list sink-inputs: {stderr}"
-                )));
+                return Err(OsgError::PulseAudio(format!("list sink-inputs: {stderr}")));
             }
 
             let text = String::from_utf8_lossy(&output.stdout);
-            tracing::trace!(module_id = module_id, output_len = text.len(), "pactl list sink-inputs output received");
+            tracing::trace!(
+                module_id = module_id,
+                output_len = text.len(),
+                "pactl list sink-inputs output received"
+            );
 
             if let Some(idx) = parse_sink_input_for_module(&text, &target) {
-                tracing::debug!(module_id = module_id, sink_input_idx = idx, attempt = attempt, "found sink-input via pactl");
+                tracing::debug!(
+                    module_id = module_id,
+                    sink_input_idx = idx,
+                    attempt = attempt,
+                    "found sink-input via pactl"
+                );
                 return Ok(Some(idx));
             }
         }
 
-        tracing::warn!(module_id = module_id, "sink-input not found after 3 pactl attempts");
+        tracing::warn!(
+            module_id = module_id,
+            "sink-input not found after 3 pactl attempts"
+        );
         Ok(None)
     }
 }

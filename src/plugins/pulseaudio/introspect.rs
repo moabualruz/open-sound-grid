@@ -85,10 +85,11 @@ pub fn list_sinks_sync(conn: &mut PulseConnection) -> Vec<HardwareOutput> {
                 let name = info.name.as_deref().unwrap_or("").to_owned();
                 let description = info.description.as_deref().unwrap_or("").to_owned();
                 tracing::trace!(index = info.index, name = %name, "got sink from introspect");
-                results_clone
-                    .lock()
-                    .unwrap()
-                    .push(RawSink { index: info.index, name, description });
+                results_clone.lock().unwrap().push(RawSink {
+                    index: info.index,
+                    name,
+                    description,
+                });
             }
             ListResult::End => {
                 tracing::trace!("sink list complete — signalling mainloop");
@@ -175,7 +176,10 @@ pub fn list_sources_sync(conn: &mut PulseConnection) -> Vec<HardwareInput> {
         .into_inner()
         .unwrap();
 
-    tracing::debug!(total_raw = raw.len(), "raw sources received from introspect");
+    tracing::debug!(
+        total_raw = raw.len(),
+        "raw sources received from introspect"
+    );
 
     raw.into_iter()
         .filter(|s| {
@@ -208,15 +212,14 @@ pub fn list_sink_inputs_sync(conn: &mut PulseConnection) -> Vec<RawSinkInputResu
 
     conn.mainloop_mut().lock();
 
-    conn.context_mut()
-        .introspect()
-        .get_sink_input_info_list(move |list_result| match list_result {
+    conn.context_mut().introspect().get_sink_input_info_list(
+        move |list_result| match list_result {
             ListResult::Item(info) => {
                 let app_name = info.proplist.get_str(properties::APPLICATION_NAME);
-                let app_binary =
-                    info.proplist.get_str(properties::APPLICATION_PROCESS_BINARY);
-                let icon_name =
-                    info.proplist.get_str(properties::APPLICATION_ICON_NAME);
+                let app_binary = info
+                    .proplist
+                    .get_str(properties::APPLICATION_PROCESS_BINARY);
+                let icon_name = info.proplist.get_str(properties::APPLICATION_ICON_NAME);
                 let media_name = info.proplist.get_str(properties::MEDIA_NAME);
 
                 tracing::trace!(
@@ -242,7 +245,8 @@ pub fn list_sink_inputs_sync(conn: &mut PulseConnection) -> Vec<RawSinkInputResu
                 tracing::warn!("introspect get_sink_input_info_list returned error");
                 unsafe { (*ml_ptr).signal(false) };
             }
-        });
+        },
+    );
 
     conn.mainloop_mut().wait();
     conn.mainloop_mut().unlock();
@@ -252,7 +256,10 @@ pub fn list_sink_inputs_sync(conn: &mut PulseConnection) -> Vec<RawSinkInputResu
         .into_inner()
         .unwrap();
 
-    tracing::debug!(total_raw = raw.len(), "raw sink-inputs received from introspect");
+    tracing::debug!(
+        total_raw = raw.len(),
+        "raw sink-inputs received from introspect"
+    );
 
     raw.into_iter()
         .filter_map(|entry| {
@@ -363,7 +370,11 @@ pub fn unload_module_sync(conn: &mut PulseConnection, module_id: u32) -> Result<
         .context_mut()
         .introspect()
         .unload_module(module_id, move |ok| {
-            tracing::trace!(module_id = module_id, ok = ok, "unload_module callback fired");
+            tracing::trace!(
+                module_id = module_id,
+                ok = ok,
+                "unload_module callback fired"
+            );
             *success_clone.lock().unwrap() = ok;
             unsafe { (*ml_ptr).signal(false) };
         });
@@ -376,7 +387,9 @@ pub fn unload_module_sync(conn: &mut PulseConnection, module_id: u32) -> Result<
         Ok(())
     } else {
         tracing::error!(module_id = module_id, "unload_module returned failure");
-        Err(OsgError::PulseAudio(format!("unload module {module_id} failed")))
+        Err(OsgError::PulseAudio(format!(
+            "unload module {module_id} failed"
+        )))
     }
 }
 
@@ -395,12 +408,12 @@ fn make_channel_volumes(volume: f32) -> ChannelVolumes {
 
 /// Set the volume of a sink-input synchronously.
 #[instrument(skip(conn))]
-pub fn set_sink_input_volume_sync(
-    conn: &mut PulseConnection,
-    idx: u32,
-    volume: f32,
-) -> Result<()> {
-    tracing::debug!(sink_input_idx = idx, volume = volume, "setting sink-input volume via libpulse");
+pub fn set_sink_input_volume_sync(conn: &mut PulseConnection, idx: u32, volume: f32) -> Result<()> {
+    tracing::debug!(
+        sink_input_idx = idx,
+        volume = volume,
+        "setting sink-input volume via libpulse"
+    );
 
     let cv = make_channel_volumes(volume);
     let done: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -409,36 +422,40 @@ pub fn set_sink_input_volume_sync(
 
     conn.mainloop_mut().lock();
 
-    let _op = conn
-        .context_mut()
-        .introspect()
-        .set_sink_input_volume(
-            idx,
-            &cv,
-            Some(Box::new(move |success| {
-                tracing::trace!(sink_input_idx = idx, success = success, "set_sink_input_volume callback fired");
-                *done_clone.lock().unwrap() = success;
-                unsafe { (*ml_ptr).signal(false) };
-            })),
-        );
+    let _op = conn.context_mut().introspect().set_sink_input_volume(
+        idx,
+        &cv,
+        Some(Box::new(move |success| {
+            tracing::trace!(
+                sink_input_idx = idx,
+                success = success,
+                "set_sink_input_volume callback fired"
+            );
+            *done_clone.lock().unwrap() = success;
+            unsafe { (*ml_ptr).signal(false) };
+        })),
+    );
 
     conn.mainloop_mut().wait();
     conn.mainloop_mut().unlock();
 
     if !*done.lock().unwrap() {
-        tracing::warn!(sink_input_idx = idx, "set_sink_input_volume returned failure");
+        tracing::warn!(
+            sink_input_idx = idx,
+            "set_sink_input_volume returned failure"
+        );
     }
     Ok(())
 }
 
 /// Set the mute state of a sink-input synchronously.
 #[instrument(skip(conn))]
-pub fn set_sink_input_mute_sync(
-    conn: &mut PulseConnection,
-    idx: u32,
-    mute: bool,
-) -> Result<()> {
-    tracing::debug!(sink_input_idx = idx, mute = mute, "setting sink-input mute via libpulse");
+pub fn set_sink_input_mute_sync(conn: &mut PulseConnection, idx: u32, mute: bool) -> Result<()> {
+    tracing::debug!(
+        sink_input_idx = idx,
+        mute = mute,
+        "setting sink-input mute via libpulse"
+    );
 
     let done: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     let done_clone = Arc::clone(&done);
@@ -446,18 +463,19 @@ pub fn set_sink_input_mute_sync(
 
     conn.mainloop_mut().lock();
 
-    let _op = conn
-        .context_mut()
-        .introspect()
-        .set_sink_input_mute(
-            idx,
-            mute,
-            Some(Box::new(move |success| {
-                tracing::trace!(sink_input_idx = idx, success = success, "set_sink_input_mute callback fired");
-                *done_clone.lock().unwrap() = success;
-                unsafe { (*ml_ptr).signal(false) };
-            })),
-        );
+    let _op = conn.context_mut().introspect().set_sink_input_mute(
+        idx,
+        mute,
+        Some(Box::new(move |success| {
+            tracing::trace!(
+                sink_input_idx = idx,
+                success = success,
+                "set_sink_input_mute callback fired"
+            );
+            *done_clone.lock().unwrap() = success;
+            unsafe { (*ml_ptr).signal(false) };
+        })),
+    );
 
     conn.mainloop_mut().wait();
     conn.mainloop_mut().unlock();
@@ -470,11 +488,7 @@ pub fn set_sink_input_mute_sync(
 
 /// Move a sink-input to a different sink synchronously (by sink name).
 #[instrument(skip(conn))]
-pub fn move_sink_input_sync(
-    conn: &mut PulseConnection,
-    idx: u32,
-    sink_name: &str,
-) -> Result<()> {
+pub fn move_sink_input_sync(conn: &mut PulseConnection, idx: u32, sink_name: &str) -> Result<()> {
     tracing::debug!(sink_input_idx = idx, sink_name = %sink_name, "moving sink-input via libpulse");
 
     let done: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
@@ -483,18 +497,19 @@ pub fn move_sink_input_sync(
 
     conn.mainloop_mut().lock();
 
-    let _op = conn
-        .context_mut()
-        .introspect()
-        .move_sink_input_by_name(
-            idx,
-            sink_name,
-            Some(Box::new(move |success| {
-                tracing::trace!(sink_input_idx = idx, success = success, "move_sink_input callback fired");
-                *done_clone.lock().unwrap() = success;
-                unsafe { (*ml_ptr).signal(false) };
-            })),
-        );
+    let _op = conn.context_mut().introspect().move_sink_input_by_name(
+        idx,
+        sink_name,
+        Some(Box::new(move |success| {
+            tracing::trace!(
+                sink_input_idx = idx,
+                success = success,
+                "move_sink_input callback fired"
+            );
+            *done_clone.lock().unwrap() = success;
+            unsafe { (*ml_ptr).signal(false) };
+        })),
+    );
 
     conn.mainloop_mut().wait();
     conn.mainloop_mut().unlock();
@@ -600,7 +615,10 @@ pub fn find_sink_input_by_module_sync(
     conn: &mut PulseConnection,
     module_id: u32,
 ) -> Result<Option<u32>> {
-    tracing::debug!(module_id = module_id, "finding sink-input by module via libpulse");
+    tracing::debug!(
+        module_id = module_id,
+        "finding sink-input by module via libpulse"
+    );
 
     // Collect (sink_input_index, owner_module) for every sink-input.
     let entries: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -609,9 +627,8 @@ pub fn find_sink_input_by_module_sync(
 
     conn.mainloop_mut().lock();
 
-    conn.context_mut()
-        .introspect()
-        .get_sink_input_info_list(move |list_result| match list_result {
+    conn.context_mut().introspect().get_sink_input_info_list(
+        move |list_result| match list_result {
             ListResult::Item(info) => {
                 if let Some(owner) = info.owner_module {
                     tracing::trace!(
@@ -630,7 +647,8 @@ pub fn find_sink_input_by_module_sync(
                 tracing::warn!("get_sink_input_info_list returned error during module search");
                 unsafe { (*ml_ptr).signal(false) };
             }
-        });
+        },
+    );
 
     conn.mainloop_mut().wait();
     conn.mainloop_mut().unlock();

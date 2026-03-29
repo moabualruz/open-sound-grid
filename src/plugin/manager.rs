@@ -141,8 +141,10 @@ fn needs_state_refresh(cmd: &PluginCommand) -> bool {
         cmd,
         PluginCommand::CreateChannel { .. }
             | PluginCommand::RemoveChannel { .. }
+            | PluginCommand::RenameChannel { .. }
             | PluginCommand::CreateMix { .. }
             | PluginCommand::RemoveMix { .. }
+            | PluginCommand::RenameMix { .. }
             | PluginCommand::SetRouteEnabled { .. }
             | PluginCommand::RouteApp { .. }
             | PluginCommand::UnrouteApp { .. }
@@ -220,8 +222,8 @@ fn run_plugin_thread(
                                     // the new channel/mix/route topology.
                                     match plugin.handle_command(PluginCommand::GetState) {
                                         Ok(PluginResponse::State(snapshot)) => {
-                                            let _ =
-                                                event_tx.send(PluginEvent::StateRefreshed(snapshot));
+                                            let _ = event_tx
+                                                .send(PluginEvent::StateRefreshed(snapshot));
                                         }
                                         Ok(_) => {}
                                         Err(e) => {

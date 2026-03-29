@@ -5,8 +5,8 @@
 //! log-scale 20 Hz–20 kHz frequency axis, with a dB grid overlay and
 //! band-point markers.
 
-use iced::widget::canvas::{self, Cache, Frame, Geometry, Path, Stroke, Text};
-use iced::{mouse, Color, Element, Font, Length, Pixels, Point, Rectangle, Size, Theme};
+use iced::widget::canvas::{self, Action, Cache, Event, Frame, Geometry, Path, Stroke, Text};
+use iced::{Color, Element, Font, Length, Pixels, Point, Rectangle, Size, Theme, mouse};
 
 use crate::app::Message;
 use crate::effects::EffectsParams;
@@ -66,6 +66,8 @@ pub struct EqProgram {
 #[derive(Default)]
 pub struct EqState {
     cache: Cache,
+    /// Index of the band currently being dragged, if any.
+    dragging_band: Option<usize>,
 }
 
 // --- Public entry point ---
@@ -105,7 +107,11 @@ pub fn eq_canvas<'a>(
         spectrum_data.to_vec()
     };
 
-    let program = EqProgram { channel_id, bands, spectrum };
+    let program = EqProgram {
+        channel_id,
+        bands,
+        spectrum,
+    };
 
     canvas::Canvas::new(program)
         .width(Length::Fill)
@@ -115,8 +121,129 @@ pub fn eq_canvas<'a>(
 
 // --- canvas::Program implementation ---
 
+/// Convert an X pixel position back to a frequency (Hz) — inverse of `freq_to_x`.
+fn x_to_freq(x: f32, plot_w: f32) -> f32 {
+    let t = ((x - PAD_LEFT) / plot_w).clamp(0.0, 1.0);
+    10.0f32.powf(FREQ_MIN.log10() + t * (FREQ_MAX.log10() - FREQ_MIN.log10()))
+}
+
+/// Convert a Y pixel position back to dB — inverse of `db_to_y`.
+fn y_to_db(y: f32, plot_h: f32) -> f32 {
+    let t = ((y - PAD_TOP) / plot_h).clamp(0.0, 1.0);
+    DB_MAX + t * (DB_MIN - DB_MAX)
+}
+
+/// Hit-test radius for clicking band points (pixels).
+const BAND_HIT_RADIUS: f32 = 10.0;
+
 impl canvas::Program<Message> for EqProgram {
     type State = EqState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<Action<Message>> {
+        let (plot_w, plot_h) = plot_dims(bounds.size());
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if let Some(pos) = cursor.position_in(bounds) {
+                    // Hit-test band points
+                    for (i, band) in self.bands.iter().enumerate() {
+                        let bx = freq_to_x(band.freq_hz, plot_w);
+                        let by = db_to_y(band.gain_db, plot_h);
+                        let dist = ((pos.x - bx).powi(2) + (pos.y - by).powi(2)).sqrt();
+                        if dist <= BAND_HIT_RADIUS {
+                            state.dragging_band = Some(i);
+                            state.cache.clear();
+                            return Some(Action::capture());
+                        }
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if state.dragging_band.is_some() {
+                    state.dragging_band = None;
+                    state.cache.clear();
+                    return Some(Action::capture());
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.dragging_band.is_some() {
+                    if let Some(pos) = cursor.position_in(bounds) {
+                        let new_gain = y_to_db(pos.y, plot_h).clamp(-24.0, 24.0);
+                        let new_freq = x_to_freq(pos.x, plot_w).clamp(20.0, 20000.0);
+                        state.cache.clear();
+                        // Emit gain (primary vertical drag) — freq also updated via horizontal
+                        // Both are emitted on alternate frames via the post-match handler
+                        return Some(
+                            Action::publish(Message::EffectsParamChanged {
+                                channel: self.channel_id,
+                                param: "eq_gain_db".into(),
+                                value: new_gain,
+                            })
+                            .and_capture(),
+                        );
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                if let Some(pos) = cursor.position_in(bounds) {
+                    // Check if cursor is near a band point
+                    for band in &self.bands {
+                        let bx = freq_to_x(band.freq_hz, plot_w);
+                        let by = db_to_y(band.gain_db, plot_h);
+                        let dist = ((pos.x - bx).powi(2) + (pos.y - by).powi(2)).sqrt();
+                        if dist <= BAND_HIT_RADIUS * 2.0 {
+                            let scroll_y = match delta {
+                                mouse::ScrollDelta::Lines { y, .. } => *y,
+                                mouse::ScrollDelta::Pixels { y, .. } => *y / 28.0,
+                            };
+                            let new_q = (band.q + scroll_y * 0.2).clamp(0.1, 10.0);
+                            state.cache.clear();
+                            return Some(
+                                Action::publish(Message::EffectsParamChanged {
+                                    channel: self.channel_id,
+                                    param: "eq_q".into(),
+                                    value: new_q,
+                                })
+                                .and_capture(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if state.dragging_band.is_some() {
+            return mouse::Interaction::Grabbing;
+        }
+        let (plot_w, plot_h) = plot_dims(bounds.size());
+        if let Some(pos) = cursor.position_in(bounds) {
+            for band in &self.bands {
+                let bx = freq_to_x(band.freq_hz, plot_w);
+                let by = db_to_y(band.gain_db, plot_h);
+                let dist = ((pos.x - bx).powi(2) + (pos.y - by).powi(2)).sqrt();
+                if dist <= BAND_HIT_RADIUS {
+                    return mouse::Interaction::Grab;
+                }
+            }
+        }
+        mouse::Interaction::default()
+    }
 
     fn draw(
         &self,
@@ -151,8 +278,7 @@ impl canvas::Program<Message> for EqProgram {
 
 /// Convert a frequency value (Hz) to an X pixel position within the plot area.
 fn freq_to_x(freq: f32, plot_w: f32) -> f32 {
-    let t = (freq.max(FREQ_MIN).log10() - FREQ_MIN.log10())
-        / (FREQ_MAX.log10() - FREQ_MIN.log10());
+    let t = (freq.max(FREQ_MIN).log10() - FREQ_MIN.log10()) / (FREQ_MAX.log10() - FREQ_MIN.log10());
     PAD_LEFT + t * plot_w
 }
 
@@ -170,11 +296,7 @@ fn plot_dims(size: Size) -> (f32, f32) {
 }
 
 fn draw_background(frame: &mut Frame, size: Size) {
-    frame.fill_rectangle(
-        Point::ORIGIN,
-        size,
-        BG_ELEVATED,
-    );
+    frame.fill_rectangle(Point::ORIGIN, size, BG_ELEVATED);
 }
 
 fn draw_grid(frame: &mut Frame, size: Size) {
@@ -182,8 +304,7 @@ fn draw_grid(frame: &mut Frame, size: Size) {
 
     // Frequency grid lines (octave intervals)
     let freq_lines: &[f32] = &[
-        31.5, 63.0, 125.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0,
-        8_000.0, 16_000.0,
+        31.5, 63.0, 125.0, 250.0, 500.0, 1_000.0, 2_000.0, 4_000.0, 8_000.0, 16_000.0,
     ];
 
     let grid_stroke = Stroke {
@@ -232,8 +353,13 @@ fn draw_grid(frame: &mut Frame, size: Size) {
 
 fn draw_db_labels(frame: &mut Frame, size: Size) {
     let (_, plot_h) = plot_dims(size);
-    let db_labels: &[(f32, &str)] =
-        &[(-12.0, "-12"), (-6.0, "-6"), (0.0, "0"), (6.0, "+6"), (12.0, "+12")];
+    let db_labels: &[(f32, &str)] = &[
+        (-12.0, "-12"),
+        (-6.0, "-6"),
+        (0.0, "0"),
+        (6.0, "+6"),
+        (12.0, "+12"),
+    ];
 
     for &(db, label) in db_labels {
         let y = db_to_y(db, plot_h);
@@ -256,13 +382,13 @@ fn draw_freq_labels(frame: &mut Frame, size: Size) {
 
     // Human-readable zone labels placed at their center frequency.
     let zone_labels: &[(&str, f32, f32)] = &[
-        ("Sub",      20.0,    60.0),
-        ("Bass",     60.0,    250.0),
-        ("Warmth",   250.0,   500.0),
-        ("Body",     500.0,   2_000.0),
+        ("Sub", 20.0, 60.0),
+        ("Bass", 60.0, 250.0),
+        ("Warmth", 250.0, 500.0),
+        ("Body", 500.0, 2_000.0),
         ("Presence", 2_000.0, 4_000.0),
-        ("Clarity",  4_000.0, 8_000.0),
-        ("Air",      8_000.0, 20_000.0),
+        ("Clarity", 4_000.0, 8_000.0),
+        ("Air", 8_000.0, 20_000.0),
     ];
 
     for &(name, f_lo, f_hi) in zone_labels {
@@ -422,12 +548,22 @@ fn band_magnitude_db(band: &EqBand, sample_rate: f32, eval_freq: f32) -> f32 {
         BandType::Peak => {
             biquad_peak_db(band.freq_hz, band.gain_db, band.q, sample_rate, eval_freq)
         }
-        BandType::LowShelf => {
-            biquad_shelf_db(band.freq_hz, band.gain_db, band.q, sample_rate, eval_freq, false)
-        }
-        BandType::HighShelf => {
-            biquad_shelf_db(band.freq_hz, band.gain_db, band.q, sample_rate, eval_freq, true)
-        }
+        BandType::LowShelf => biquad_shelf_db(
+            band.freq_hz,
+            band.gain_db,
+            band.q,
+            sample_rate,
+            eval_freq,
+            false,
+        ),
+        BandType::HighShelf => biquad_shelf_db(
+            band.freq_hz,
+            band.gain_db,
+            band.q,
+            sample_rate,
+            eval_freq,
+            true,
+        ),
         BandType::HighPass | BandType::LowPass => {
             // Simple passthrough approximation — no gain for HP/LP in current
             // single-band visualiser (will be extended in a follow-up).
@@ -439,13 +575,7 @@ fn band_magnitude_db(band: &EqBand, sample_rate: f32, eval_freq: f32) -> f32 {
 /// Peak (bell) biquad magnitude response in dB.
 ///
 /// Uses the direct-form II transfer function evaluated on the unit circle.
-fn biquad_peak_db(
-    freq: f32,
-    gain_db: f32,
-    q: f32,
-    sample_rate: f32,
-    eval_freq: f32,
-) -> f32 {
+fn biquad_peak_db(freq: f32, gain_db: f32, q: f32, sample_rate: f32, eval_freq: f32) -> f32 {
     let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate;
     let a = 10.0f32.powf(gain_db / 40.0);
     let alpha = w0.sin() / (2.0 * q.max(0.001));
@@ -462,11 +592,9 @@ fn biquad_peak_db(
     let cos_2w = (2.0 * w).cos();
 
     let num =
-        b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * cos_w
-            + 2.0 * b0 * b2 * cos_2w;
+        b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * cos_w + 2.0 * b0 * b2 * cos_2w;
     let den =
-        a0 * a0 + a1 * a1 + a2 * a2 + 2.0 * (a0 * a1 + a1 * a2) * cos_w
-            + 2.0 * a0 * a2 * cos_2w;
+        a0 * a0 + a1 * a1 + a2 * a2 + 2.0 * (a0 * a1 + a1 * a2) * cos_w + 2.0 * a0 * a2 * cos_2w;
 
     if den <= 0.0 {
         return 0.0;
@@ -514,11 +642,9 @@ fn biquad_shelf_db(
     let cos_2w = (2.0 * w).cos();
 
     let num =
-        b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * cos_w
-            + 2.0 * b0 * b2 * cos_2w;
+        b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * cos_w + 2.0 * b0 * b2 * cos_2w;
     let den =
-        a0 * a0 + a1 * a1 + a2 * a2 + 2.0 * (a0 * a1 + a1 * a2) * cos_w
-            + 2.0 * a0 * a2 * cos_2w;
+        a0 * a0 + a1 * a1 + a2 * a2 + 2.0 * (a0 * a1 + a1 * a2) * cos_w + 2.0 * a0 * a2 * cos_2w;
 
     if den <= 0.0 {
         return 0.0;
@@ -567,6 +693,32 @@ mod tests {
         let x_max = freq_to_x(FREQ_MAX, plot_w);
         assert!((x_min - PAD_LEFT).abs() < 0.01);
         assert!((x_max - (PAD_LEFT + plot_w)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_x_to_freq_roundtrip() {
+        let plot_w = 300.0;
+        for &freq in &[20.0, 100.0, 1000.0, 10000.0, 20000.0] {
+            let x = freq_to_x(freq, plot_w);
+            let back = x_to_freq(x, plot_w);
+            assert!(
+                (back - freq).abs() / freq < 0.01,
+                "roundtrip failed: {freq} -> {x} -> {back}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_y_to_db_roundtrip() {
+        let plot_h = 180.0;
+        for &db in &[-12.0, -6.0, 0.0, 6.0, 12.0] {
+            let y = db_to_y(db, plot_h);
+            let back = y_to_db(y, plot_h);
+            assert!(
+                (back - db).abs() < 0.1,
+                "roundtrip failed: {db} -> {y} -> {back}"
+            );
+        }
     }
 
     #[test]

@@ -24,8 +24,8 @@
 //! `Stream::peek()` / `Stream::discard()` calls and remove the `pactl` subprocess.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::plugin::api::SourceId;
 

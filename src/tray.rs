@@ -10,8 +10,7 @@ use tracing::instrument;
 
 /// Global slot for the tray command receiver.
 /// Set once during boot in `spawn_tray`, consumed once by the subscription stream.
-pub static TRAY_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<TrayCommand>>>> =
-    OnceLock::new();
+pub static TRAY_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<TrayCommand>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayCommand {

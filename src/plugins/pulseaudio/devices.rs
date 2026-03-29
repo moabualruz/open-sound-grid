@@ -51,7 +51,10 @@ impl DeviceEnumerator {
         if let Some(conn) = conn {
             tracing::debug!("enumerating hardware outputs via libpulse introspect");
             let results = introspect::list_sinks_sync(conn);
-            tracing::debug!(count = results.len(), "hardware outputs enumerated via introspect");
+            tracing::debug!(
+                count = results.len(),
+                "hardware outputs enumerated via introspect"
+            );
             for dev in &results {
                 tracing::debug!(device_id = %dev.device_id, name = %dev.name, "found output device");
             }
@@ -70,7 +73,10 @@ impl DeviceEnumerator {
         if let Some(conn) = conn {
             tracing::debug!("enumerating hardware inputs via libpulse introspect");
             let results = introspect::list_sources_sync(conn);
-            tracing::debug!(count = results.len(), "hardware inputs enumerated via introspect");
+            tracing::debug!(
+                count = results.len(),
+                "hardware inputs enumerated via introspect"
+            );
             for dev in &results {
                 tracing::debug!(name = %dev.name, "found input device");
             }
@@ -121,7 +127,10 @@ impl DeviceEnumerator {
             })
             .collect();
 
-        tracing::debug!(count = results.len(), "hardware outputs enumerated via pactl");
+        tracing::debug!(
+            count = results.len(),
+            "hardware outputs enumerated via pactl"
+        );
         for dev in &results {
             tracing::debug!(device_id = %dev.device_id, name = %dev.name, "found output device");
         }
@@ -146,8 +155,9 @@ impl DeviceEnumerator {
         let results: Vec<HardwareInput> = all_devices
             .into_iter()
             .filter(|d| {
-                let excluded =
-                    SOURCE_EXCLUDE_PATTERNS.iter().any(|pat| d.name.contains(pat));
+                let excluded = SOURCE_EXCLUDE_PATTERNS
+                    .iter()
+                    .any(|pat| d.name.contains(pat));
                 if excluded {
                     tracing::trace!(source_name = %d.name, "filtering out monitor source");
                 }
@@ -160,7 +170,10 @@ impl DeviceEnumerator {
             })
             .collect();
 
-        tracing::debug!(count = results.len(), "hardware inputs enumerated via pactl");
+        tracing::debug!(
+            count = results.len(),
+            "hardware inputs enumerated via pactl"
+        );
         for dev in &results {
             tracing::debug!(name = %dev.name, "found input device");
         }
@@ -184,10 +197,7 @@ fn parse_sections(output: &str, kind: &str) -> Vec<PactlDevice> {
                 devices.push(dev);
             }
 
-            let index = rest
-                .trim()
-                .parse::<u32>()
-                .unwrap_or(0);
+            let index = rest.trim().parse::<u32>().unwrap_or(0);
 
             current = Some(PactlDevice {
                 index,
@@ -301,20 +311,24 @@ Source #3
                 if d.name.starts_with(OSG_SINK_PREFIX) {
                     return false;
                 }
-                !SINK_EXCLUDE_PATTERNS
-                    .iter()
-                    .any(|pat| d.name.contains(pat))
+                !SINK_EXCLUDE_PATTERNS.iter().any(|pat| d.name.contains(pat))
             })
             .collect();
 
         // Only the two real ALSA sinks should remain.
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].index, 0);
-        assert_eq!(filtered[0].name, "alsa_output.pci-0000_00_1f.3.analog-stereo");
+        assert_eq!(
+            filtered[0].name,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo"
+        );
         assert_eq!(filtered[0].description, "Built-in Audio Analog Stereo");
 
         assert_eq!(filtered[1].index, 5);
-        assert_eq!(filtered[1].name, "alsa_output.usb-SteelSeries_Arctis_7-00.analog-stereo");
+        assert_eq!(
+            filtered[1].name,
+            "alsa_output.usb-SteelSeries_Arctis_7-00.analog-stereo"
+        );
     }
 
     #[test]
@@ -334,10 +348,16 @@ Source #3
         // Only the two real input devices should remain.
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].index, 0);
-        assert_eq!(filtered[0].name, "alsa_input.pci-0000_00_1f.3.analog-stereo");
+        assert_eq!(
+            filtered[0].name,
+            "alsa_input.pci-0000_00_1f.3.analog-stereo"
+        );
 
         assert_eq!(filtered[1].index, 2);
-        assert_eq!(filtered[1].name, "alsa_input.usb-Blue_Yeti-00.analog-stereo");
+        assert_eq!(
+            filtered[1].name,
+            "alsa_input.usb-Blue_Yeti-00.analog-stereo"
+        );
     }
 
     #[test]
@@ -385,21 +405,21 @@ Sink #3
                 if d.name.starts_with(OSG_SINK_PREFIX) {
                     return false;
                 }
-                !SINK_EXCLUDE_PATTERNS
-                    .iter()
-                    .any(|pat| d.name.contains(pat))
+                !SINK_EXCLUDE_PATTERNS.iter().any(|pat| d.name.contains(pat))
             })
             .collect();
 
-        assert_eq!(filtered.len(), 2, "only the 2 real hardware sinks should pass the filter");
         assert_eq!(
-            filtered[0].name,
-            "alsa_output.usb-device_ch_stereo",
+            filtered.len(),
+            2,
+            "only the 2 real hardware sinks should pass the filter"
+        );
+        assert_eq!(
+            filtered[0].name, "alsa_output.usb-device_ch_stereo",
             "usb sink with _ch in name must NOT be excluded"
         );
         assert_eq!(
-            filtered[1].name,
-            "alsa_output.pci-0000_00_1f.3.analog-stereo",
+            filtered[1].name, "alsa_output.pci-0000_00_1f.3.analog-stereo",
             "normal PCI sink must NOT be excluded"
         );
     }

@@ -12,7 +12,9 @@ pub struct DeviceFailover {
 
 impl Default for DeviceFailover {
     fn default() -> Self {
-        Self { output_devices: vec![] }
+        Self {
+            output_devices: vec![],
+        }
     }
 }
 
@@ -83,10 +85,26 @@ impl Default for AppConfig {
         tracing::debug!("creating default AppConfig");
         Self {
             channels: vec![
-                ChannelConfig { name: "Music".into(), effects: Default::default(), muted: false },
-                ChannelConfig { name: "Game".into(), effects: Default::default(), muted: false },
-                ChannelConfig { name: "Voice".into(), effects: Default::default(), muted: false },
-                ChannelConfig { name: "System".into(), effects: Default::default(), muted: false },
+                ChannelConfig {
+                    name: "Music".into(),
+                    effects: Default::default(),
+                    muted: false,
+                },
+                ChannelConfig {
+                    name: "Game".into(),
+                    effects: Default::default(),
+                    muted: false,
+                },
+                ChannelConfig {
+                    name: "Voice".into(),
+                    effects: Default::default(),
+                    muted: false,
+                },
+                ChannelConfig {
+                    name: "System".into(),
+                    effects: Default::default(),
+                    muted: false,
+                },
             ],
             mixes: vec![
                 MixConfig {
@@ -175,7 +193,11 @@ mod tests {
     #[test]
     fn test_default_config_has_expected_channels_and_mixes() {
         let config = AppConfig::default();
-        assert_eq!(config.channels.len(), 4, "default config must have 4 channels");
+        assert_eq!(
+            config.channels.len(),
+            4,
+            "default config must have 4 channels"
+        );
         assert_eq!(config.mixes.len(), 2, "default config must have 2 mixes");
         assert_eq!(config.audio.latency_ms, 20, "default latency must be 20 ms");
     }

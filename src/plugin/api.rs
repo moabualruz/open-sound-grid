@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
 
 // --- IDs (opaque to plugins, assigned by plugin impl) ---
 
@@ -57,6 +58,8 @@ pub struct AudioApplication {
     pub name: String,
     pub binary: String,
     pub icon_name: Option<String>,
+    /// Resolved filesystem path to the app's icon (from AppResolver).
+    pub icon_path: Option<PathBuf>,
     /// Backend-specific stream index.
     pub stream_index: u32,
     pub channel: Option<ChannelId>,
@@ -84,6 +87,8 @@ pub struct ChannelInfo {
     pub id: ChannelId,
     pub name: String,
     pub apps: Vec<AppId>,
+    /// Resolved icon path for the primary app assigned to this channel.
+    pub icon_path: Option<PathBuf>,
     pub muted: bool,
     pub effects: crate::effects::EffectsParams,
 }
@@ -126,16 +131,32 @@ pub enum PluginCommand {
     CreateChannel { name: String },
     /// Remove a software channel.
     RemoveChannel { id: ChannelId },
+    /// Rename a software channel.
+    RenameChannel { id: ChannelId, name: String },
     /// Create a new output mix.
     CreateMix { name: String },
     /// Remove an output mix.
     RemoveMix { id: MixId },
+    /// Rename an output mix.
+    RenameMix { id: MixId, name: String },
     /// Set volume for a source in a specific mix.
-    SetRouteVolume { source: SourceId, mix: MixId, volume: f32 },
+    SetRouteVolume {
+        source: SourceId,
+        mix: MixId,
+        volume: f32,
+    },
     /// Enable/disable a source in a mix.
-    SetRouteEnabled { source: SourceId, mix: MixId, enabled: bool },
+    SetRouteEnabled {
+        source: SourceId,
+        mix: MixId,
+        enabled: bool,
+    },
     /// Mute/unmute a source in a specific mix.
-    SetRouteMuted { source: SourceId, mix: MixId, muted: bool },
+    SetRouteMuted {
+        source: SourceId,
+        mix: MixId,
+        muted: bool,
+    },
     /// Route an application to a channel.
     RouteApp { app: AppId, channel: ChannelId },
     /// Unroute an application from its channel.
@@ -149,7 +170,10 @@ pub enum PluginCommand {
     /// Mute/unmute a source across all mixes.
     SetSourceMuted { source: SourceId, muted: bool },
     /// Set effects parameters for a channel.
-    SetEffectsParams { channel: ChannelId, params: crate::effects::EffectsParams },
+    SetEffectsParams {
+        channel: ChannelId,
+        params: crate::effects::EffectsParams,
+    },
     /// Enable/disable effects for a channel.
     SetEffectsEnabled { channel: ChannelId, enabled: bool },
 }
@@ -163,8 +187,10 @@ impl fmt::Display for PluginCommand {
             PluginCommand::ListApplications => "ListApplications",
             PluginCommand::CreateChannel { .. } => "CreateChannel",
             PluginCommand::RemoveChannel { .. } => "RemoveChannel",
+            PluginCommand::RenameChannel { .. } => "RenameChannel",
             PluginCommand::CreateMix { .. } => "CreateMix",
             PluginCommand::RemoveMix { .. } => "RemoveMix",
+            PluginCommand::RenameMix { .. } => "RenameMix",
             PluginCommand::SetRouteVolume { .. } => "SetRouteVolume",
             PluginCommand::SetRouteEnabled { .. } => "SetRouteEnabled",
             PluginCommand::SetRouteMuted { .. } => "SetRouteMuted",
@@ -210,7 +236,10 @@ pub enum PluginEvent {
     /// Updated peak levels for VU meters.
     PeakLevels(HashMap<SourceId, f32>),
     /// FFT spectrum data for a channel (frequency bins).
-    SpectrumData { channel: ChannelId, bins: Vec<(f32, f32)> },
+    SpectrumData {
+        channel: ChannelId,
+        bins: Vec<(f32, f32)>,
+    },
     /// Plugin encountered an error.
     Error(String),
     /// Lost connection to audio server.
@@ -243,7 +272,9 @@ mod tests {
     fn test_plugin_command_display() {
         let cmd = PluginCommand::GetState;
         assert_eq!(format!("{cmd}"), "GetState");
-        let cmd2 = PluginCommand::CreateChannel { name: "Music".into() };
+        let cmd2 = PluginCommand::CreateChannel {
+            name: "Music".into(),
+        };
         assert_eq!(format!("{cmd2}"), "CreateChannel");
     }
 

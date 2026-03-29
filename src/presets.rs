@@ -30,28 +30,40 @@ pub struct PresetRoute {
 impl MixerPreset {
     /// Build a preset from current config and engine state.
     #[instrument(skip(config, state))]
-    pub fn from_current(name: &str, config: &crate::config::AppConfig, state: &crate::engine::state::MixerState) -> Self {
-        let routes = state.routes.iter().map(|((source, mix_id), route)| {
-            let channel_name = match source {
-                crate::plugin::api::SourceId::Channel(id) => {
-                    state.channels.iter().find(|c| c.id == *id)
+    pub fn from_current(
+        name: &str,
+        config: &crate::config::AppConfig,
+        state: &crate::engine::state::MixerState,
+    ) -> Self {
+        let routes = state
+            .routes
+            .iter()
+            .map(|((source, mix_id), route)| {
+                let channel_name = match source {
+                    crate::plugin::api::SourceId::Channel(id) => state
+                        .channels
+                        .iter()
+                        .find(|c| c.id == *id)
                         .map(|c| c.name.clone())
-                        .unwrap_or_else(|| format!("channel_{id}"))
+                        .unwrap_or_else(|| format!("channel_{id}")),
+                    crate::plugin::api::SourceId::Hardware(id) => format!("hw_{id}"),
+                    crate::plugin::api::SourceId::Mix(id) => format!("mix_{id}"),
+                };
+                let mix_name = state
+                    .mixes
+                    .iter()
+                    .find(|m| m.id == *mix_id)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| format!("mix_{mix_id}"));
+                PresetRoute {
+                    channel_name,
+                    mix_name,
+                    volume: route.volume,
+                    enabled: route.enabled,
+                    muted: route.muted,
                 }
-                crate::plugin::api::SourceId::Hardware(id) => format!("hw_{id}"),
-                crate::plugin::api::SourceId::Mix(id) => format!("mix_{id}"),
-            };
-            let mix_name = state.mixes.iter().find(|m| m.id == *mix_id)
-                .map(|m| m.name.clone())
-                .unwrap_or_else(|| format!("mix_{mix_id}"));
-            PresetRoute {
-                channel_name,
-                mix_name,
-                volume: route.volume,
-                enabled: route.enabled,
-                muted: route.muted,
-            }
-        }).collect();
+            })
+            .collect();
 
         Self {
             name: name.to_string(),
@@ -123,7 +135,13 @@ fn preset_dir() -> PathBuf {
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

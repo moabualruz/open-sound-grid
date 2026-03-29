@@ -65,14 +65,14 @@ pub const STATUS_ERROR: Color = Color::from_rgb(0.957, 0.263, 0.212); // red
 
 // --- Light Theme ---
 
-pub const LIGHT_BG_PRIMARY: Color = Color::from_rgb(0.980, 0.976, 0.969);   // #faf9f7
+pub const LIGHT_BG_PRIMARY: Color = Color::from_rgb(0.980, 0.976, 0.969); // #faf9f7
 pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(0.941, 0.933, 0.922); // #f0eeeb
-pub const LIGHT_BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0);        // #ffffff
-pub const LIGHT_BG_HOVER: Color = Color::from_rgb(0.918, 0.910, 0.898);     // #eae8e5
+pub const LIGHT_BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0); // #ffffff
+pub const LIGHT_BG_HOVER: Color = Color::from_rgb(0.918, 0.910, 0.898); // #eae8e5
 pub const LIGHT_TEXT_PRIMARY: Color = Color::from_rgb(0.102, 0.102, 0.102); // #1a1a1a
 pub const LIGHT_TEXT_SECONDARY: Color = Color::from_rgb(0.420, 0.400, 0.376); // #6b6660
-pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb(0.600, 0.580, 0.557);   // #99948e
-pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875);       // #e5e3df
+pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb(0.600, 0.580, 0.557); // #99948e
+pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875); // #e5e3df
 
 // --- Theme-aware helpers ---
 

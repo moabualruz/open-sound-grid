@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
+use iced::widget::{
+    Space, button, column, container, pick_list, row, scrollable, text, text_input,
+};
 use iced::{Element, Length, Subscription, Task, Theme};
 use lucide_icons::iced::{icon_moon, icon_settings, icon_sun};
 use tokio::sync::mpsc;
@@ -62,10 +64,27 @@ pub enum Message {
     // Channel/mix creation
     CreateChannel(String),
     CreateMix(String),
+    /// Toggle the channel type picker visibility.
+    ToggleChannelPicker,
 
     // Channel/mix removal
     RemoveChannel(ChannelId),
     RemoveMix(MixId),
+
+    // Inline rename (double-click)
+    StartRenameChannel(ChannelId),
+    StartRenameMix(MixId),
+    RenameInput(String),
+    ConfirmRename,
+    CancelRename,
+    RenameChannel {
+        id: ChannelId,
+        name: String,
+    },
+    RenameMix {
+        id: MixId,
+        name: String,
+    },
 
     // Plugin events (from async subscription — zero latency)
     PluginStateRefreshed(MixerSnapshot),
@@ -73,7 +92,10 @@ pub enum Message {
     PluginAppsChanged(Vec<crate::plugin::api::AudioApplication>),
     PluginPeakLevels(std::collections::HashMap<SourceId, f32>),
     /// FFT spectrum data received from plugin (future use).
-    PluginSpectrumData { channel: ChannelId, bins: Vec<(f32, f32)> },
+    PluginSpectrumData {
+        channel: ChannelId,
+        bins: Vec<(f32, f32)>,
+    },
     PluginError(String),
     PluginConnectionLost,
     PluginConnectionRestored,
@@ -90,11 +112,21 @@ pub enum Message {
     KeyPressed(iced::keyboard::Key, iced::keyboard::Modifiers),
 
     // Output device selection
-    MixOutputDeviceSelected { mix: MixId, device_name: String },
+    MixOutputDeviceSelected {
+        mix: MixId,
+        device_name: String,
+    },
 
     // Effects
-    EffectsToggled { channel: ChannelId, enabled: bool },
-    EffectsParamChanged { channel: ChannelId, param: String, value: f32 },
+    EffectsToggled {
+        channel: ChannelId,
+        enabled: bool,
+    },
+    EffectsParamChanged {
+        channel: ChannelId,
+        param: String,
+        value: f32,
+    },
     #[allow(dead_code)]
     SelectedChannel(Option<ChannelId>),
 
@@ -139,6 +171,14 @@ pub struct App {
     pub routing_app: Option<u32>,
     /// Per-channel FFT spectrum data (populated when SpectrumData plugin events arrive).
     pub spectrum_data: HashMap<ChannelId, Vec<(f32, f32)>>,
+    /// Whether the channel type picker is visible.
+    pub show_channel_picker: bool,
+    /// Channel currently being renamed (inline edit mode).
+    pub editing_channel: Option<ChannelId>,
+    /// Mix currently being renamed (inline edit mode).
+    pub editing_mix: Option<MixId>,
+    /// Current text in the rename input field.
+    pub editing_text: String,
 }
 
 impl App {
@@ -148,7 +188,10 @@ impl App {
         let app_resolver = AppResolver::new();
 
         let sidebar_collapsed = config.ui.compact_mode;
-        tracing::debug!(compact_mode = config.ui.compact_mode, "applying compact_mode from config");
+        tracing::debug!(
+            compact_mode = config.ui.compact_mode,
+            "applying compact_mode from config"
+        );
 
         Self {
             config,
@@ -167,6 +210,10 @@ impl App {
             selected_channel: None,
             routing_app: None,
             spectrum_data: HashMap::new(),
+            show_channel_picker: false,
+            editing_channel: None,
+            editing_mix: None,
+            editing_text: String::new(),
         }
     }
 
@@ -181,13 +228,15 @@ impl App {
     pub fn restore_from_config(&mut self) {
         for ch in &self.config.channels {
             tracing::debug!(name = %ch.name, "restoring channel from config");
-            self.engine
-                .send_command(PluginCommand::CreateChannel { name: ch.name.clone() });
+            self.engine.send_command(PluginCommand::CreateChannel {
+                name: ch.name.clone(),
+            });
         }
         for mx in &self.config.mixes {
             tracing::debug!(name = %mx.name, "restoring mix from config");
-            self.engine
-                .send_command(PluginCommand::CreateMix { name: mx.name.clone() });
+            self.engine.send_command(PluginCommand::CreateMix {
+                name: mx.name.clone(),
+            });
         }
         if !self.config.channels.is_empty() || !self.config.mixes.is_empty() {
             tracing::debug!(
@@ -205,7 +254,11 @@ impl App {
             .config
             .mixes
             .iter()
-            .filter_map(|m| m.output_device.as_ref().map(|d| (m.name.clone(), d.clone())))
+            .filter_map(|m| {
+                m.output_device
+                    .as_ref()
+                    .map(|d| (m.name.clone(), d.clone()))
+            })
             .collect();
         tracing::debug!(
             count = self.pending_output_restores.len(),
@@ -244,7 +297,11 @@ impl App {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::RouteVolumeChanged { source, mix, volume } => {
+            Message::RouteVolumeChanged {
+                source,
+                mix,
+                volume,
+            } => {
                 tracing::debug!(?source, ?mix, volume, "route volume changed");
                 self.engine.send_command(PluginCommand::SetRouteVolume {
                     source,
@@ -253,11 +310,22 @@ impl App {
                 });
 
                 // Update ratio for linked slider behavior
-                let master_vol = self.engine.state.mixes.iter()
+                let master_vol = self
+                    .engine
+                    .state
+                    .mixes
+                    .iter()
                     .find(|m| m.id == mix)
                     .map_or(1.0, |m| m.master_volume);
-                let new_ratio = if master_vol > 0.001 { volume / master_vol } else { 1.0 };
-                self.engine.state.route_ratios.insert((source, mix), new_ratio);
+                let new_ratio = if master_vol > 0.001 {
+                    volume / master_vol
+                } else {
+                    1.0
+                };
+                self.engine
+                    .state
+                    .route_ratios
+                    .insert((source, mix), new_ratio);
                 tracing::debug!(?source, ?mix, new_ratio, "linked slider: ratio updated");
             }
             Message::RouteToggled { source, mix } => {
@@ -271,11 +339,19 @@ impl App {
                 if !currently_enabled {
                     // Route is being enabled (created); set initial ratio to 1.0
                     self.engine.state.route_ratios.insert((source, mix), 1.0);
-                    tracing::debug!(?source, ?mix, "linked slider: new route ratio initialised to 1.0");
+                    tracing::debug!(
+                        ?source,
+                        ?mix,
+                        "linked slider: new route ratio initialised to 1.0"
+                    );
                 } else {
                     // Route is being disabled (removed); clean up ratio entry
                     self.engine.state.route_ratios.remove(&(source, mix));
-                    tracing::debug!(?source, ?mix, "linked slider: ratio removed for disabled route");
+                    tracing::debug!(
+                        ?source,
+                        ?mix,
+                        "linked slider: ratio removed for disabled route"
+                    );
                 }
                 self.engine.send_command(PluginCommand::SetRouteEnabled {
                     source,
@@ -289,14 +365,24 @@ impl App {
                     .send_command(PluginCommand::SetMixMasterVolume { mix, volume });
 
                 // Linked sliders: scale all channel faders in this mix proportionally
-                let ratios: Vec<(SourceId, f32)> = self.engine.state.route_ratios.iter()
+                let ratios: Vec<(SourceId, f32)> = self
+                    .engine
+                    .state
+                    .route_ratios
+                    .iter()
                     .filter(|((_, m), _)| *m == mix)
                     .map(|((s, _), ratio)| (*s, *ratio))
                     .collect();
 
                 for (source, ratio) in ratios {
                     let new_vol = (volume * ratio).clamp(0.0, 1.0);
-                    tracing::debug!(?source, ?mix, ratio, new_vol, "linked slider: scaling channel volume");
+                    tracing::debug!(
+                        ?source,
+                        ?mix,
+                        ratio,
+                        new_vol,
+                        "linked slider: scaling channel volume"
+                    );
                     self.engine.send_command(PluginCommand::SetRouteVolume {
                         source,
                         mix,
@@ -342,7 +428,12 @@ impl App {
                     .routes
                     .get(&(source, mix))
                     .map_or(false, |r| r.muted);
-                tracing::debug!(?source, ?mix, new_muted = !currently_muted, "route mute toggled");
+                tracing::debug!(
+                    ?source,
+                    ?mix,
+                    new_muted = !currently_muted,
+                    "route mute toggled"
+                );
                 self.engine.send_command(PluginCommand::SetRouteMuted {
                     source,
                     mix,
@@ -360,15 +451,26 @@ impl App {
                 });
             }
             Message::AppRoutingStarted(stream_index) => {
-                tracing::debug!(stream_index, "app routing started — click a channel to assign");
+                tracing::debug!(
+                    stream_index,
+                    "app routing started — click a channel to assign"
+                );
                 self.routing_app = Some(stream_index);
             }
             Message::RefreshApps => {
                 tracing::debug!("refresh apps requested");
                 self.engine.send_command(PluginCommand::ListApplications);
             }
+            Message::ToggleChannelPicker => {
+                self.show_channel_picker = !self.show_channel_picker;
+                tracing::debug!(
+                    show = self.show_channel_picker,
+                    "toggled channel type picker"
+                );
+            }
             Message::CreateChannel(name) => {
                 tracing::debug!(name = %name, "creating channel");
+                self.show_channel_picker = false;
                 self.engine
                     .send_command(PluginCommand::CreateChannel { name });
                 // Immediately request updated state
@@ -379,9 +481,65 @@ impl App {
                 self.engine.send_command(PluginCommand::CreateMix { name });
                 self.engine.send_command(PluginCommand::GetState);
             }
+            Message::StartRenameChannel(id) => {
+                tracing::debug!(channel_id = id, "starting channel rename");
+                if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == id) {
+                    self.editing_text = ch.name.clone();
+                }
+                self.editing_channel = Some(id);
+                self.editing_mix = None;
+            }
+            Message::StartRenameMix(id) => {
+                tracing::debug!(mix_id = id, "starting mix rename");
+                if let Some(mx) = self.engine.state.mixes.iter().find(|m| m.id == id) {
+                    self.editing_text = mx.name.clone();
+                }
+                self.editing_mix = Some(id);
+                self.editing_channel = None;
+            }
+            Message::RenameInput(text) => {
+                self.editing_text = text;
+            }
+            Message::ConfirmRename => {
+                let new_name = self.editing_text.trim().to_string();
+                if !new_name.is_empty() {
+                    if let Some(id) = self.editing_channel.take() {
+                        tracing::info!(channel_id = id, name = %new_name, "renaming channel");
+                        self.engine
+                            .send_command(PluginCommand::RenameChannel { id, name: new_name });
+                        self.engine.send_command(PluginCommand::GetState);
+                    } else if let Some(id) = self.editing_mix.take() {
+                        tracing::info!(mix_id = id, name = %new_name, "renaming mix");
+                        self.engine
+                            .send_command(PluginCommand::RenameMix { id, name: new_name });
+                        self.engine.send_command(PluginCommand::GetState);
+                    }
+                }
+                self.editing_channel = None;
+                self.editing_mix = None;
+                self.editing_text.clear();
+            }
+            Message::CancelRename => {
+                self.editing_channel = None;
+                self.editing_mix = None;
+                self.editing_text.clear();
+            }
+            Message::RenameChannel { id, name } => {
+                tracing::info!(channel_id = id, name = %name, "renaming channel (direct)");
+                self.engine
+                    .send_command(PluginCommand::RenameChannel { id, name });
+                self.engine.send_command(PluginCommand::GetState);
+            }
+            Message::RenameMix { id, name } => {
+                tracing::info!(mix_id = id, name = %name, "renaming mix (direct)");
+                self.engine
+                    .send_command(PluginCommand::RenameMix { id, name });
+                self.engine.send_command(PluginCommand::GetState);
+            }
             Message::RemoveChannel(id) => {
                 tracing::info!(channel_id = id, "removing channel");
-                self.engine.send_command(PluginCommand::RemoveChannel { id });
+                self.engine
+                    .send_command(PluginCommand::RemoveChannel { id });
                 self.engine.send_command(PluginCommand::GetState);
             }
             Message::RemoveMix(id) => {
@@ -460,7 +618,11 @@ impl App {
                                 .hardware_outputs
                                 .iter()
                                 .any(|o| o.id == output_id);
-                            if exists { None } else { Some((mix.id, output_id)) }
+                            if exists {
+                                None
+                            } else {
+                                Some((mix.id, output_id))
+                            }
                         })
                     })
                     .collect();
@@ -471,19 +633,19 @@ impl App {
                         output_id,
                         "mix output device disappeared — attempting failover"
                     );
-                    let fallback = self
-                        .config
-                        .failover
-                        .output_devices
-                        .iter()
-                        .find_map(|fallback_name| {
-                            self.engine
-                                .state
-                                .hardware_outputs
-                                .iter()
-                                .find(|o| o.name == *fallback_name)
-                                .map(|hw| (hw.id, hw.name.clone()))
-                        });
+                    let fallback =
+                        self.config
+                            .failover
+                            .output_devices
+                            .iter()
+                            .find_map(|fallback_name| {
+                                self.engine
+                                    .state
+                                    .hardware_outputs
+                                    .iter()
+                                    .find(|o| o.name == *fallback_name)
+                                    .map(|hw| (hw.id, hw.name.clone()))
+                            });
                     match fallback {
                         Some((hw_id, hw_name)) => {
                             tracing::info!(
@@ -532,10 +694,8 @@ impl App {
                                     output_id = output,
                                     "restoring output device from config"
                                 );
-                                self.engine.send_command(PluginCommand::SetMixOutput {
-                                    mix,
-                                    output,
-                                });
+                                self.engine
+                                    .send_command(PluginCommand::SetMixOutput { mix, output });
                             }
                             _ => {
                                 tracing::warn!(
@@ -555,10 +715,18 @@ impl App {
                     let restores = std::mem::take(&mut self.pending_route_restores);
                     tracing::info!(count = restores.len(), "applying pending route restores");
                     for route in restores {
-                        let ch_id = self.engine.state.channels.iter()
+                        let ch_id = self
+                            .engine
+                            .state
+                            .channels
+                            .iter()
                             .find(|c| c.name == route.channel_name)
                             .map(|c| c.id);
-                        let mix_id = self.engine.state.mixes.iter()
+                        let mix_id = self
+                            .engine
+                            .state
+                            .mixes
+                            .iter()
                             .find(|m| m.name == route.mix_name)
                             .map(|m| m.id);
                         match (ch_id, mix_id) {
@@ -610,7 +778,8 @@ impl App {
                     let restores = std::mem::take(&mut self.pending_effects_restores);
                     tracing::info!(count = restores.len(), "applying pending effects restores");
                     for (name, effects, muted) in restores {
-                        if let Some(ch) = self.engine.state.channels.iter().find(|c| c.name == name) {
+                        if let Some(ch) = self.engine.state.channels.iter().find(|c| c.name == name)
+                        {
                             if muted {
                                 tracing::debug!(channel = %name, "restoring channel mute from config");
                                 self.engine.send_command(PluginCommand::SetSourceMuted {
@@ -638,7 +807,10 @@ impl App {
                 // Apply any pending mix volume/muted restores from config
                 if !self.pending_mix_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_mix_restores);
-                    tracing::info!(count = restores.len(), "applying pending mix volume restores");
+                    tracing::info!(
+                        count = restores.len(),
+                        "applying pending mix volume restores"
+                    );
                     for (name, volume, muted) in restores {
                         if let Some(m) = self.engine.state.mixes.iter().find(|m| m.name == name) {
                             if (volume - 1.0).abs() > 0.001 {
@@ -662,15 +834,27 @@ impl App {
                 }
 
                 // Rebuild route config from current engine state
-                let new_routes: Vec<RouteConfig> = self.engine.state.routes.iter()
+                let new_routes: Vec<RouteConfig> = self
+                    .engine
+                    .state
+                    .routes
+                    .iter()
                     .filter_map(|((source, mix_id), route)| {
                         let channel_name = match source {
-                            SourceId::Channel(id) => self.engine.state.channels.iter()
+                            SourceId::Channel(id) => self
+                                .engine
+                                .state
+                                .channels
+                                .iter()
                                 .find(|c| c.id == *id)
                                 .map(|c| c.name.clone())?,
                             _ => return None,
                         };
-                        let mix_name = self.engine.state.mixes.iter()
+                        let mix_name = self
+                            .engine
+                            .state
+                            .mixes
+                            .iter()
                             .find(|m| m.id == *mix_id)
                             .map(|m| m.name.clone())?;
                         Some(RouteConfig {
@@ -710,17 +894,17 @@ impl App {
                 tracing::debug!(count = apps.len(), "applications changed");
                 // Resolve display names via desktop entries
                 for app in &mut apps {
-                    let (display_name, _icon_path) = self.app_resolver.resolve(
-                        &app.binary,
-                        Some(&app.name),
-                    );
+                    let (display_name, icon_path) =
+                        self.app_resolver.resolve(&app.binary, Some(&app.name));
                     tracing::debug!(
                         binary = %app.binary,
                         raw_name = %app.name,
                         resolved_name = %display_name,
-                        "resolved app display name"
+                        has_icon = icon_path.is_some(),
+                        "resolved app display name and icon"
                     );
                     app.name = display_name;
+                    app.icon_path = icon_path;
                 }
                 self.engine.state.update_applications(apps);
             }
@@ -762,7 +946,10 @@ impl App {
                     });
                 }
             }
-            Message::MixOutputDeviceSelected { mix: mix_id, device_name } => {
+            Message::MixOutputDeviceSelected {
+                mix: mix_id,
+                device_name,
+            } => {
                 tracing::debug!(mix_id, device_name = %device_name, "mix output device selected");
                 let hw_output = self
                     .engine
@@ -784,7 +971,11 @@ impl App {
                     });
                     // Persist the selection to config
                     if let Some(mix_config) = self.config.mixes.iter_mut().find(|c| {
-                        self.engine.state.mixes.iter().any(|m| m.id == mix_id && m.name == c.name)
+                        self.engine
+                            .state
+                            .mixes
+                            .iter()
+                            .any(|m| m.id == mix_id && m.name == c.name)
                     }) {
                         mix_config.output_device = Some(device_name.clone());
                         if let Err(e) = self.config.save() {
@@ -793,7 +984,10 @@ impl App {
                             tracing::debug!(mix_id, device_name = %device_name, "output device persisted to config");
                         }
                     } else {
-                        tracing::warn!(mix_id, "MixOutputDeviceSelected: no matching config entry for mix");
+                        tracing::warn!(
+                            mix_id,
+                            "MixOutputDeviceSelected: no matching config entry for mix"
+                        );
                     }
                 } else {
                     tracing::warn!(device_name = %device_name, "MixOutputDeviceSelected: device not found in hardware_outputs");
@@ -832,13 +1026,21 @@ impl App {
                         let (r, c) = match (self.focused_row, self.focused_col) {
                             (Some(r), Some(c)) => {
                                 if modifiers.shift() {
-                                    if c > 0 { (r, c - 1) }
-                                    else if r > 0 { (r - 1, max_col - 1) }
-                                    else { (max_row - 1, max_col - 1) }
+                                    if c > 0 {
+                                        (r, c - 1)
+                                    } else if r > 0 {
+                                        (r - 1, max_col - 1)
+                                    } else {
+                                        (max_row - 1, max_col - 1)
+                                    }
                                 } else {
-                                    if c + 1 < max_col { (r, c + 1) }
-                                    else if r + 1 < max_row { (r + 1, 0) }
-                                    else { (0, 0) }
+                                    if c + 1 < max_col {
+                                        (r, c + 1)
+                                    } else if r + 1 < max_row {
+                                        (r + 1, 0)
+                                    } else {
+                                        (0, 0)
+                                    }
                                 }
                             }
                             _ => (0, 0),
@@ -859,14 +1061,20 @@ impl App {
                                 self.engine.state.mixes.get(c),
                             ) {
                                 let source = SourceId::Channel(ch.id);
-                                let current_vol = self.engine.state.routes
+                                let current_vol = self
+                                    .engine
+                                    .state
+                                    .routes
                                     .get(&(source, mix.id))
                                     .map_or(1.0, |r| r.volume);
                                 let new_vol = (current_vol + 0.01).min(1.0);
                                 tracing::debug!(
-                                    row = r, col = c,
-                                    channel_id = ch.id, mix_id = mix.id,
-                                    old_vol = current_vol, new_vol,
+                                    row = r,
+                                    col = c,
+                                    channel_id = ch.id,
+                                    mix_id = mix.id,
+                                    old_vol = current_vol,
+                                    new_vol,
                                     "keyboard: volume up applied"
                                 );
                                 self.engine.send_command(PluginCommand::SetRouteVolume {
@@ -889,14 +1097,20 @@ impl App {
                                 self.engine.state.mixes.get(c),
                             ) {
                                 let source = SourceId::Channel(ch.id);
-                                let current_vol = self.engine.state.routes
+                                let current_vol = self
+                                    .engine
+                                    .state
+                                    .routes
                                     .get(&(source, mix.id))
                                     .map_or(1.0, |r| r.volume);
                                 let new_vol = (current_vol - 0.01).max(0.0);
                                 tracing::debug!(
-                                    row = r, col = c,
-                                    channel_id = ch.id, mix_id = mix.id,
-                                    old_vol = current_vol, new_vol,
+                                    row = r,
+                                    col = c,
+                                    channel_id = ch.id,
+                                    mix_id = mix.id,
+                                    old_vol = current_vol,
+                                    new_vol,
                                     "keyboard: volume down applied"
                                 );
                                 self.engine.send_command(PluginCommand::SetRouteVolume {
@@ -936,12 +1150,17 @@ impl App {
                                 self.engine.state.mixes.get(c),
                             ) {
                                 let source = SourceId::Channel(channel.id);
-                                let currently_muted = self.engine.state.routes
+                                let currently_muted = self
+                                    .engine
+                                    .state
+                                    .routes
                                     .get(&(source, mix.id))
                                     .map_or(false, |r| r.muted);
                                 tracing::debug!(
-                                    row = r, col = c,
-                                    channel_id = channel.id, mix_id = mix.id,
+                                    row = r,
+                                    col = c,
+                                    channel_id = channel.id,
+                                    mix_id = mix.id,
                                     new_muted = !currently_muted,
                                     "keyboard: mute toggled"
                                 );
@@ -965,12 +1184,17 @@ impl App {
                                 self.engine.state.mixes.get(c),
                             ) {
                                 let source = SourceId::Channel(channel.id);
-                                let enabled = self.engine.state.routes
+                                let enabled = self
+                                    .engine
+                                    .state
+                                    .routes
                                     .get(&(source, mix.id))
                                     .map_or(true, |r| r.enabled);
                                 tracing::debug!(
-                                    row = r, col = c,
-                                    channel_id = channel.id, mix_id = mix.id,
+                                    row = r,
+                                    col = c,
+                                    channel_id = channel.id,
+                                    mix_id = mix.id,
                                     new_enabled = !enabled,
                                     "keyboard: route enabled toggled"
                                 );
@@ -1001,7 +1225,11 @@ impl App {
             }
             Message::SavePreset(name) => {
                 tracing::info!(name = %name, "saving preset");
-                let preset = crate::presets::MixerPreset::from_current(&name, &self.config, &self.engine.state);
+                let preset = crate::presets::MixerPreset::from_current(
+                    &name,
+                    &self.config,
+                    &self.engine.state,
+                );
                 if let Err(e) = preset.save() {
                     tracing::error!(error = %e, "failed to save preset");
                 }
@@ -1020,7 +1248,9 @@ impl App {
                         self.config.channels = preset.channels;
                         self.config.mixes = preset.mixes;
                         // Queue route restores for deferred application after next StateRefreshed
-                        self.pending_route_restores = preset.routes.iter()
+                        self.pending_route_restores = preset
+                            .routes
+                            .iter()
                             .map(|r| RouteConfig {
                                 channel_name: r.channel_name.clone(),
                                 mix_name: r.mix_name.clone(),
@@ -1065,7 +1295,11 @@ impl App {
                 self.engine
                     .send_command(PluginCommand::SetEffectsEnabled { channel, enabled });
             }
-            Message::EffectsParamChanged { channel, param, value } => {
+            Message::EffectsParamChanged {
+                channel,
+                param,
+                value,
+            } => {
                 tracing::debug!(channel_id = channel, param = %param, value, "effects param changed");
                 // Find current params for this channel, apply the change, send update
                 if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == channel) {
@@ -1080,7 +1314,10 @@ impl App {
                         tracing::warn!(param = %param, "EffectsParamChanged: unknown param name");
                     }
                 } else {
-                    tracing::warn!(channel_id = channel, "EffectsParamChanged: channel not found in state");
+                    tracing::warn!(
+                        channel_id = channel,
+                        "EffectsParamChanged: channel not found in state"
+                    );
                 }
             }
         }
@@ -1093,9 +1330,9 @@ impl App {
             Subscription::run(plugin_event_stream),
             Subscription::run(tray_event_stream),
             iced::event::listen_with(|event, _status, _id| match event {
-                iced::Event::Window(iced::window::Event::Resized(size)) => {
-                    Some(Message::WindowResized(size.width as u32, size.height as u32))
-                }
+                iced::Event::Window(iced::window::Event::Resized(size)) => Some(
+                    Message::WindowResized(size.width as u32, size.height as u32),
+                ),
                 _ => None,
             }),
             iced::keyboard::listen().filter_map(|event| match event {
@@ -1119,7 +1356,9 @@ impl App {
             "Open Sound Grid"
         };
         let compact_btn = button(
-            icon_settings().size(13).color(ui::theme::text_secondary(tm)),
+            icon_settings()
+                .size(13)
+                .color(ui::theme::text_secondary(tm)),
         )
         .on_press(Message::SettingsToggled)
         .style(move |_theme: &Theme, _status| button::Style {
@@ -1135,20 +1374,22 @@ impl App {
 
         let theme_icon_widget = match self.config.ui.theme_mode {
             ui::theme::ThemeMode::Dark => icon_sun().size(13).color(ui::theme::text_secondary(tm)),
-            ui::theme::ThemeMode::Light => icon_moon().size(13).color(ui::theme::text_secondary(tm)),
+            ui::theme::ThemeMode::Light => {
+                icon_moon().size(13).color(ui::theme::text_secondary(tm))
+            }
         };
         let theme_btn = button(theme_icon_widget)
-        .on_press(Message::ThemeToggled)
-        .style(move |_theme: &Theme, _status| button::Style {
-            background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
-            border: iced::Border {
-                radius: iced::border::Radius::from(4.0),
+            .on_press(Message::ThemeToggled)
+            .style(move |_theme: &Theme, _status| button::Style {
+                background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
+                border: iced::Border {
+                    radius: iced::border::Radius::from(4.0),
+                    ..Default::default()
+                },
+                text_color: ui::theme::text_secondary(tm),
                 ..Default::default()
-            },
-            text_color: ui::theme::text_secondary(tm),
-            ..Default::default()
-        })
-        .padding([2, 8]);
+            })
+            .padding([2, 8]);
 
         let output_names: Vec<String> = self
             .engine
@@ -1183,7 +1424,9 @@ impl App {
 
         let header = container(
             row![
-                text(header_title).size(18).color(ui::theme::text_primary(tm)),
+                text(header_title)
+                    .size(18)
+                    .color(ui::theme::text_primary(tm)),
                 Space::new().width(Length::Fill),
                 device_picker,
                 Space::new().width(Length::Fixed(8.0)),
@@ -1217,7 +1460,16 @@ impl App {
             tm,
         );
 
-        let matrix = ui::matrix::matrix_grid(&self.engine.state, self.focused_row, self.focused_col, tm);
+        let matrix = ui::matrix::matrix_grid(
+            &self.engine.state,
+            self.focused_row,
+            self.focused_col,
+            tm,
+            self.show_channel_picker,
+            self.editing_channel,
+            self.editing_mix,
+            &self.editing_text,
+        );
 
         let app_panel = ui::app_list::app_list_panel(
             &self.engine.state.applications,
@@ -1229,7 +1481,12 @@ impl App {
         let connected = self.engine.is_connected();
         let channel_count = self.engine.state.channels.len();
         let route_count = self.engine.state.routes.len();
-        tracing::trace!(connected, channels = channel_count, routes = route_count, "rendering status bar");
+        tracing::trace!(
+            connected,
+            channels = channel_count,
+            routes = route_count,
+            "rendering status bar"
+        );
 
         let (status_dot_color, status_text) = if connected {
             (ui::theme::STATUS_CONNECTED, "Connected")
@@ -1253,11 +1510,16 @@ impl App {
             row![
                 status_dot,
                 Space::new().width(Length::Fixed(6.0)),
-                text(status_text).size(11).color(ui::theme::text_secondary(tm)),
-                Space::new().width(Length::Fill),
-                text(format!("{} channels  ·  {} routes  ·  {}ms latency", channel_count, route_count, self.config.audio.latency_ms))
+                text(status_text)
                     .size(11)
-                    .color(ui::theme::text_muted(tm)),
+                    .color(ui::theme::text_secondary(tm)),
+                Space::new().width(Length::Fill),
+                text(format!(
+                    "{} channels  ·  {} routes  ·  {}ms latency",
+                    channel_count, route_count, self.config.audio.latency_ms
+                ))
+                .size(11)
+                .color(ui::theme::text_muted(tm)),
             ]
             .padding([4, 16])
             .align_y(iced::Alignment::Center),
@@ -1292,7 +1554,11 @@ impl App {
             let selected_preset: Option<String> = None;
             let preset_names = self.available_presets.clone();
             let load_btn = button(text("Load").size(12))
-                .on_press_maybe(selected_preset.as_ref().map(|n| Message::LoadPreset(n.clone())))
+                .on_press_maybe(
+                    selected_preset
+                        .as_ref()
+                        .map(|n| Message::LoadPreset(n.clone())),
+                )
                 .padding([2, 8]);
             let preset_load_row = row![
                 pick_list(preset_names, selected_preset, Message::LoadPreset)
@@ -1307,13 +1573,30 @@ impl App {
                 column![
                     text("Settings").size(14).color(ui::theme::text_primary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
-                    text(latency_text).size(12).color(ui::theme::text_secondary(tm)),
-                    text(format!("Config: ~/.config/open-sound-grid/")).size(11).color(ui::theme::text_muted(tm)),
+                    text(latency_text)
+                        .size(12)
+                        .color(ui::theme::text_secondary(tm)),
+                    text(format!("Config: ~/.config/open-sound-grid/"))
+                        .size(11)
+                        .color(ui::theme::text_muted(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
-                    text(format!("Plugin: {}", if self.engine.is_connected() { "PulseAudio" } else { "None" }))
-                        .size(12).color(ui::theme::text_secondary(tm)),
-                    text(format!("Channels: {} / Mixes: {}", self.engine.state.channels.len(), self.engine.state.mixes.len()))
-                        .size(12).color(ui::theme::text_secondary(tm)),
+                    text(format!(
+                        "Plugin: {}",
+                        if self.engine.is_connected() {
+                            "PulseAudio"
+                        } else {
+                            "None"
+                        }
+                    ))
+                    .size(12)
+                    .color(ui::theme::text_secondary(tm)),
+                    text(format!(
+                        "Channels: {} / Mixes: {}",
+                        self.engine.state.channels.len(),
+                        self.engine.state.mixes.len()
+                    ))
+                    .size(12)
+                    .color(ui::theme::text_secondary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(8.0)),
                     text("Presets").size(13).color(ui::theme::text_primary(tm)),
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
@@ -1321,7 +1604,7 @@ impl App {
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
                     preset_load_row,
                 ]
-                .spacing(4)
+                .spacing(4),
             )
             .padding(12)
             .width(Length::Fill)
@@ -1339,8 +1622,28 @@ impl App {
             None
         };
 
-        // Right panel: flush stack — header, sep, matrix, [settings], [effects], app panel, sep, status
-        let mut right_panel = column![header, sep(), matrix]
+        // Build the matrix area: matrix on the left, optional effects panel on the right
+        let matrix_area: Element<'_, Message> = if let Some(ch_id) = self.selected_channel {
+            if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
+                tracing::trace!(channel_id = ch_id, "rendering effects panel as side panel");
+                let effects = scrollable(ui::effects_panel::effects_panel(ch, tm))
+                    .width(Length::Fixed(280.0))
+                    .height(Length::Fill);
+
+                row![matrix, effects,]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                matrix
+            }
+        } else {
+            matrix
+        };
+
+        // Right panel: flush stack — header, sep, matrix+effects, [settings], app panel, sep, status
+        let mut right_panel = column![header, sep(), matrix_area]
             .spacing(0)
             .width(Length::Fill)
             .height(Length::Fill);
@@ -1350,15 +1653,7 @@ impl App {
             right_panel = right_panel.push(settings);
         }
 
-        // Effects panel — shown below settings, before app panel
-        if let Some(ch_id) = self.selected_channel {
-            if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
-                tracing::trace!(channel_id = ch_id, "rendering effects panel");
-                right_panel = right_panel.push(ui::effects_panel::effects_panel(ch, tm));
-            }
-        }
-
-        // App panel after settings/effects
+        // App panel after settings
         right_panel = right_panel.push(app_panel);
 
         let right_panel = right_panel.push(sep()).push(status_bar);
@@ -1420,9 +1715,7 @@ fn plugin_event_stream() -> impl iced::futures::Stream<Item = Message> {
                             Message::PluginStateRefreshed(snapshot)
                         }
                         PluginEvent::DevicesChanged => Message::PluginDevicesChanged,
-                        PluginEvent::ApplicationsChanged(apps) => {
-                            Message::PluginAppsChanged(apps)
-                        }
+                        PluginEvent::ApplicationsChanged(apps) => Message::PluginAppsChanged(apps),
                         PluginEvent::PeakLevels(levels) => Message::PluginPeakLevels(levels),
                         PluginEvent::Error(err) => Message::PluginError(err),
                         PluginEvent::ConnectionLost => Message::PluginConnectionLost,
@@ -1437,8 +1730,7 @@ fn plugin_event_stream() -> impl iced::futures::Stream<Item = Message> {
                 }
                 None => {
                     tracing::warn!("plugin event channel closed");
-                    let _ = sender
-                        .try_send(Message::PluginError("Plugin disconnected".into()));
+                    let _ = sender.try_send(Message::PluginError("Plugin disconnected".into()));
                     std::future::pending::<()>().await;
                 }
             }

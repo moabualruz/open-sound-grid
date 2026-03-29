@@ -1,20 +1,32 @@
-use iced::widget::{button, column, container, rule, text, Space};
+use iced::widget::{Space, button, column, container, rule, text};
 use iced::{Background, Border, Element, Length, Theme};
 use lucide_icons::iced::{icon_chevron_left, icon_chevron_right, icon_headphones, icon_settings};
 
 use crate::app::Message;
 use crate::plugin::api::HardwareInput;
 use crate::ui::theme::{
-    bg_hover, bg_secondary, border_color, text_muted, text_primary, text_secondary, ThemeMode,
-    ACCENT,
+    ACCENT, ThemeMode, bg_hover, bg_secondary, border_color, text_muted, text_primary,
+    text_secondary,
 };
 
 const EXPANDED_WIDTH: f32 = 200.0;
 const COLLAPSED_WIDTH: f32 = 48.0;
 
-pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode) -> Element<'a, Message> {
-    tracing::trace!(collapsed = collapsed, input_count = hardware_inputs.len(), "rendering sidebar");
-    let width = if collapsed { COLLAPSED_WIDTH } else { EXPANDED_WIDTH };
+pub fn sidebar<'a>(
+    collapsed: bool,
+    hardware_inputs: &'a [HardwareInput],
+    theme_mode: ThemeMode,
+) -> Element<'a, Message> {
+    tracing::trace!(
+        collapsed = collapsed,
+        input_count = hardware_inputs.len(),
+        "rendering sidebar"
+    );
+    let width = if collapsed {
+        COLLAPSED_WIDTH
+    } else {
+        EXPANDED_WIDTH
+    };
 
     let content = if collapsed {
         collapsed_view(theme_mode)
@@ -39,8 +51,14 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput], theme_
         .into()
 }
 
-fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode) -> Element<'a, Message> {
-    tracing::trace!(input_count = hardware_inputs.len(), "rendering expanded sidebar");
+fn expanded_view<'a>(
+    hardware_inputs: &'a [HardwareInput],
+    theme_mode: ThemeMode,
+) -> Element<'a, Message> {
+    tracing::trace!(
+        input_count = hardware_inputs.len(),
+        "rendering expanded sidebar"
+    );
     let collapse_btn = button(icon_chevron_left().size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
@@ -84,15 +102,15 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode
         .align_y(iced::Alignment::Center),
     )
     .on_press(Message::SettingsToggled)
-        .padding([6, 8])
-        .style(move |_: &Theme, status| button::Style {
-            background: match status {
-                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
-                _ => None,
-            },
-            text_color: text_secondary(theme_mode),
-            ..Default::default()
-        });
+    .padding([6, 8])
+    .style(move |_: &Theme, status| button::Style {
+        background: match status {
+            button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
+            _ => None,
+        },
+        text_color: text_secondary(theme_mode),
+        ..Default::default()
+    });
 
     column![
         collapse_btn,
@@ -140,7 +158,10 @@ fn collapsed_view<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
 
     column![
         expand_btn,
-        icon_headphones().size(16).color(text_primary(theme_mode)).center(),
+        icon_headphones()
+            .size(16)
+            .color(text_primary(theme_mode))
+            .center(),
         Space::new().width(Length::Fill).height(Length::Fill),
         settings_btn,
     ]

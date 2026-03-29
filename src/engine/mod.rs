@@ -31,10 +31,7 @@ impl MixerEngine {
     /// Attach a plugin bridge. Returns the event receiver for use in subscriptions.
     #[instrument(skip(self, bridge))]
     pub fn attach(&mut self, bridge: PluginBridge) -> mpsc::UnboundedReceiver<PluginEvent> {
-        tracing::info!(
-            command_tx_capacity = "unbounded",
-            "plugin bridge attached"
-        );
+        tracing::info!(command_tx_capacity = "unbounded", "plugin bridge attached");
         self.command_tx = Some(bridge.command_tx);
         // Request initial state
         self.send_command(PluginCommand::GetState);
@@ -74,7 +71,12 @@ impl MixerEngine {
     /// Uses state.connected which is set true by apply_snapshot and false by ConnectionLost.
     pub fn is_connected(&self) -> bool {
         let connected = self.command_tx.is_some() && self.state.connected;
-        tracing::trace!(connected, has_bridge = self.command_tx.is_some(), state_connected = self.state.connected, "is_connected check");
+        tracing::trace!(
+            connected,
+            has_bridge = self.command_tx.is_some(),
+            state_connected = self.state.connected,
+            "is_connected check"
+        );
         connected
     }
 }

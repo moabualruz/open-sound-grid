@@ -1,5 +1,5 @@
-use iced::window;
 use iced::Size;
+use iced::window;
 use lucide_icons::LUCIDE_FONT_BYTES;
 
 mod app;
@@ -23,9 +23,7 @@ fn main() -> anyhow::Result<()> {
     //   RUST_LOG=open_sound_grid::plugins=debug — debug PA plugin only
     //   RUST_LOG=warn                           — quiet mode
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            tracing_subscriber::EnvFilter::new("open_sound_grid=info")
-        });
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("open_sound_grid=info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)

@@ -6,3 +6,4 @@ pub mod matrix;
 pub mod sidebar;
 pub mod theme;
 pub mod vu_meter;
+pub mod vu_slider;

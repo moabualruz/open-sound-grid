@@ -50,6 +50,7 @@ impl AppDetector {
                     name: e.name,
                     binary: e.binary,
                     icon_name: e.icon_name,
+                    icon_path: None,
                     stream_index: e.stream_index,
                     channel: None,
                 })
@@ -64,14 +65,11 @@ impl AppDetector {
         // Assign stable IDs: reuse existing ID for known sink-input indices,
         // assign new ID for newly seen indices.
         for app in &mut apps {
-            let stable_id = self
-                .index_to_id
-                .entry(app.stream_index)
-                .or_insert_with(|| {
-                    let id = self.next_app_id;
-                    self.next_app_id += 1;
-                    id
-                });
+            let stable_id = self.index_to_id.entry(app.stream_index).or_insert_with(|| {
+                let id = self.next_app_id;
+                self.next_app_id += 1;
+                id
+            });
             app.id = *stable_id;
             tracing::debug!(
                 stream_index = app.stream_index,
@@ -82,7 +80,8 @@ impl AppDetector {
 
         // Clean up stale entries (sink-input indices that disappeared).
         let current_indices: HashSet<u32> = apps.iter().map(|a| a.stream_index).collect();
-        self.index_to_id.retain(|idx, _| current_indices.contains(idx));
+        self.index_to_id
+            .retain(|idx, _| current_indices.contains(idx));
 
         tracing::debug!(count = apps.len(), "audio applications detected");
         for app in &apps {
@@ -153,7 +152,11 @@ impl SinkInputEntry {
         let name = match self.app_name {
             Some(n) => n,
             None => {
-                tracing::debug!(index = self.index, reason = "no application.name property", "filtering out sink-input");
+                tracing::debug!(
+                    index = self.index,
+                    reason = "no application.name property",
+                    "filtering out sink-input"
+                );
                 return None;
             }
         };
@@ -171,6 +174,7 @@ impl SinkInputEntry {
             name,
             binary: self.app_binary.unwrap_or_default(),
             icon_name: self.icon_name,
+            icon_path: None,
             stream_index: self.index,
             channel: None,
         })
@@ -323,7 +327,10 @@ Sink Input #101
     fn filters_loopback_streams() {
         let apps = parse_sink_inputs(SAMPLE_OUTPUT);
         let loopback = apps.iter().find(|a| a.name == "PulseAudio Volume Control");
-        assert!(loopback.is_none(), "loopback streams should be filtered out");
+        assert!(
+            loopback.is_none(),
+            "loopback streams should be filtered out"
+        );
     }
 
     #[test]

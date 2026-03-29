@@ -6,14 +6,14 @@
 //!    checks routing_app and calls RouteApp if set)
 //! 3. Selection clears automatically after routing
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
 use crate::plugin::api::{AudioApplication, ChannelInfo};
 use crate::ui::theme::{
-    bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary, ThemeMode,
-    ACCENT,
+    ACCENT, ThemeMode, bg_elevated, bg_hover, border_color, text_muted, text_primary,
+    text_secondary,
 };
 
 /// Panel showing detected audio applications.
@@ -34,13 +34,17 @@ pub fn app_list_panel<'a>(
         "rendering app list panel"
     );
 
-    let header = text("Applications").size(12).color(text_secondary(theme_mode));
+    let header = text("Applications")
+        .size(12)
+        .color(text_secondary(theme_mode));
 
     let content = if apps.is_empty() {
         column![
             header,
             Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
-            text("No audio apps detected").size(11).color(text_muted(theme_mode)),
+            text("No audio apps detected")
+                .size(11)
+                .color(text_muted(theme_mode)),
         ]
         .spacing(4)
     } else {
@@ -111,9 +115,13 @@ fn app_entry<'a>(
     };
 
     let hint = if is_routing {
-        text("Click a channel to assign...").size(9).color(text_primary(theme_mode))
+        text("Click a channel to assign...")
+            .size(9)
+            .color(text_primary(theme_mode))
     } else {
-        text(format!("→ {assignment_label}")).size(9).color(text_muted(theme_mode))
+        text(format!("→ {assignment_label}"))
+            .size(9)
+            .color(text_muted(theme_mode))
     };
 
     let inner = row![
@@ -137,7 +145,11 @@ fn app_entry<'a>(
             },
             text_color: text_secondary(theme_mode),
             border: Border {
-                color: if is_routing { ACCENT } else { border_color(theme_mode) },
+                color: if is_routing {
+                    ACCENT
+                } else {
+                    border_color(theme_mode)
+                },
                 width: if is_routing { 2.0 } else { 1.0 },
                 radius: 4.0.into(),
             },

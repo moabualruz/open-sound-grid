@@ -32,9 +32,7 @@ pub fn audio_slider<'a>(
         slider(0.0..=1.0, value, on_change)
             .step(SCROLL_STEP)
             .width(Length::Fill),
-        text(db_text)
-            .size(10)
-            .color(TEXT_SECONDARY),
+        text(db_text).size(10).color(TEXT_SECONDARY),
     ]
     .spacing(2)
     .width(Length::Fill)

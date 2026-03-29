@@ -4,7 +4,7 @@
 //! Parameters are stored and sent to the plugin; audio processing is wired
 //! when PA stream capture is available.
 
-use iced::widget::{button, column, container, row, slider, text, toggler, Space};
+use iced::widget::{Space, button, column, container, row, slider, text, toggler};
 use iced::{Background, Element, Length, Theme};
 use lucide_icons::iced::icon_x;
 
@@ -13,7 +13,7 @@ use crate::effects::EffectsParams;
 use crate::plugin::api::ChannelInfo;
 use crate::ui::eq_widget::eq_canvas;
 use crate::ui::theme::{
-    bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary, ThemeMode,
+    ThemeMode, bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary,
 };
 
 /// Render the effects panel for a selected channel.
@@ -22,23 +22,21 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let params = &channel.effects;
     tracing::trace!(channel_id = ch_id, name = %channel.name, effects_enabled = params.enabled, "rendering effects panel");
 
-    let close_btn = button(
-        icon_x().size(13).color(text_muted(theme_mode)).center(),
-    )
-    .width(20)
-    .height(20)
-    .on_press(Message::SelectedChannel(None))
-    .padding(0)
-    .style(move |_: &Theme, status| button::Style {
-        background: match status {
-            button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(bg_hover(theme_mode)))
-            }
-            _ => None,
-        },
-        text_color: text_muted(theme_mode),
-        ..Default::default()
-    });
+    let close_btn = button(icon_x().size(13).color(text_muted(theme_mode)).center())
+        .width(20)
+        .height(20)
+        .on_press(Message::SelectedChannel(None))
+        .padding(0)
+        .style(move |_: &Theme, status| button::Style {
+            background: match status {
+                button::Status::Hovered | button::Status::Pressed => {
+                    Some(Background::Color(bg_hover(theme_mode)))
+                }
+                _ => None,
+            },
+            text_color: text_muted(theme_mode),
+            ..Default::default()
+        });
 
     tracing::trace!(channel_id = ch_id, "rendering effects panel close button");
 
@@ -46,7 +44,10 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         text("Effects").size(13).color(text_primary(theme_mode)),
         Space::new().width(Length::Fill),
         toggler(params.enabled)
-            .on_toggle(move |enabled| Message::EffectsToggled { channel: ch_id, enabled })
+            .on_toggle(move |enabled| Message::EffectsToggled {
+                channel: ch_id,
+                enabled
+            })
             .size(16),
         close_btn,
     ]
@@ -64,7 +65,9 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     };
 
     // --- EQ section ---
-    let eq_label = text("Parametric EQ").size(11).color(text_secondary(theme_mode));
+    let eq_label = text("Parametric EQ")
+        .size(11)
+        .color(text_secondary(theme_mode));
 
     let eq_freq_label = text(format!("Freq: {:.0} Hz", params.eq_freq_hz))
         .size(11)
@@ -72,7 +75,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let eq_freq = {
         let id = ch_id;
         slider(20.0_f32..=20000.0, params.eq_freq_hz, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "eq_freq_hz".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "eq_freq_hz".into(),
+                value: v,
+            }
         })
         .step(1.0)
     };
@@ -83,7 +90,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let eq_q = {
         let id = ch_id;
         slider(0.1_f32..=10.0, params.eq_q, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "eq_q".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "eq_q".into(),
+                value: v,
+            }
         })
         .step(0.01)
     };
@@ -94,7 +105,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let eq_gain = {
         let id = ch_id;
         slider(-24.0_f32..=24.0, params.eq_gain_db, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "eq_gain_db".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "eq_gain_db".into(),
+                value: v,
+            }
         })
         .step(0.1)
     };
@@ -105,7 +120,9 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     tracing::trace!(channel_id = ch_id, "rendering eq_viz canvas");
 
     // --- Compressor section ---
-    let comp_label = text("Compressor").size(11).color(text_secondary(theme_mode));
+    let comp_label = text("Compressor")
+        .size(11)
+        .color(text_secondary(theme_mode));
 
     let comp_thresh_label = text(format!("Threshold: {:.1} dB", params.comp_threshold_db))
         .size(11)
@@ -113,7 +130,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let comp_thresh = {
         let id = ch_id;
         slider(-60.0_f32..=0.0, params.comp_threshold_db, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "comp_threshold_db".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "comp_threshold_db".into(),
+                value: v,
+            }
         })
         .step(0.5)
     };
@@ -124,7 +145,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let comp_ratio = {
         let id = ch_id;
         slider(1.0_f32..=20.0, params.comp_ratio, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "comp_ratio".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "comp_ratio".into(),
+                value: v,
+            }
         })
         .step(0.1)
     };
@@ -135,7 +160,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let comp_attack = {
         let id = ch_id;
         slider(0.1_f32..=100.0, params.comp_attack_ms, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "comp_attack_ms".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "comp_attack_ms".into(),
+                value: v,
+            }
         })
         .step(0.1)
     };
@@ -146,13 +175,19 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let comp_release = {
         let id = ch_id;
         slider(10.0_f32..=1000.0, params.comp_release_ms, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "comp_release_ms".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "comp_release_ms".into(),
+                value: v,
+            }
         })
         .step(1.0)
     };
 
     // --- Noise gate section ---
-    let gate_label = text("Noise Gate").size(11).color(text_secondary(theme_mode));
+    let gate_label = text("Noise Gate")
+        .size(11)
+        .color(text_secondary(theme_mode));
 
     let gate_thresh_label = text(format!("Threshold: {:.1} dB", params.gate_threshold_db))
         .size(11)
@@ -160,7 +195,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let gate_thresh = {
         let id = ch_id;
         slider(-80.0_f32..=0.0, params.gate_threshold_db, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "gate_threshold_db".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "gate_threshold_db".into(),
+                value: v,
+            }
         })
         .step(0.5)
     };
@@ -171,7 +210,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     let gate_hold = {
         let id = ch_id;
         slider(1.0_f32..=500.0, params.gate_hold_ms, move |v| {
-            Message::EffectsParamChanged { channel: id, param: "gate_hold_ms".into(), value: v }
+            Message::EffectsParamChanged {
+                channel: id,
+                param: "gate_hold_ms".into(),
+                value: v,
+            }
         })
         .step(1.0)
     };
@@ -235,7 +278,11 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
 
 /// Build a modified `EffectsParams` with the named param replaced by `value`.
 /// Returns `None` if `param` is not a recognized field name.
-pub fn apply_param_change(params: &EffectsParams, param: &str, value: f32) -> Option<EffectsParams> {
+pub fn apply_param_change(
+    params: &EffectsParams,
+    param: &str,
+    value: f32,
+) -> Option<EffectsParams> {
     let mut p = params.clone();
     match param {
         "eq_freq_hz" => p.eq_freq_hz = value,

@@ -24,7 +24,7 @@ use crate::error::Result;
 #[cfg(feature = "pipewire-backend")]
 use crate::plugin::api::*;
 #[cfg(feature = "pipewire-backend")]
-use crate::plugin::{AudioPlugin, PluginCapabilities, PluginInfo, API_VERSION};
+use crate::plugin::{API_VERSION, AudioPlugin, PluginCapabilities, PluginInfo};
 
 #[cfg(feature = "pipewire-backend")]
 use self::connection::PwConnection;
@@ -124,9 +124,7 @@ impl AudioPlugin for PipeWirePlugin {
     fn handle_command(&mut self, cmd: PluginCommand) -> Result<PluginResponse> {
         tracing::debug!(cmd = %cmd, "PW plugin received command");
         match cmd {
-            PluginCommand::GetState => {
-                Ok(PluginResponse::State(self.build_snapshot()))
-            }
+            PluginCommand::GetState => Ok(PluginResponse::State(self.build_snapshot())),
             PluginCommand::CreateChannel { name } => {
                 let id = self.next_channel_id;
                 self.next_channel_id += 1;
@@ -136,6 +134,7 @@ impl AudioPlugin for PipeWirePlugin {
                     id,
                     name,
                     apps: vec![],
+                    icon_path: None,
                     muted: false,
                     effects: Default::default(),
                 });
@@ -146,7 +145,15 @@ impl AudioPlugin for PipeWirePlugin {
                 tracing::info!(channel_id = id, "PW removing channel");
                 self.channels.retain(|c| c.id != id);
                 self.effects_chains.remove(&id);
-                self.routes.retain(|(src, _), _| *src != SourceId::Channel(id));
+                self.routes
+                    .retain(|(src, _), _| *src != SourceId::Channel(id));
+                Ok(PluginResponse::Ok)
+            }
+            PluginCommand::RenameChannel { id, name } => {
+                tracing::info!(channel_id = id, new_name = %name, "PW renaming channel");
+                if let Some(ch) = self.channels.iter_mut().find(|c| c.id == id) {
+                    ch.name = name;
+                }
                 Ok(PluginResponse::Ok)
             }
             PluginCommand::CreateMix { name } => {
@@ -168,12 +175,27 @@ impl AudioPlugin for PipeWirePlugin {
                 self.routes.retain(|(_, mix), _| *mix != id);
                 Ok(PluginResponse::Ok)
             }
-            PluginCommand::SetRouteVolume { source, mix, volume } => {
+            PluginCommand::RenameMix { id, name } => {
+                tracing::info!(mix_id = id, new_name = %name, "PW renaming mix");
+                if let Some(mx) = self.mixes.iter_mut().find(|m| m.id == id) {
+                    mx.name = name;
+                }
+                Ok(PluginResponse::Ok)
+            }
+            PluginCommand::SetRouteVolume {
+                source,
+                mix,
+                volume,
+            } => {
                 tracing::debug!(?source, mix, volume, "PW set route volume");
                 self.routes.entry((source, mix)).or_default().volume = volume.clamp(0.0, 1.0);
                 Ok(PluginResponse::Ok)
             }
-            PluginCommand::SetRouteEnabled { source, mix, enabled } => {
+            PluginCommand::SetRouteEnabled {
+                source,
+                mix,
+                enabled,
+            } => {
                 tracing::debug!(?source, mix, enabled, "PW set route enabled");
                 if enabled {
                     self.routes.entry((source, mix)).or_default().enabled = true;

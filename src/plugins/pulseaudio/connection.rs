@@ -53,7 +53,9 @@ impl PulseConnection {
             tracing::trace!("unlocking mainloop after failed start");
             mainloop.unlock();
             tracing::error!("failed to start PulseAudio threaded mainloop");
-            return Err(OsgError::PulseAudio("failed to start threaded mainloop".into()));
+            return Err(OsgError::PulseAudio(
+                "failed to start threaded mainloop".into(),
+            ));
         }
         tracing::debug!("PulseAudio threaded mainloop started");
 
@@ -90,7 +92,10 @@ impl PulseConnection {
                         tracing::trace!("unlocking mainloop after timeout");
                         mainloop.unlock();
                         mainloop.stop();
-                        tracing::error!(timeout_secs = CONNECT_TIMEOUT.as_secs(), "timed out waiting for PulseAudio context Ready");
+                        tracing::error!(
+                            timeout_secs = CONNECT_TIMEOUT.as_secs(),
+                            "timed out waiting for PulseAudio context Ready"
+                        );
                         return Err(OsgError::PulseAudio(
                             "timed out waiting for context Ready".into(),
                         ));

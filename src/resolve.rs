@@ -33,10 +33,9 @@ impl AppResolver {
 
         tracing::debug!(locales = ?locales, "AppResolver using system locales");
 
-        let entries = freedesktop_desktop_entry::Iter::new(
-            freedesktop_desktop_entry::default_paths(),
-        )
-        .entries(Some(locales));
+        let entries =
+            freedesktop_desktop_entry::Iter::new(freedesktop_desktop_entry::default_paths())
+                .entries(Some(locales));
 
         for entry in entries {
             let name = match entry.name(locales) {
@@ -55,7 +54,10 @@ impl AppResolver {
             }
         }
 
-        tracing::info!(entries = cache.len(), "AppResolver cache built from desktop entries");
+        tracing::info!(
+            entries = cache.len(),
+            "AppResolver cache built from desktop entries"
+        );
         Self { cache }
     }
 
@@ -67,11 +69,7 @@ impl AppResolver {
     /// 2. `pa_app_name` match (PulseAudio sometimes reports a different name).
     /// 3. Capitalize the binary name as a fallback display name.
     #[instrument(skip(self))]
-    pub fn resolve(
-        &self,
-        binary: &str,
-        pa_app_name: Option<&str>,
-    ) -> (String, Option<PathBuf>) {
+    pub fn resolve(&self, binary: &str, pa_app_name: Option<&str>) -> (String, Option<PathBuf>) {
         if let Some((display_name, icon_name)) = self.cache.get(binary) {
             let icon_path = icon_name.as_deref().and_then(resolve_icon_path);
             tracing::debug!(binary, display_name = %display_name, has_icon = icon_path.is_some(), "resolve hit (binary match)");
@@ -116,11 +114,7 @@ fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
         .with_size(48)
         .with_cache()
         .find()
-        .or_else(|| {
-            freedesktop_icons::lookup(icon_name)
-                .with_cache()
-                .find()
-        });
+        .or_else(|| freedesktop_icons::lookup(icon_name).with_cache().find());
 
     tracing::debug!(icon_name, found = result.is_some(), "icon lookup result");
     result
@@ -151,10 +145,7 @@ fn extract_binary(exec: &str) -> Option<String> {
     }
 
     // Strip path prefix: `/usr/bin/firefox` -> `firefox`
-    let binary = first
-        .rsplit('/')
-        .next()
-        .unwrap_or(first);
+    let binary = first.rsplit('/').next().unwrap_or(first);
 
     if binary.is_empty() || binary.starts_with('%') {
         return None;
@@ -178,10 +169,7 @@ mod tests {
 
     #[test]
     fn extract_simple_binary() {
-        assert_eq!(
-            extract_binary("firefox %u"),
-            Some("firefox".to_string())
-        );
+        assert_eq!(extract_binary("firefox %u"), Some("firefox".to_string()));
     }
 
     #[test]
@@ -202,10 +190,7 @@ mod tests {
 
     #[test]
     fn extract_binary_no_args() {
-        assert_eq!(
-            extract_binary("vlc"),
-            Some("vlc".to_string())
-        );
+        assert_eq!(extract_binary("vlc"), Some("vlc".to_string()));
     }
 
     #[test]

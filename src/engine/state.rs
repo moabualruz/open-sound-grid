@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use crate::plugin::api::{
-    AudioApplication, ChannelInfo, HardwareInput, HardwareOutput, MixInfo, MixerSnapshot, RouteState,
-    SourceId,
+    AudioApplication, ChannelInfo, HardwareInput, HardwareOutput, MixInfo, MixerSnapshot,
+    RouteState, SourceId,
 };
 
 /// UI-facing mixer state.
@@ -67,14 +67,23 @@ impl MixerState {
         // Compute ratios from current volumes for linked slider behavior
         self.route_ratios.clear();
         for ((source, mix_id), route) in &self.routes {
-            let master = self.mixes.iter()
+            let master = self
+                .mixes
+                .iter()
                 .find(|m| m.id == *mix_id)
                 .map_or(1.0, |m| m.master_volume);
-            let ratio = if master > 0.001 { route.volume / master } else { 1.0 };
+            let ratio = if master > 0.001 {
+                route.volume / master
+            } else {
+                1.0
+            };
             tracing::trace!(source = ?source, mix_id, ratio, "snapshot: route ratio computed");
             self.route_ratios.insert((*source, *mix_id), ratio);
         }
-        tracing::debug!(count = self.route_ratios.len(), "route ratios initialized from snapshot");
+        tracing::debug!(
+            count = self.route_ratios.len(),
+            "route ratios initialized from snapshot"
+        );
     }
 
     /// Update peak levels without replacing everything else.
@@ -114,7 +123,14 @@ mod tests {
     fn test_apply_snapshot_replaces_channels() {
         let mut state = MixerState::default();
         let snapshot = MixerSnapshot {
-            channels: vec![ChannelInfo { id: 1, name: "Test".into(), apps: vec![], muted: false, effects: crate::effects::EffectsParams::default() }],
+            channels: vec![ChannelInfo {
+                id: 1,
+                name: "Test".into(),
+                apps: vec![],
+                icon_path: None,
+                muted: false,
+                effects: crate::effects::EffectsParams::default(),
+            }],
             ..Default::default()
         };
         state.apply_snapshot(snapshot);
@@ -145,6 +161,7 @@ mod tests {
             name: "Firefox".into(),
             binary: "firefox".into(),
             icon_name: None,
+            icon_path: None,
             stream_index: 42,
             channel: None,
         }];

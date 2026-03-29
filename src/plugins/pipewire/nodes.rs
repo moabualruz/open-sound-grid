@@ -150,12 +150,7 @@ impl PwNodeManager {
     }
 
     /// Store a channel→mix routing link proxy.
-    pub fn register_route_link(
-        &mut self,
-        source_node_id: u32,
-        mix_id: u32,
-        link: pw::link::Link,
-    ) {
+    pub fn register_route_link(&mut self, source_node_id: u32, mix_id: u32, link: pw::link::Link) {
         tracing::trace!(source_node_id, mix_id, "registering route link proxy");
         self.route_links.insert((source_node_id, mix_id), link);
     }
@@ -214,11 +209,7 @@ impl PwNodeManager {
         if self.route_links.remove(&(source_node_id, mix_id)).is_some() {
             tracing::debug!(source_node_id, mix_id, "removed route link proxy");
         } else {
-            tracing::warn!(
-                source_node_id,
-                mix_id,
-                "remove_route_link: no proxy found"
-            );
+            tracing::warn!(source_node_id, mix_id, "remove_route_link: no proxy found");
         }
     }
 
@@ -241,9 +232,9 @@ impl PwNodeManager {
     pub fn remove_all(&mut self) {
         tracing::info!(
             channel_nodes = self.channel_nodes.len(),
-            mix_nodes     = self.mix_nodes.len(),
-            route_links   = self.route_links.len(),
-            output_links  = self.output_links.len(),
+            mix_nodes = self.mix_nodes.len(),
+            route_links = self.route_links.len(),
+            output_links = self.output_links.len(),
             "removing all PW node and link proxies"
         );
         self.output_links.clear();
