@@ -187,11 +187,16 @@ pub fn list_sources_sync(conn: &mut PulseConnection) -> Vec<HardwareInput> {
                 tracing::trace!(name = %s.name, "excluding monitor source");
                 return false;
             }
+            // Exclude OSG virtual sinks and EasyEffects/PipeWire virtual sources
+            if s.name.starts_with("osg_") || s.name.contains("easyeffects") {
+                tracing::trace!(name = %s.name, "excluding virtual source");
+                return false;
+            }
             true
         })
         .map(|s| HardwareInput {
             id: s.index,
-            name: s.description.clone(),
+            name: shorten_device_name(&s.description),
             description: s.description,
         })
         .collect()
@@ -684,4 +689,28 @@ fn should_exclude_sink(name: &str) -> bool {
         tracing::trace!(name = %name, "filtering out virtual sink by pattern");
     }
     excluded
+}
+
+/// Shorten a PA device description for sidebar display.
+///
+/// Removes common suffixes: "Analog Stereo", "Digital Stereo", "Pro Audio".
+/// Truncates manufacturer prefixes if result is still long.
+fn shorten_device_name(desc: &str) -> String {
+    let mut name = desc.to_string();
+    for suffix in &[
+        " Analog Stereo",
+        " Digital Stereo",
+        " Pro Audio",
+        " Multichannel",
+    ] {
+        if let Some(stripped) = name.strip_suffix(suffix) {
+            name = stripped.to_string();
+        }
+    }
+    // If still over 30 chars, truncate
+    if name.len() > 30 {
+        name.truncate(27);
+        name.push_str("...");
+    }
+    name
 }

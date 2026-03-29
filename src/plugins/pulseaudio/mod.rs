@@ -732,8 +732,12 @@ impl PulseAudioPlugin {
 
 impl Drop for PulseAudioPlugin {
     fn drop(&mut self) {
+        // Unload all PA modules (null-sinks + loopbacks) we created
+        tracing::info!("dropping PulseAudioPlugin — cleaning up all modules");
+        self.modules.unload_all(self.connection.as_mut());
+
         if let Some(mut child) = self.subscribe_process.take() {
-            tracing::debug!("dropping PulseAudioPlugin — killing subscribe process");
+            tracing::debug!("killing subscribe process");
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -765,6 +769,10 @@ impl AudioPlugin for PulseAudioPlugin {
 
     fn init(&mut self) -> Result<()> {
         tracing::debug!("initializing PulseAudio plugin");
+
+        // Clean up orphaned OSG sinks from previous crashed sessions
+        cleanup_orphaned_osg_modules();
+
         let conn = PulseConnection::connect()?;
         tracing::info!(
             connected = conn.is_connected(),
@@ -883,5 +891,38 @@ impl AudioPlugin for PulseAudioPlugin {
             "PulseAudio plugin cleanup complete"
         );
         Ok(())
+    }
+}
+
+/// Remove any orphaned osg_ null-sink modules from previous crashed sessions.
+/// Called at startup before creating new sinks.
+fn cleanup_orphaned_osg_modules() {
+    let output = Command::new("pactl")
+        .args(["list", "modules", "short"])
+        .output();
+    let Ok(output) = output else {
+        tracing::warn!("failed to list modules for orphan cleanup");
+        return;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut cleaned = 0u32;
+    for line in text.lines() {
+        // Format: "MODULE_ID\tmodule-null-sink\tsink_name=osg_..."
+        if line.contains("osg_") {
+            if let Some(id_str) = line.split_whitespace().next() {
+                if let Ok(id) = id_str.parse::<u32>() {
+                    let _ = Command::new("pactl")
+                        .args(["unload-module", &id.to_string()])
+                        .output();
+                    cleaned += 1;
+                }
+            }
+        }
+    }
+    if cleaned > 0 {
+        tracing::info!(
+            count = cleaned,
+            "cleaned up orphaned OSG modules from previous session"
+        );
     }
 }

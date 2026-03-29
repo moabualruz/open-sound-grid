@@ -985,6 +985,30 @@ impl App {
                     app.name = display_name;
                     app.icon_path = icon_path;
                 }
+
+                // Auto-create channels for new apps that don't have one yet
+                let existing_channel_names: Vec<String> = self
+                    .engine
+                    .state
+                    .channels
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect();
+                for app in &apps {
+                    if !existing_channel_names.contains(&app.name) {
+                        tracing::info!(
+                            app_name = %app.name,
+                            stream_index = app.stream_index,
+                            "auto-creating channel for new app"
+                        );
+                        self.engine.send_command(PluginCommand::CreateChannel {
+                            name: app.name.clone(),
+                        });
+                        // Route the app to its new channel after state refresh
+                        self.engine.send_command(PluginCommand::GetState);
+                    }
+                }
+
                 self.engine.state.update_applications(apps);
             }
             Message::PluginPeakLevels(levels) => {
@@ -1567,7 +1591,6 @@ impl App {
         let sidebar = ui::sidebar::sidebar(
             self.sidebar_collapsed,
             &self.engine.state.hardware_inputs,
-            &self.engine.state.mixes,
             tm,
         );
 
@@ -1582,12 +1605,8 @@ impl App {
             &self.editing_text,
         );
 
-        let app_panel = ui::app_list::app_list_panel(
-            &self.engine.state.applications,
-            &self.engine.state.channels,
-            tm,
-            self.routing_app,
-        );
+        // App panel removed — apps auto-create channels or are managed inline
+        // let app_panel = ui::app_list::app_list_panel(...);
 
         let connected = self.engine.is_connected();
         let channel_count = self.engine.state.channels.len();
@@ -1800,8 +1819,7 @@ impl App {
             right_panel = right_panel.push(settings);
         }
 
-        // App panel after settings
-        right_panel = right_panel.push(app_panel);
+        // App panel removed — apps auto-create channels
 
         let right_panel = right_panel.push(sep()).push(status_bar);
 
