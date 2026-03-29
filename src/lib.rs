@@ -4,6 +4,7 @@ pub mod config;
 pub mod effects;
 pub mod engine;
 pub mod error;
+pub mod hotkeys;
 pub mod plugin;
 pub mod plugins;
 pub mod presets;

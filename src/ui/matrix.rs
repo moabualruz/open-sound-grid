@@ -75,6 +75,7 @@ pub fn matrix_grid<'a>(
     compact_mix: Option<MixId>,
     channel_search: &str,
     seen_apps: &[String],
+    monitored_mix: Option<MixId>,
 ) -> Element<'a, Message> {
     tracing::trace!(
         channels = state.channels.len(),
@@ -147,6 +148,7 @@ pub fn matrix_grid<'a>(
             color,
             mix.output.is_some(),
             mix.muted,
+            monitored_mix == Some(mix.id),
             theme_mode,
             mix_editing,
             editing_text,
@@ -511,11 +513,12 @@ fn mix_header<'a>(
     color: iced::Color,
     has_output: bool,
     muted: bool,
+    is_monitored: bool,
     theme_mode: ThemeMode,
     editing: bool,
     editing_text: &str,
 ) -> Element<'a, Message> {
-    tracing::trace!(mix_id, name = %name, has_output, muted, editing, "rendering mix header");
+    tracing::trace!(mix_id, name = %name, has_output, muted, is_monitored, editing, "rendering mix header");
 
     let color_bar = container(text("").size(1))
         .width(Length::Fill)
@@ -549,6 +552,33 @@ fn mix_header<'a>(
             },
             ..Default::default()
         });
+
+    let monitor_icon = icon_headphones().size(9).center();
+    let monitor_btn = button(monitor_icon)
+        .width(16)
+        .height(16)
+        .on_press(Message::MonitorMix(mix_id))
+        .padding(0)
+        .style(move |_: &Theme, _status| button::Style {
+            background: if is_monitored {
+                Some(Background::Color(ACCENT))
+            } else {
+                None
+            },
+            text_color: if is_monitored {
+                text_primary(theme_mode)
+            } else {
+                text_muted(theme_mode)
+            },
+            border: Border {
+                color: border_color(theme_mode),
+                width: 1.0,
+                radius: 2.0.into(),
+            },
+            ..Default::default()
+        });
+
+    tracing::trace!(mix_id, is_monitored, "rendering mix monitor button");
 
     let remove_btn = button(icon_x().size(10).color(text_muted(theme_mode)).center())
         .width(12)
@@ -603,7 +633,8 @@ fn mix_header<'a>(
     container(
         column![
             color_bar,
-            row![mute_btn, Space::new().width(Length::Fill), remove_btn,]
+            row![mute_btn, monitor_btn, Space::new().width(Length::Fill), remove_btn,]
+                .spacing(2)
                 .align_y(iced::Alignment::Center),
             row![
                 mix_icon_el,

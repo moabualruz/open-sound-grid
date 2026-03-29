@@ -361,6 +361,20 @@ impl App {
             "config restore: queued effects params for restoration after first state refresh"
         );
 
+        // Auto-restore last session routes if preset exists
+        if crate::presets::MixerPreset::list().contains(&"_last_session".to_string()) {
+            if let Ok(last) = crate::presets::MixerPreset::load("_last_session") {
+                tracing::info!("restoring _last_session preset routes");
+                self.pending_route_restores = last.routes.iter().map(|r| RouteConfig {
+                    channel_name: r.channel_name.clone(),
+                    mix_name: r.mix_name.clone(),
+                    volume: r.volume,
+                    enabled: r.enabled,
+                    muted: r.muted,
+                }).collect();
+            }
+        }
+
         self.pending_mix_restores = self
             .config
             .mixes
@@ -1040,6 +1054,53 @@ impl App {
             }
             Message::PluginDevicesChanged => {
                 tracing::debug!("devices changed, requesting state");
+
+                // Check which config-assigned output devices are no longer present in the
+                // current (pre-refresh) snapshot. Log a warning for each missing device so
+                // operators can see the event immediately, before the state refresh lands.
+                for mix_cfg in &self.config.mixes {
+                    if let Some(device_name) = &mix_cfg.output_device {
+                        let still_present = self
+                            .engine
+                            .state
+                            .hardware_outputs
+                            .iter()
+                            .any(|o| &o.name == device_name);
+                        if !still_present {
+                            tracing::warn!(
+                                mix = %mix_cfg.name,
+                                device = %device_name,
+                                "assigned output device no longer present — will attempt failover after state refresh"
+                            );
+                        }
+                    }
+                }
+
+                // Refresh the failover list with devices that are still available now,
+                // so the PluginStateRefreshed handler can pick a live backup device.
+                // Append any newly-seen devices without disrupting existing priority order.
+                if !self.engine.state.hardware_outputs.is_empty() {
+                    let current_names: Vec<String> = self
+                        .engine
+                        .state
+                        .hardware_outputs
+                        .iter()
+                        .map(|o| o.name.clone())
+                        .collect();
+                    for name in &current_names {
+                        if !self.config.failover.output_devices.contains(name) {
+                            self.config.failover.output_devices.push(name.clone());
+                        }
+                    }
+                    tracing::info!(
+                        devices = ?self.config.failover.output_devices,
+                        "failover list updated on device change"
+                    );
+                    if let Err(e) = self.config.save() {
+                        tracing::error!(error = %e, "failed to save config after failover list update");
+                    }
+                }
+
                 self.engine.send_command(PluginCommand::GetState);
             }
             Message::PluginAppsChanged(mut apps) => {
@@ -1955,6 +2016,7 @@ impl App {
             self.compact_selected_mix,
             &self.channel_search_text,
             &self.config.seen_apps,
+            self.monitored_mix,
         );
 
         // App panel removed — apps auto-create channels or are managed inline
