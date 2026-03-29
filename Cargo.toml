@@ -17,6 +17,8 @@ iced_aw = { version = "0.13", default-features = false, features = ["tab_bar", "
 
 # Audio
 libpulse-binding = "2.30"
+pipewire = { version = "0.9", optional = true }
+libspa = { version = "0.9", optional = true }
 
 # DSP Effects
 fundsp = "0.23"
@@ -46,6 +48,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 anyhow = "1"
+
+[features]
+default = []
+pipewire-backend = ["dep:pipewire", "dep:libspa"]
 
 [profile.release]
 lto = true
