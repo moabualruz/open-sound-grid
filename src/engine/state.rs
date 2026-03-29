@@ -128,6 +128,7 @@ mod tests {
                 name: "Test".into(),
                 apps: vec![],
                 icon_path: None,
+                assigned_app_binaries: vec![],
                 muted: false,
                 effects: crate::effects::EffectsParams::default(),
             }],

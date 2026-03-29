@@ -163,6 +163,7 @@ mod tests {
                 name: "Music".into(),
                 effects: Default::default(),
                 muted: false,
+                assigned_apps: vec![],
             }],
             mixes: vec![MixConfig {
                 name: "Monitor".into(),

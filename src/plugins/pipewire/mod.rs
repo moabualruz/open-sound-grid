@@ -135,6 +135,7 @@ impl AudioPlugin for PipeWirePlugin {
                     name,
                     apps: vec![],
                     icon_path: None,
+                    assigned_app_binaries: vec![],
                     muted: false,
                     effects: Default::default(),
                 });

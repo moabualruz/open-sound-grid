@@ -70,6 +70,10 @@ pub enum Message {
     // Channel/mix removal (with undo support)
     RemoveChannel(ChannelId),
     RemoveMix(MixId),
+    /// Move a channel up in the list.
+    MoveChannelUp(ChannelId),
+    /// Move a channel down in the list.
+    MoveChannelDown(ChannelId),
     /// Undo the last delete operation.
     UndoDelete,
     /// Clear the undo buffer (called by timer).
@@ -562,6 +566,32 @@ impl App {
                 self.engine.send_command(PluginCommand::RemoveMix { id });
                 self.engine.send_command(PluginCommand::GetState);
             }
+            Message::MoveChannelUp(id) => {
+                if let Some(idx) = self.engine.state.channels.iter().position(|c| c.id == id) {
+                    if idx > 0 {
+                        self.engine.state.channels.swap(idx, idx - 1);
+                        tracing::debug!(
+                            channel_id = id,
+                            from = idx,
+                            to = idx - 1,
+                            "moved channel up"
+                        );
+                    }
+                }
+            }
+            Message::MoveChannelDown(id) => {
+                if let Some(idx) = self.engine.state.channels.iter().position(|c| c.id == id) {
+                    if idx + 1 < self.engine.state.channels.len() {
+                        self.engine.state.channels.swap(idx, idx + 1);
+                        tracing::debug!(
+                            channel_id = id,
+                            from = idx,
+                            to = idx + 1,
+                            "moved channel down"
+                        );
+                    }
+                }
+            }
             Message::UndoDelete => {
                 if let Some((name, is_channel)) = self.undo_buffer.take() {
                     if is_channel {
@@ -590,10 +620,21 @@ impl App {
                 let new_channels: Vec<ChannelConfig> = snapshot
                     .channels
                     .iter()
-                    .map(|c| ChannelConfig {
-                        name: c.name.clone(),
-                        effects: c.effects.clone(),
-                        muted: c.muted,
+                    .map(|c| {
+                        // Preserve assigned_apps from existing config
+                        let existing_apps = self
+                            .config
+                            .channels
+                            .iter()
+                            .find(|cfg| cfg.name == c.name)
+                            .map(|cfg| cfg.assigned_apps.clone())
+                            .unwrap_or_default();
+                        ChannelConfig {
+                            name: c.name.clone(),
+                            effects: c.effects.clone(),
+                            muted: c.muted,
+                            assigned_apps: existing_apps,
+                        }
                     })
                     .collect();
                 let new_mixes: Vec<MixConfig> = snapshot
@@ -614,6 +655,13 @@ impl App {
                     .collect();
 
                 self.engine.apply_snapshot(snapshot);
+
+                // Populate assigned_app_binaries from config for not-running detection
+                for ch in &mut self.engine.state.channels {
+                    if let Some(cfg) = self.config.channels.iter().find(|c| c.name == ch.name) {
+                        ch.assigned_app_binaries = cfg.assigned_apps.clone();
+                    }
+                }
 
                 // Auto-populate failover list on first boot when list is empty
                 if self.config.failover.output_devices.is_empty()
@@ -1306,6 +1354,37 @@ impl App {
             Message::SelectedChannel(id) => {
                 // If an app is pending routing, use this channel click to assign it.
                 if let (Some(app_stream), Some(ch_id)) = (self.routing_app, id) {
+                    // Store the binary name for not-running app detection
+                    if let Some(app_info) = self
+                        .engine
+                        .state
+                        .applications
+                        .iter()
+                        .find(|a| a.stream_index == app_stream)
+                    {
+                        let binary = app_info.binary.clone();
+                        // Persist in config
+                        if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
+                            self.engine
+                                .state
+                                .channels
+                                .iter()
+                                .find(|ch| ch.id == ch_id)
+                                .map(|ch| ch.name == c.name)
+                                .unwrap_or(false)
+                        }) {
+                            if !ch_cfg.assigned_apps.contains(&binary) {
+                                ch_cfg.assigned_apps.push(binary.clone());
+                                let _ = self.config.save();
+                            }
+                        }
+                        tracing::debug!(
+                            binary = %binary,
+                            channel_id = ch_id,
+                            "persisted assigned app binary"
+                        );
+                    }
+
                     tracing::info!(
                         app_stream,
                         channel_id = ch_id,

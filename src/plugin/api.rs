@@ -89,6 +89,8 @@ pub struct ChannelInfo {
     pub apps: Vec<AppId>,
     /// Resolved icon path for the primary app assigned to this channel.
     pub icon_path: Option<PathBuf>,
+    /// Binary names of apps assigned to this channel (for not-running detection).
+    pub assigned_app_binaries: Vec<String>,
     pub muted: bool,
     pub effects: crate::effects::EffectsParams,
 }

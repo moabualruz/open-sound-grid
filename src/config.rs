@@ -48,6 +48,9 @@ pub struct ChannelConfig {
     pub effects: crate::effects::EffectsParams,
     #[serde(default)]
     pub muted: bool,
+    /// Binary names of apps assigned to this channel (persisted for not-running support).
+    #[serde(default)]
+    pub assigned_apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -89,21 +92,25 @@ impl Default for AppConfig {
                     name: "Music".into(),
                     effects: Default::default(),
                     muted: false,
+                    assigned_apps: vec![],
                 },
                 ChannelConfig {
                     name: "Game".into(),
                     effects: Default::default(),
                     muted: false,
+                    assigned_apps: vec![],
                 },
                 ChannelConfig {
                     name: "Voice".into(),
                     effects: Default::default(),
                     muted: false,
+                    assigned_apps: vec![],
                 },
                 ChannelConfig {
                     name: "System".into(),
                     effects: Default::default(),
                     muted: false,
+                    assigned_apps: vec![],
                 },
             ],
             mixes: vec![

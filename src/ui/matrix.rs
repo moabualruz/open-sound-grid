@@ -147,8 +147,22 @@ pub fn matrix_grid<'a>(
         let row_focused = focused_row == Some(row_index);
 
         let is_editing = editing_channel == Some(channel.id);
+
+        // Compute not-running apps: assigned binaries that aren't in the live app list
+        let running_binaries: Vec<&str> = state
+            .applications
+            .iter()
+            .map(|a| a.binary.as_str())
+            .collect();
+        let not_running: Vec<&str> = channel
+            .assigned_app_binaries
+            .iter()
+            .filter(|b| !running_binaries.contains(&b.as_str()))
+            .map(|b| b.as_str())
+            .collect();
+
         let mut ch_row = row![
-            // Channel name cell with app icon + inline rename
+            // Channel name cell with app icon + inline rename + not-running indicator
             channel_label(
                 &channel.name,
                 channel.muted,
@@ -157,6 +171,7 @@ pub fn matrix_grid<'a>(
                 theme_mode,
                 is_editing,
                 editing_text,
+                &not_running,
             ),
         ]
         .spacing(1);
@@ -397,8 +412,9 @@ fn channel_label<'a>(
     theme_mode: ThemeMode,
     editing: bool,
     editing_text: &str,
+    not_running_apps: &[&str],
 ) -> Element<'a, Message> {
-    tracing::trace!(name, muted, source = ?source, has_icon = icon_path.is_some(), editing, "rendering channel label");
+    tracing::trace!(name, muted, source = ?source, has_icon = icon_path.is_some(), editing, not_running = not_running_apps.len(), "rendering channel label");
     let name_color = if muted {
         text_muted(theme_mode)
     } else {
@@ -490,6 +506,25 @@ fn channel_label<'a>(
         .spacing(4)
         .align_y(iced::Alignment::Center);
 
+    // Not-running app indicator (GAP-017): faded text with red dot
+    if !not_running_apps.is_empty() {
+        let inactive_label = not_running_apps.join(", ");
+        let red_dot = container(Space::new())
+            .width(Length::Fixed(6.0))
+            .height(Length::Fixed(6.0))
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(crate::ui::theme::VU_RED)),
+                border: Border {
+                    radius: 3.0.into(),
+                    ..Border::default()
+                },
+                ..Default::default()
+            });
+        label_row = label_row
+            .push(red_dot)
+            .push(text(inactive_label).size(9).color(text_muted(theme_mode)));
+    }
+
     // FX button — opens effects side panel for this channel (GAP-006)
     if let Some(cid) = channel_id {
         let fx_btn = button(
@@ -550,37 +585,39 @@ fn channel_label<'a>(
                 ..Default::default()
             });
 
-        // Right-click context menu with Rename / Delete
+        // Right-click context menu with Move Up/Down, Rename, Delete
+        let ctx_btn_style = move |_: &Theme, status: button::Status| button::Style {
+            background: match status {
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
+                _ => None,
+            },
+            text_color: text_primary(theme_mode),
+            ..Default::default()
+        };
         ContextMenu::new(clickable, move || {
             column![
+                button(text("Move Up").size(11))
+                    .on_press(Message::MoveChannelUp(cid))
+                    .width(Length::Fill)
+                    .padding([4, 12])
+                    .style(ctx_btn_style),
+                button(text("Move Down").size(11))
+                    .on_press(Message::MoveChannelDown(cid))
+                    .width(Length::Fill)
+                    .padding([4, 12])
+                    .style(ctx_btn_style),
                 button(text("Rename").size(11))
                     .on_press(Message::StartRenameChannel(cid))
                     .width(Length::Fill)
                     .padding([4, 12])
-                    .style(move |_: &Theme, status| button::Style {
-                        background: match status {
-                            button::Status::Hovered =>
-                                Some(Background::Color(bg_hover(theme_mode))),
-                            _ => None,
-                        },
-                        text_color: text_primary(theme_mode),
-                        ..Default::default()
-                    }),
+                    .style(ctx_btn_style),
                 button(text("Delete").size(11))
                     .on_press(Message::RemoveChannel(cid))
                     .width(Length::Fill)
                     .padding([4, 12])
-                    .style(move |_: &Theme, status| button::Style {
-                        background: match status {
-                            button::Status::Hovered =>
-                                Some(Background::Color(bg_hover(theme_mode))),
-                            _ => None,
-                        },
-                        text_color: text_primary(theme_mode),
-                        ..Default::default()
-                    }),
+                    .style(ctx_btn_style),
             ]
-            .width(Length::Fixed(100.0))
+            .width(Length::Fixed(120.0))
             .into()
         })
         .into()
