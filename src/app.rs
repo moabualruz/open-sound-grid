@@ -163,6 +163,9 @@ pub enum Message {
     SidebarToggleCollapse,
     ThemeToggled,
 
+    /// Set which mix is currently being monitored (heard through headphones).
+    MonitorMix(MixId),
+
     // v0.4.0: Channel creation dropdown
     /// Toggle the channel creation dropdown visibility.
     ToggleChannelDropdown,
@@ -250,6 +253,8 @@ pub struct App {
     pub copied_effects: Option<crate::effects::EffectsParams>,
     /// v0.4.0: Channel name text in the settings panel name field.
     pub channel_settings_name: String,
+    /// Which mix is currently monitored (heard in headphones). None = first mix.
+    pub monitored_mix: Option<MixId>,
 }
 
 impl App {
@@ -293,6 +298,7 @@ impl App {
             compact_selected_mix: None,
             copied_effects: None,
             channel_settings_name: String::new(),
+            monitored_mix: None,
         }
     }
 
@@ -1094,7 +1100,18 @@ impl App {
                 // the tray "Show" is a no-op for now (window is always visible)
             }
             Message::TrayQuit => {
-                tracing::info!("tray: quit requested — saving config");
+                tracing::info!("tray: quit requested — auto-saving session preset + config");
+                // Auto-save "Last Session" preset so next launch can restore exact state
+                let preset = crate::presets::MixerPreset::from_current(
+                    "_last_session",
+                    &self.config,
+                    &self.engine.state,
+                );
+                if let Err(e) = preset.save() {
+                    tracing::warn!(error = %e, "failed to auto-save last session preset");
+                } else {
+                    tracing::debug!("auto-saved _last_session preset");
+                }
                 let _ = self.config.save();
                 return iced::exit();
             }
@@ -1372,6 +1389,44 @@ impl App {
                         self.focused_col = None;
                         tracing::debug!("keyboard: focus cleared");
                     }
+                    // Enter = toggle route (same as Space)
+                    Key::Named(iced::keyboard::key::Named::Enter) => {
+                        tracing::debug!("keyboard: Enter = toggle route");
+                        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+                            if let (Some(channel), Some(mix)) = (
+                                self.engine.state.channels.get(r),
+                                self.engine.state.mixes.get(c),
+                            ) {
+                                let source = SourceId::Channel(channel.id);
+                                let enabled = self
+                                    .engine
+                                    .state
+                                    .routes
+                                    .get(&(source, mix.id))
+                                    .map_or(true, |r| r.enabled);
+                                self.engine.send_command(PluginCommand::SetRouteEnabled {
+                                    source,
+                                    mix: mix.id,
+                                    enabled: !enabled,
+                                });
+                            }
+                        }
+                    }
+                    // Number keys 1-5 = load preset by index
+                    Key::Character(ref ch)
+                        if !modifiers.control()
+                            && !modifiers.alt()
+                            && matches!(ch.as_str(), "1" | "2" | "3" | "4" | "5") =>
+                    {
+                        let idx: usize = ch.as_str().parse::<usize>().unwrap_or(1) - 1;
+                        if let Some(preset_name) = self.available_presets.get(idx) {
+                            let name = preset_name.clone();
+                            tracing::info!(index = idx + 1, preset = %name, "keyboard: loading preset by number key");
+                            return self.update(Message::LoadPreset(name));
+                        } else {
+                            tracing::debug!(index = idx + 1, "keyboard: no preset at this index");
+                        }
+                    }
                     // v0.4.0: Ctrl+C/V for effects copy/paste
                     Key::Character(ref ch)
                         if (ch.as_str() == "c" || ch.as_str() == "C")
@@ -1403,6 +1458,24 @@ impl App {
                 self.config.ui.theme_mode = new_mode;
                 let _ = self.config.save();
             }
+            Message::MonitorMix(mix_id) => {
+                tracing::info!(mix_id, "monitor mix switched");
+                self.monitored_mix = Some(mix_id);
+                // Set the mix's output to the current headphone device
+                if let Some(output) = self
+                    .engine
+                    .state
+                    .hardware_outputs
+                    .first()
+                    .map(|o| o.id)
+                {
+                    self.engine.send_command(PluginCommand::SetMixOutput {
+                        mix: mix_id,
+                        output,
+                    });
+                }
+            }
+
             // v0.4.0: Channel creation dropdown
             Message::ToggleChannelDropdown => {
                 tracing::debug!(show = !self.show_channel_dropdown, "channel dropdown toggled");
@@ -1957,6 +2030,31 @@ impl App {
             status_row = status_row
                 .push(Space::new().width(Length::Fixed(12.0)))
                 .push(undo);
+        }
+
+        // Focused cell coordinates (Journey 12: keyboard power user)
+        if let (Some(r), Some(c)) = (self.focused_row, self.focused_col) {
+            let ch_name = self
+                .engine
+                .state
+                .channels
+                .get(r)
+                .map(|ch| ch.name.as_str())
+                .unwrap_or("?");
+            let mix_name = self
+                .engine
+                .state
+                .mixes
+                .get(c)
+                .map(|m| m.name.as_str())
+                .unwrap_or("?");
+            status_row = status_row
+                .push(Space::new().width(Length::Fixed(12.0)))
+                .push(
+                    text(format!("{} × {}", ch_name, mix_name))
+                        .size(11)
+                        .color(ui::theme::ACCENT),
+                );
         }
 
         status_row = status_row.push(Space::new().width(Length::Fill)).push(
