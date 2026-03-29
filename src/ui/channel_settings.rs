@@ -25,6 +25,7 @@ pub fn channel_settings_panel<'a>(
     channel_name_text: &str,
 ) -> Element<'a, Message> {
     let ch_id = channel.id;
+    tracing::trace!(channel_id = ch_id, name = %channel.name, app_count = apps.len(), ?active_tab, "rendering channel_settings_panel");
     // Header: channel name + close button
     let close_btn = button(icon_x().size(13).color(text_muted(theme_mode)).center())
         .width(20)
@@ -141,6 +142,7 @@ fn apps_tab_content<'a>(
     theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     let ch_id = channel.id;
+    tracing::trace!(channel_id = ch_id, app_count = apps.len(), not_running_count = not_running_binaries.len(), "rendering apps_tab_content");
     let mut col = column![
         text("Detected Applications")
             .size(11)

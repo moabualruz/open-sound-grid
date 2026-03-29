@@ -90,6 +90,7 @@ pub fn effects_panel_body<'a>(
 ) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
+    tracing::trace!(channel_id = ch_id, name = %channel.name, effects_enabled = params.enabled, "rendering effects_panel_body");
 
     let toggle_row = row![
         text("Effects").size(12).color(text_primary(theme_mode)),
@@ -116,6 +117,7 @@ fn effects_controls<'a>(
 ) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
+    tracing::trace!(channel_id = ch_id, "rendering effects_controls");
 
     let sep = move || {
         container(Space::new())

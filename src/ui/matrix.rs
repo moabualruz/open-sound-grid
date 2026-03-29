@@ -91,8 +91,10 @@ pub fn matrix_grid<'a>(
     // In compact view, only show the selected mix (or all if none selected)
     let visible_mixes: Vec<&MixInfo> = if compact_view {
         if let Some(sel_id) = compact_mix {
+            tracing::debug!(compact_mix = sel_id, "compact view: filtering to selected mix");
             state.mixes.iter().filter(|m| m.id == sel_id).collect()
         } else {
+            tracing::debug!("compact view: no mix selected, showing all mixes");
             state.mixes.iter().collect()
         }
     } else {
@@ -293,6 +295,7 @@ pub fn matrix_grid<'a>(
                     || app.binary.to_lowercase().contains(&search_lower)
             })
             .collect();
+        tracing::debug!(total_apps = state.applications.len(), filtered = filtered_apps.len(), search = %search_lower, "channel picker: app filter applied");
 
         // Detected apps section (WL3: apps appear at top of dropdown)
         if !filtered_apps.is_empty() {
@@ -356,6 +359,7 @@ pub fn matrix_grid<'a>(
             })
             .collect();
         if !not_running_seen.is_empty() {
+            tracing::debug!(count = not_running_seen.len(), "channel picker: rendering not-running seen apps");
             for binary in &not_running_seen {
                 let label = text(binary.to_string())
                     .size(11)
@@ -401,6 +405,7 @@ pub fn matrix_grid<'a>(
         );
 
         // Empty channel presets section (WL3: "Add empty channel" submenu)
+        tracing::debug!(presets = CHANNEL_PRESETS.len(), "channel picker: rendering empty channel presets");
         dropdown_col = dropdown_col.push(
             text("Add empty channel")
                 .size(10)
@@ -453,6 +458,7 @@ pub fn matrix_grid<'a>(
                 }),
         );
     } else {
+        tracing::debug!("channel picker hidden: rendering create channel button");
         let add_btn = button(
             row![
                 icon_plus().size(12).color(text_secondary(theme_mode)),
@@ -1002,7 +1008,7 @@ fn matrix_cell<'a>(
                     button::Status::Hovered | button::Status::Pressed => {
                         Some(Background::Color(bg_hover(theme_mode)))
                     }
-                    _ => Some(Background::Color(bg_primary(theme_mode))),
+                    _ => Some(Background::Color(crate::ui::theme::bg_empty_cell(theme_mode))),
                 },
                 text_color: match status {
                     button::Status::Hovered | button::Status::Pressed => {

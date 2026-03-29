@@ -27,6 +27,8 @@ pub const BG_PRIMARY: Color = Color::from_rgb(0.102, 0.102, 0.102); // #1a1a1a
 pub const BG_SECONDARY: Color = Color::from_rgb(0.141, 0.141, 0.141); // #242424
 pub const BG_ELEVATED: Color = Color::from_rgb(0.180, 0.180, 0.180); // #2e2e2e
 pub const BG_HOVER: Color = Color::from_rgb(0.220, 0.220, 0.220); // #383838
+/// Empty cell background — between primary and elevated for visible distinction
+pub const BG_EMPTY_CELL: Color = Color::from_rgb(0.145, 0.145, 0.145); // #252525
 
 // Text — warm whites
 pub const TEXT_PRIMARY: Color = Color::from_rgb(0.910, 0.894, 0.875); // #e8e4df
@@ -69,6 +71,7 @@ pub const LIGHT_BG_PRIMARY: Color = Color::from_rgb(0.980, 0.976, 0.969); // #fa
 pub const LIGHT_BG_SECONDARY: Color = Color::from_rgb(0.941, 0.933, 0.922); // #f0eeeb
 pub const LIGHT_BG_ELEVATED: Color = Color::from_rgb(1.0, 1.0, 1.0); // #ffffff
 pub const LIGHT_BG_HOVER: Color = Color::from_rgb(0.918, 0.910, 0.898); // #eae8e5
+pub const LIGHT_BG_EMPTY_CELL: Color = Color::from_rgb(0.960, 0.956, 0.949); // #f5f4f2
 pub const LIGHT_TEXT_PRIMARY: Color = Color::from_rgb(0.102, 0.102, 0.102); // #1a1a1a
 pub const LIGHT_TEXT_SECONDARY: Color = Color::from_rgb(0.420, 0.400, 0.376); // #6b6660
 pub const LIGHT_TEXT_MUTED: Color = Color::from_rgb(0.600, 0.580, 0.557); // #99948e
@@ -129,5 +132,13 @@ pub fn border_color(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BORDER,
         ThemeMode::Light => LIGHT_BORDER,
+    }
+}
+
+/// Background for empty matrix cells — slightly lighter than primary for visible distinction.
+pub fn bg_empty_cell(mode: ThemeMode) -> Color {
+    match mode {
+        ThemeMode::Dark => BG_EMPTY_CELL,
+        ThemeMode::Light => LIGHT_BG_EMPTY_CELL,
     }
 }
