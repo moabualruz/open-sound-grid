@@ -82,6 +82,14 @@ pub trait AudioPlugin: Send {
     /// Default: no-op (plugin doesn't produce background events).
     fn set_event_sender(&mut self, _tx: std::sync::mpsc::Sender<PluginThreadMsg>) {}
 
+    /// Collect FFT spectrum data for all active channels.
+    ///
+    /// Returns `(channel_id, bins)` pairs where bins are `(freq_hz, amplitude_db)`.
+    /// Default: returns empty vec (no spectrum support).
+    fn collect_spectrum(&mut self) -> Vec<(ChannelId, Vec<(f32, f32)>)> {
+        Vec::new()
+    }
+
     /// Clean up: unload modules, disconnect.
     fn cleanup(&mut self) -> Result<()>;
 }

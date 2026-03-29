@@ -166,7 +166,8 @@ impl DeviceEnumerator {
             .map(|d| HardwareInput {
                 id: d.index,
                 name: d.description.clone(),
-                description: d.description,
+                description: d.description.clone(),
+                device_id: d.name,
             })
             .collect();
 

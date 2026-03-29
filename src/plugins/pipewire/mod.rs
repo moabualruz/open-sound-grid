@@ -138,6 +138,7 @@ impl AudioPlugin for PipeWirePlugin {
                     assigned_app_binaries: vec![],
                     muted: false,
                     effects: Default::default(),
+                    master_volume: 1.0,
                 });
                 self.effects_chains.insert(id, EffectsChain::new());
                 Ok(PluginResponse::ChannelCreated { id })

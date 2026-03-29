@@ -89,6 +89,7 @@ impl PluginManager {
         std::thread::Builder::new()
             .name("osg-cmd-bridge".into())
             .spawn(move || {
+                tracing::info!("command bridge thread started");
                 // Block on the tokio receiver using a mini runtime
                 let rt = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -96,11 +97,13 @@ impl PluginManager {
                     .expect("cmd-bridge runtime");
                 rt.block_on(async move {
                     while let Some(cmd) = cmd_rx.recv().await {
+                        tracing::trace!(command = %cmd, "bridge forwarding command to plugin thread");
                         if cmd_unified_tx.send(PluginThreadMsg::Command(cmd)).is_err() {
+                            tracing::warn!("bridge: unified_tx send failed — plugin thread dead?");
                             break;
                         }
                     }
-                    tracing::debug!("command bridge thread exiting");
+                    tracing::info!("command bridge thread exiting — cmd_rx closed");
                 });
             })
             .map_err(|e| {
@@ -200,6 +203,9 @@ fn run_plugin_thread(
                         match plugin.handle_command(PluginCommand::GetState) {
                             Ok(PluginResponse::State(snapshot)) => {
                                 let _ = event_tx.send(PluginEvent::StateRefreshed(snapshot));
+                                // NOTE: Spectrum capture removed from GetState path.
+                                // parecord blocks ~27ms per channel, starving route commands.
+                                // Spectrum data will be collected via a separate timer/subscription.
                             }
                             Ok(_) => {}
                             Err(e) => {

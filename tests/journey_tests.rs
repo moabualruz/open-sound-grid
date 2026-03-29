@@ -12,15 +12,13 @@
 
 use iced::keyboard;
 use iced::keyboard::key::Named;
-use iced::{Theme, Size};
+use iced::{Size, Theme};
 use iced_test::{Error, Simulator};
 use std::time::Duration;
 
 use open_sound_grid::app::{App, ChannelPanelTab, Message};
 use open_sound_grid::effects::EffectsParams;
-use open_sound_grid::plugin::api::{
-    AudioApplication, ChannelInfo, MixInfo, RouteState, SourceId,
-};
+use open_sound_grid::plugin::api::{AudioApplication, ChannelInfo, MixInfo, RouteState, SourceId};
 
 // =============================================================================
 // Test fixtures
@@ -47,15 +45,27 @@ fn casual_app() -> App {
     app.engine.state.mixes = vec![monitor_mix()];
     app.engine.state.routes.insert(
         (SourceId::Channel(1), 1),
-        RouteState { volume: 0.8, enabled: true, muted: false },
+        RouteState {
+            volume: 0.8,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.routes.insert(
         (SourceId::Channel(2), 1),
-        RouteState { volume: 0.5, enabled: true, muted: false },
+        RouteState {
+            volume: 0.5,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.routes.insert(
         (SourceId::Channel(3), 1),
-        RouteState { volume: 0.9, enabled: true, muted: false },
+        RouteState {
+            volume: 0.9,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.applications = vec![
         detected_app(1, "Firefox", "firefox", 42),
@@ -78,27 +88,45 @@ fn streamer_app() -> App {
     app.engine.state.mixes = vec![
         monitor_mix(),
         stream_mix(),
-        MixInfo { id: 3, name: "VOD".into(), output: None, master_volume: 1.0, muted: false },
+        MixInfo {
+            id: 3,
+            name: "VOD".into(),
+            output: None,
+            master_volume: 1.0,
+            muted: false,
+        },
     ];
     // All channels routed to Monitor
     for ch_id in 1..=5 {
         app.engine.state.routes.insert(
             (SourceId::Channel(ch_id), 1),
-            RouteState { volume: 0.75, enabled: true, muted: false },
+            RouteState {
+                volume: 0.75,
+                enabled: true,
+                muted: false,
+            },
         );
     }
     // Mic + Game + Discord + Alerts routed to Stream (no Music = DMCA safe)
     for ch_id in [1, 2, 3, 5] {
         app.engine.state.routes.insert(
             (SourceId::Channel(ch_id), 2),
-            RouteState { volume: 0.7, enabled: true, muted: false },
+            RouteState {
+                volume: 0.7,
+                enabled: true,
+                muted: false,
+            },
         );
     }
     // VOD = same as Stream (no Music)
     for ch_id in [1, 2, 3, 5] {
         app.engine.state.routes.insert(
             (SourceId::Channel(ch_id), 3),
-            RouteState { volume: 0.7, enabled: true, muted: false },
+            RouteState {
+                volume: 0.7,
+                enabled: true,
+                muted: false,
+            },
         );
     }
     app
@@ -116,19 +144,35 @@ fn gamer_app() -> App {
     app.engine.state.mixes = vec![monitor_mix()];
     app.engine.state.routes.insert(
         (SourceId::Channel(1), 1),
-        RouteState { volume: 0.9, enabled: true, muted: false },
+        RouteState {
+            volume: 0.9,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.routes.insert(
         (SourceId::Channel(2), 1),
-        RouteState { volume: 0.5, enabled: true, muted: false },
+        RouteState {
+            volume: 0.5,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.routes.insert(
         (SourceId::Channel(3), 1),
-        RouteState { volume: 0.2, enabled: true, muted: false },
+        RouteState {
+            volume: 0.2,
+            enabled: true,
+            muted: false,
+        },
     );
     app.engine.state.routes.insert(
         (SourceId::Channel(4), 1),
-        RouteState { volume: 0.0, enabled: true, muted: true },
+        RouteState {
+            volume: 0.0,
+            enabled: true,
+            muted: true,
+        },
     );
     app
 }
@@ -146,7 +190,11 @@ fn worker_app() -> App {
     for ch_id in 1..=4 {
         app.engine.state.routes.insert(
             (SourceId::Channel(ch_id), 1),
-            RouteState { volume: 0.7, enabled: true, muted: false },
+            RouteState {
+                volume: 0.7,
+                enabled: true,
+                muted: false,
+            },
         );
     }
     app.engine.state.applications = vec![
@@ -167,6 +215,7 @@ fn channel(id: u32, name: &str) -> ChannelInfo {
         assigned_app_binaries: vec![],
         muted: false,
         effects: EffectsParams::default(),
+        master_volume: 1.0,
     }
 }
 
@@ -179,11 +228,23 @@ fn channel_with_effects(id: u32, name: &str, enabled: bool) -> ChannelInfo {
 }
 
 fn monitor_mix() -> MixInfo {
-    MixInfo { id: 1, name: "Monitor".into(), output: None, master_volume: 1.0, muted: false }
+    MixInfo {
+        id: 1,
+        name: "Monitor".into(),
+        output: None,
+        master_volume: 1.0,
+        muted: false,
+    }
 }
 
 fn stream_mix() -> MixInfo {
-    MixInfo { id: 2, name: "Stream".into(), output: None, master_volume: 1.0, muted: false }
+    MixInfo {
+        id: 2,
+        name: "Stream".into(),
+        output: None,
+        master_volume: 1.0,
+        muted: false,
+    }
 }
 
 fn detected_app(id: u32, name: &str, binary: &str, stream_index: u32) -> AudioApplication {
@@ -357,7 +418,10 @@ mod j03_stream_setup {
         let app = streamer_app();
         // Music (ch 4) should NOT be routed to Stream (mix 2) — DMCA protection
         let route = app.engine.state.routes.get(&(SourceId::Channel(4), 2));
-        assert!(route.is_none(), "Music should NOT be routed to Stream mix (DMCA)");
+        assert!(
+            route.is_none(),
+            "Music should NOT be routed to Stream mix (DMCA)"
+        );
         Ok(())
     }
 
@@ -367,7 +431,10 @@ mod j03_stream_setup {
         let app = streamer_app();
         // Music (ch 4) should NOT be routed to VOD (mix 3) — DMCA protection
         let route = app.engine.state.routes.get(&(SourceId::Channel(4), 3));
-        assert!(route.is_none(), "Music should NOT be routed to VOD mix (DMCA)");
+        assert!(
+            route.is_none(),
+            "Music should NOT be routed to VOD mix (DMCA)"
+        );
         Ok(())
     }
 
@@ -418,8 +485,20 @@ mod j05_podcast {
         ];
         app.engine.state.mixes = vec![
             monitor_mix(),
-            MixInfo { id: 2, name: "Record".into(), output: None, master_volume: 1.0, muted: false },
-            MixInfo { id: 3, name: "Guest Return".into(), output: None, master_volume: 1.0, muted: false },
+            MixInfo {
+                id: 2,
+                name: "Record".into(),
+                output: None,
+                master_volume: 1.0,
+                muted: false,
+            },
+            MixInfo {
+                id: 3,
+                name: "Guest Return".into(),
+                output: None,
+                master_volume: 1.0,
+                muted: false,
+            },
         ];
         let mut ui = sim(&app);
         ui.find("Host Mic")?;
@@ -461,13 +540,23 @@ mod j05_podcast {
         ];
         app.engine.state.mixes = vec![
             monitor_mix(),
-            MixInfo { id: 2, name: "Record".into(), output: None, master_volume: 1.0, muted: false },
+            MixInfo {
+                id: 2,
+                name: "Record".into(),
+                output: None,
+                master_volume: 1.0,
+                muted: false,
+            },
         ];
         for ch_id in 1..=3 {
             for mix_id in 1..=2 {
                 app.engine.state.routes.insert(
                     (SourceId::Channel(ch_id), mix_id),
-                    RouteState { volume: 0.75, enabled: true, muted: false },
+                    RouteState {
+                        volume: 0.75,
+                        enabled: true,
+                        muted: false,
+                    },
                 );
             }
         }
@@ -584,7 +673,9 @@ mod j08_channel_creation {
         let _ = ui.click("Create channel")?;
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(
-            messages.iter().any(|m| matches!(m, Message::ToggleChannelPicker)),
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::ToggleChannelPicker)),
             "Should produce ToggleChannelPicker message"
         );
         Ok(())
@@ -600,7 +691,9 @@ mod j08_channel_creation {
         let _ = ui.click("Firefox")?;
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(
-            messages.iter().any(|m| matches!(m, Message::CreateChannelFromApp(42))),
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::CreateChannelFromApp(42))),
             "Clicking Firefox should produce CreateChannelFromApp(42)"
         );
         Ok(())
@@ -652,7 +745,10 @@ mod j09_effects {
         // Simulate Ctrl+C
         let msg = Message::CopyEffects(1);
         let _task = app.update(msg);
-        assert!(app.copied_effects.is_some(), "CopyEffects should populate copied_effects");
+        assert!(
+            app.copied_effects.is_some(),
+            "CopyEffects should populate copied_effects"
+        );
 
         // Simulate Ctrl+V on Game channel
         app.selected_channel = Some(2);
@@ -699,8 +795,14 @@ mod j10_compact_mode {
         let mut app = gamer_app();
         let msg = Message::ToggleMixesView;
         let _task = app.update(msg);
-        assert!(app.compact_mix_view, "ToggleMixesView should set compact_mix_view = true");
-        assert!(app.compact_selected_mix.is_some(), "Should auto-select first mix");
+        assert!(
+            app.compact_mix_view,
+            "ToggleMixesView should set compact_mix_view = true"
+        );
+        assert!(
+            app.compact_selected_mix.is_some(),
+            "Should auto-select first mix"
+        );
         Ok(())
     }
 
@@ -729,10 +831,30 @@ mod j11_device_hotswap {
     fn routing_preserved_when_no_routes_change() -> Result<(), Error> {
         let app = worker_app();
         // Verify all routes exist
-        assert!(app.engine.state.routes.contains_key(&(SourceId::Channel(1), 1)));
-        assert!(app.engine.state.routes.contains_key(&(SourceId::Channel(2), 1)));
-        assert!(app.engine.state.routes.contains_key(&(SourceId::Channel(3), 1)));
-        assert!(app.engine.state.routes.contains_key(&(SourceId::Channel(4), 1)));
+        assert!(
+            app.engine
+                .state
+                .routes
+                .contains_key(&(SourceId::Channel(1), 1))
+        );
+        assert!(
+            app.engine
+                .state
+                .routes
+                .contains_key(&(SourceId::Channel(2), 1))
+        );
+        assert!(
+            app.engine
+                .state
+                .routes
+                .contains_key(&(SourceId::Channel(3), 1))
+        );
+        assert!(
+            app.engine
+                .state
+                .routes
+                .contains_key(&(SourceId::Channel(4), 1))
+        );
         Ok(())
     }
 
@@ -740,13 +862,12 @@ mod j11_device_hotswap {
     #[ignore]
     fn hardware_devices_shown_in_sidebar() -> Result<(), Error> {
         let mut app = worker_app();
-        app.engine.state.hardware_inputs = vec![
-            open_sound_grid::plugin::api::HardwareInput {
-                id: 1,
-                name: "Built-in Audio".into(),
-                description: "Laptop speakers".into(),
-            },
-        ];
+        app.engine.state.hardware_inputs = vec![open_sound_grid::plugin::api::HardwareInput {
+            id: 1,
+            name: "Built-in Audio".into(),
+            description: "Laptop speakers".into(),
+            device_id: "alsa_input.pci-0000_00_1f.3.analog-stereo".into(),
+        }];
         let mut ui = sim(&app);
         ui.find("Built-in Audio")?;
         Ok(())
@@ -769,8 +890,10 @@ mod j12_keyboard {
             keyboard::Modifiers::default(),
         );
         let _task = app.update(msg);
-        assert!(app.focused_row.is_some() || app.focused_col.is_some(),
-            "Tab should set focus into matrix");
+        assert!(
+            app.focused_row.is_some() || app.focused_col.is_some(),
+            "Tab should set focus into matrix"
+        );
         Ok(())
     }
 
@@ -782,7 +905,10 @@ mod j12_keyboard {
         app.focused_row = Some(0);
         app.focused_col = Some(0);
 
-        let vol_before = app.engine.state.routes
+        let vol_before = app
+            .engine
+            .state
+            .routes
             .get(&(SourceId::Channel(1), 1))
             .map(|r| r.volume)
             .unwrap_or(0.0);
@@ -845,7 +971,10 @@ mod j12_keyboard {
             keyboard::Modifiers::CTRL,
         );
         let _task = app.update(msg);
-        assert!(app.copied_effects.is_some(), "Ctrl+C should copy effects from selected channel");
+        assert!(
+            app.copied_effects.is_some(),
+            "Ctrl+C should copy effects from selected channel"
+        );
         Ok(())
     }
 
@@ -1136,7 +1265,8 @@ mod j_autostart {
     #[ignore]
     fn autostart_desktop_entry_can_be_created() {
         // The app should be able to create an XDG autostart .desktop file
-        let autostart_dir = directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
+        let autostart_dir = directories::BaseDirs::new()
+            .map(|d| d.config_dir().to_path_buf())
             .unwrap()
             .join("autostart");
         let desktop_path = autostart_dir.join("open-sound-grid.desktop");
@@ -1144,7 +1274,10 @@ mod j_autostart {
         // Call the autostart setup function
         open_sound_grid::autostart::install_autostart().expect("Should create autostart entry");
 
-        assert!(desktop_path.exists(), "Autostart .desktop file should exist");
+        assert!(
+            desktop_path.exists(),
+            "Autostart .desktop file should exist"
+        );
 
         let content = std::fs::read_to_string(&desktop_path).unwrap();
         assert!(content.contains("[Desktop Entry]"));
@@ -1158,7 +1291,8 @@ mod j_autostart {
     #[test]
     #[ignore]
     fn autostart_desktop_entry_can_be_removed() {
-        let autostart_dir = directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
+        let autostart_dir = directories::BaseDirs::new()
+            .map(|d| d.config_dir().to_path_buf())
             .unwrap()
             .join("autostart");
         let desktop_path = autostart_dir.join("open-sound-grid.desktop");

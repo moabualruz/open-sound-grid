@@ -57,7 +57,6 @@ pub enum Message {
         mix: MixId,
     },
 
-
     // Application routing
     /// Assign an app to a channel (checkbox checked in channel settings panel).
     AssignApp {
@@ -133,6 +132,9 @@ pub enum Message {
     TrayQuit,
     TrayMuteAll,
 
+    // Hotkey events (from global shortcut subscription)
+    HotkeyMuteAll,
+
     // Window events
     WindowResized(u32, u32),
 
@@ -196,6 +198,22 @@ pub enum Message {
     SavePreset(String),
     LoadPreset(String),
     PresetNameInput(String),
+
+    // Channel master volume (scales all routes for a channel proportionally)
+    ChannelMasterVolumeChanged {
+        source: SourceId,
+        volume: f32,
+    },
+
+    // Settings
+    ToggleStereoSliders,
+
+    // Sound Check
+    SoundCheckStart,
+    SoundCheckStop,
+    SoundCheckPlayback,
+    SoundCheckStopPlayback,
+    SoundCheckSamples(Vec<f32>),
 }
 
 /// Application state.
@@ -255,6 +273,12 @@ pub struct App {
     pub channel_settings_name: String,
     /// Which mix is currently monitored (heard in headphones). None = first mix.
     pub monitored_mix: Option<MixId>,
+    /// Sound check buffer for mic record/playback.
+    pub sound_check: crate::sound_check::SoundCheckBuffer,
+    /// Whether auto-route creation has been sent (prevents feedback loop).
+    auto_routes_sent: bool,
+    /// Per-channel master volumes (UI-side, survives snapshot rebuilds).
+    pub channel_master_volumes: HashMap<ChannelId, f32>,
 }
 
 impl App {
@@ -299,6 +323,9 @@ impl App {
             copied_effects: None,
             channel_settings_name: String::new(),
             monitored_mix: None,
+            sound_check: crate::sound_check::SoundCheckBuffer::new(5.0),
+            auto_routes_sent: false,
+            channel_master_volumes: HashMap::new(),
         }
     }
 
@@ -361,17 +388,27 @@ impl App {
             "config restore: queued effects params for restoration after first state refresh"
         );
 
-        // Auto-restore last session routes if preset exists
-        if crate::presets::MixerPreset::list().contains(&"_last_session".to_string()) {
+        // Restore routes: prefer config.routes (always saved), fall back to _last_session preset
+        if !self.config.routes.is_empty() {
+            tracing::info!(
+                count = self.config.routes.len(),
+                "restoring routes from config"
+            );
+            self.pending_route_restores = self.config.routes.clone();
+        } else if crate::presets::MixerPreset::list().contains(&"_last_session".to_string()) {
             if let Ok(last) = crate::presets::MixerPreset::load("_last_session") {
-                tracing::info!("restoring _last_session preset routes");
-                self.pending_route_restores = last.routes.iter().map(|r| RouteConfig {
-                    channel_name: r.channel_name.clone(),
-                    mix_name: r.mix_name.clone(),
-                    volume: r.volume,
-                    enabled: r.enabled,
-                    muted: r.muted,
-                }).collect();
+                tracing::info!("restoring _last_session preset routes (config had none)");
+                self.pending_route_restores = last
+                    .routes
+                    .iter()
+                    .map(|r| RouteConfig {
+                        channel_name: r.channel_name.clone(),
+                        mix_name: r.mix_name.clone(),
+                        volume: r.volume,
+                        enabled: r.enabled,
+                        muted: r.muted,
+                    })
+                    .collect();
             }
         }
 
@@ -388,8 +425,9 @@ impl App {
     }
 
     pub fn theme(&self) -> Theme {
-        match self.config.ui.theme_mode {
-            ui::theme::ThemeMode::Dark => Theme::Dark,
+        let resolved = ui::theme::resolve_theme(self.config.ui.theme_mode);
+        match resolved {
+            ui::theme::ThemeMode::Dark | ui::theme::ThemeMode::System => Theme::Dark,
             ui::theme::ThemeMode::Light => Theme::Light,
         }
     }
@@ -401,26 +439,33 @@ impl App {
                 mix,
                 volume,
             } => {
-                tracing::debug!(?source, ?mix, volume, "route volume changed");
+                // WL3 model: cell slider value IS the ratio (percentage of channel master).
+                // Effective PA volume = ratio × channel_master.
+                let ch_master = match source {
+                    SourceId::Channel(ch_id) => self
+                        .channel_master_volumes
+                        .get(&ch_id)
+                        .copied()
+                        .unwrap_or(1.0),
+                    _ => 1.0,
+                };
+                let effective = (volume * ch_master).clamp(0.0, 1.0);
+                tracing::debug!(
+                    ?source,
+                    ?mix,
+                    cell_ratio = volume,
+                    ch_master,
+                    effective,
+                    "route volume changed (WL3 model)"
+                );
                 self.engine.send_command(PluginCommand::SetRouteVolume {
                     source,
                     mix,
-                    volume,
+                    volume: effective,
                 });
 
-                // Update ratio for linked slider behavior
-                let master_vol = self
-                    .engine
-                    .state
-                    .mixes
-                    .iter()
-                    .find(|m| m.id == mix)
-                    .map_or(1.0, |m| m.master_volume);
-                let new_ratio = if master_vol > 0.001 {
-                    volume / master_vol
-                } else {
-                    1.0
-                };
+                // Store ratio (the cell's own percentage, independent of master)
+                let new_ratio = volume;
                 self.engine
                     .state
                     .route_ratios
@@ -568,12 +613,25 @@ impl App {
                 );
             }
             Message::CreateChannel(name) => {
-                tracing::debug!(name = %name, "creating channel");
-                self.show_channel_picker = false;
-                self.engine
-                    .send_command(PluginCommand::CreateChannel { name });
-                // Immediately request updated state
-                self.engine.send_command(PluginCommand::GetState);
+                // Prevent duplicate channel names
+                let already_exists = self
+                    .engine
+                    .state
+                    .channels
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(&name));
+                if already_exists {
+                    tracing::warn!(name = %name, "channel already exists — skipping creation");
+                    self.show_channel_picker = false;
+                    self.show_channel_dropdown = false;
+                } else {
+                    tracing::debug!(name = %name, "creating channel");
+                    self.show_channel_picker = false;
+                    self.show_channel_dropdown = false;
+                    self.engine
+                        .send_command(PluginCommand::CreateChannel { name });
+                    self.engine.send_command(PluginCommand::GetState);
+                }
             }
             Message::CreateMix(name) => {
                 tracing::debug!(name = %name, "creating mix");
@@ -833,8 +891,36 @@ impl App {
                     }
                 }
 
+                // DEFER pending restores until channels AND mixes are populated.
+                // The first few StateRefreshed events arrive before all CreateChannel/
+                // CreateMix commands have been processed (race condition). If we drain
+                // pending restores when state is still incomplete, they fail and are lost.
+                // State is "ready" when ALL expected channels and mixes from config exist.
+                // This prevents acting on intermediate snapshots during startup.
+                let expected_channels = self.config.channels.len();
+                let expected_mixes = self.config.mixes.len();
+                let state_ready = self.engine.state.channels.len() >= expected_channels
+                    && self.engine.state.mixes.len() >= expected_mixes
+                    && expected_channels > 0
+                    && expected_mixes > 0;
+
+                if !state_ready
+                    && (!self.pending_output_restores.is_empty()
+                        || !self.pending_route_restores.is_empty()
+                        || !self.pending_effects_restores.is_empty()
+                        || !self.pending_mix_restores.is_empty())
+                {
+                    tracing::debug!(
+                        channels = self.engine.state.channels.len(),
+                        mixes = self.engine.state.mixes.len(),
+                        "deferring pending restores — state not ready yet"
+                    );
+                    // Skip all restores this round; they'll fire on the next StateRefreshed
+                    // when channels and mixes have been created.
+                }
+
                 // Apply any pending output device restores from config
-                if !self.pending_output_restores.is_empty() {
+                if state_ready && !self.pending_output_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_output_restores);
                     for (mix_name, device_name) in restores {
                         let mix_id = self
@@ -876,8 +962,30 @@ impl App {
                     }
                 }
 
+                // Default: assign system default output to Main/Monitor if it has none
+                if state_ready {
+                    if let Some(main_mix) = self.engine.state.mixes.first() {
+                        if main_mix.output.is_none() {
+                            if let Some(default_hw) = self.engine.state.hardware_outputs.first() {
+                                tracing::info!(
+                                    output = %default_hw.name,
+                                    "assigning default output to Main/Monitor"
+                                );
+                                self.engine.send_command(PluginCommand::SetMixOutput {
+                                    mix: main_mix.id,
+                                    output: default_hw.id,
+                                });
+                                if let Some(cfg) = self.config.mixes.first_mut() {
+                                    cfg.output_device = Some(default_hw.name.clone());
+                                    let _ = self.config.save();
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Apply any pending route restores (from LoadPreset)
-                if !self.pending_route_restores.is_empty() {
+                if state_ready && !self.pending_route_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_route_restores);
                     tracing::info!(count = restores.len(), "applying pending route restores");
                     for route in restores {
@@ -939,8 +1047,27 @@ impl App {
                     }
                 }
 
+                // Auto-create routes on first successful state load.
+                // Only runs ONCE to prevent feedback loop (each SetRouteEnabled
+                // triggers StateRefreshed which would re-trigger auto-enable).
+                if state_ready && !self.auto_routes_sent && self.engine.state.routes.is_empty() {
+                    self.auto_routes_sent = true;
+                    let mut new_routes = 0u32;
+                    for ch in &self.engine.state.channels {
+                        for mx in &self.engine.state.mixes {
+                            self.engine.send_command(PluginCommand::SetRouteEnabled {
+                                source: SourceId::Channel(ch.id),
+                                mix: mx.id,
+                                enabled: true,
+                            });
+                            new_routes += 1;
+                        }
+                    }
+                    tracing::info!(new_routes, "auto-enabled routes (one-shot)");
+                }
+
                 // Apply any pending effects/muted restores from config
-                if !self.pending_effects_restores.is_empty() {
+                if state_ready && !self.pending_effects_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_effects_restores);
                     tracing::info!(count = restores.len(), "applying pending effects restores");
                     for (name, effects, muted) in restores {
@@ -971,7 +1098,7 @@ impl App {
                 }
 
                 // Apply any pending mix volume/muted restores from config
-                if !self.pending_mix_restores.is_empty() {
+                if state_ready && !self.pending_mix_restores.is_empty() {
                     let restores = std::mem::take(&mut self.pending_mix_restores);
                     tracing::info!(
                         count = restores.len(),
@@ -995,6 +1122,37 @@ impl App {
                             }
                         } else {
                             tracing::warn!(mix = %name, "pending mix restore: mix not found");
+                        }
+                    }
+                }
+
+                // Auto-reassign apps from snapshot to their previously assigned channels.
+                // Apps arrive embedded in snapshot, not as PluginAppsChanged during startup.
+                if state_ready {
+                    for app in &self.engine.state.applications {
+                        if app.channel.is_none() {
+                            let match_key = if !app.binary.is_empty() {
+                                &app.binary
+                            } else {
+                                &app.name
+                            };
+                            if let Some(ch) = self.engine.state.channels.iter().find(|c| {
+                                c.assigned_app_binaries.contains(match_key)
+                                    || c.assigned_app_binaries
+                                        .iter()
+                                        .any(|b| b.eq_ignore_ascii_case(match_key))
+                            }) {
+                                tracing::info!(
+                                    match_key = %match_key,
+                                    channel = %ch.name,
+                                    stream_index = app.stream_index,
+                                    "auto-reassigning app on StateRefreshed"
+                                );
+                                self.engine.send_command(PluginCommand::RouteApp {
+                                    app: app.stream_index,
+                                    channel: ch.id,
+                                });
+                            }
                         }
                     }
                 }
@@ -1102,6 +1260,12 @@ impl App {
                 }
 
                 self.engine.send_command(PluginCommand::GetState);
+
+                // Notify user about device change via desktop notification
+                crate::notifications::notify_device_change(
+                    "Audio Device Changed",
+                    "An audio device was connected or disconnected.",
+                );
             }
             Message::PluginAppsChanged(mut apps) => {
                 tracing::debug!(count = apps.len(), "applications changed");
@@ -1130,8 +1294,50 @@ impl App {
                     }
                 }
                 if seen_changed {
-                    tracing::debug!(count = self.config.seen_apps.len(), "seen_apps updated, saving config");
+                    tracing::debug!(
+                        count = self.config.seen_apps.len(),
+                        "seen_apps updated, saving config"
+                    );
                     let _ = self.config.save();
+                }
+
+                // Auto-reassign apps to their previously assigned channels.
+                // Match by binary name first, fall back to app name for apps that
+                // don't set APPLICATION_PROCESS_BINARY (e.g., haruna via GStreamer).
+                for app in &apps {
+                    if app.channel.is_none() {
+                        let match_key = if !app.binary.is_empty() {
+                            &app.binary
+                        } else {
+                            &app.name
+                        };
+                        if let Some(ch) = self.engine.state.channels.iter().find(|c| {
+                            c.assigned_app_binaries.contains(match_key)
+                                || c.assigned_app_binaries
+                                    .iter()
+                                    .any(|b| b.eq_ignore_ascii_case(match_key))
+                        }) {
+                            tracing::info!(
+                                match_key = %match_key,
+                                channel = %ch.name,
+                                stream_index = app.stream_index,
+                                "auto-reassigning app to previously assigned channel"
+                            );
+                            self.engine.send_command(PluginCommand::RouteApp {
+                                app: app.stream_index,
+                                channel: ch.id,
+                            });
+                        }
+                    }
+                }
+
+                // Also persist app name (not just binary) for display when not running
+                for app in &apps {
+                    if !app.name.is_empty() && !app.binary.is_empty() {
+                        if !self.config.seen_apps.contains(&app.name) {
+                            self.config.seen_apps.push(app.name.clone());
+                        }
+                    }
                 }
 
                 self.engine.state.update_applications(apps);
@@ -1176,8 +1382,8 @@ impl App {
                 let _ = self.config.save();
                 return iced::exit();
             }
-            Message::TrayMuteAll => {
-                tracing::info!("tray: mute all requested");
+            Message::TrayMuteAll | Message::HotkeyMuteAll => {
+                tracing::info!("mute all requested (tray or hotkey)");
                 for channel in &self.engine.state.channels {
                     self.engine.send_command(PluginCommand::SetSourceMuted {
                         source: SourceId::Channel(channel.id),
@@ -1190,25 +1396,10 @@ impl App {
                 device_name,
             } => {
                 tracing::debug!(mix_id, device_name = %device_name, "mix output device selected");
-                let hw_output = self
-                    .engine
-                    .state
-                    .hardware_outputs
-                    .iter()
-                    .find(|o| o.name == device_name)
-                    .cloned();
-                if let Some(output) = hw_output {
-                    tracing::info!(
-                        mix_id,
-                        output_id = output.id,
-                        output_name = %output.name,
-                        "setting mix output device"
-                    );
-                    self.engine.send_command(PluginCommand::SetMixOutput {
-                        mix: mix_id,
-                        output: output.id,
-                    });
-                    // Persist the selection to config
+
+                if device_name == "None" {
+                    // Unset output device for this mix
+                    tracing::info!(mix_id, "clearing mix output device");
                     if let Some(mix_config) = self.config.mixes.iter_mut().find(|c| {
                         self.engine
                             .state
@@ -1216,20 +1407,54 @@ impl App {
                             .iter()
                             .any(|m| m.id == mix_id && m.name == c.name)
                     }) {
-                        mix_config.output_device = Some(device_name.clone());
-                        if let Err(e) = self.config.save() {
-                            tracing::error!(error = %e, "failed to save output device config");
-                        } else {
-                            tracing::debug!(mix_id, device_name = %device_name, "output device persisted to config");
+                        mix_config.output_device = None;
+                        let _ = self.config.save();
+                    }
+                    // Update engine state
+                    if let Some(m) = self.engine.state.mixes.iter_mut().find(|m| m.id == mix_id) {
+                        m.output = None;
+                    }
+                } else {
+                    let hw_output = self
+                        .engine
+                        .state
+                        .hardware_outputs
+                        .iter()
+                        .find(|o| o.name == device_name)
+                        .cloned();
+                    if let Some(output) = hw_output {
+                        tracing::info!(
+                            mix_id,
+                            output_id = output.id,
+                            output_name = %output.name,
+                            "setting mix output device"
+                        );
+                        self.engine.send_command(PluginCommand::SetMixOutput {
+                            mix: mix_id,
+                            output: output.id,
+                        });
+                        // Persist the selection to config
+                        if let Some(mix_config) = self.config.mixes.iter_mut().find(|c| {
+                            self.engine
+                                .state
+                                .mixes
+                                .iter()
+                                .any(|m| m.id == mix_id && m.name == c.name)
+                        }) {
+                            mix_config.output_device = Some(device_name.clone());
+                            if let Err(e) = self.config.save() {
+                                tracing::error!(
+                                    error = %e,
+                                    "failed to save output device config"
+                                );
+                            }
                         }
                     } else {
                         tracing::warn!(
-                            mix_id,
-                            "MixOutputDeviceSelected: no matching config entry for mix"
+                            device_name = %device_name,
+                            "MixOutputDeviceSelected: device not found"
                         );
                     }
-                } else {
-                    tracing::warn!(device_name = %device_name, "MixOutputDeviceSelected: device not found in hardware_outputs");
                 }
             }
             Message::SettingsToggled => {
@@ -1490,8 +1715,7 @@ impl App {
                     }
                     // v0.4.0: Ctrl+C/V for effects copy/paste
                     Key::Character(ref ch)
-                        if (ch.as_str() == "c" || ch.as_str() == "C")
-                            && modifiers.control() =>
+                        if (ch.as_str() == "c" || ch.as_str() == "C") && modifiers.control() =>
                     {
                         if let Some(ch_id) = self.selected_channel {
                             tracing::info!(channel_id = ch_id, "keyboard: copy effects (Ctrl+C)");
@@ -1499,8 +1723,7 @@ impl App {
                         }
                     }
                     Key::Character(ref ch)
-                        if (ch.as_str() == "v" || ch.as_str() == "V")
-                            && modifiers.control() =>
+                        if (ch.as_str() == "v" || ch.as_str() == "V") && modifiers.control() =>
                     {
                         if let Some(ch_id) = self.selected_channel {
                             tracing::info!(channel_id = ch_id, "keyboard: paste effects (Ctrl+V)");
@@ -1513,7 +1736,8 @@ impl App {
             Message::ThemeToggled => {
                 let new_mode = match self.config.ui.theme_mode {
                     ui::theme::ThemeMode::Dark => ui::theme::ThemeMode::Light,
-                    ui::theme::ThemeMode::Light => ui::theme::ThemeMode::Dark,
+                    ui::theme::ThemeMode::Light => ui::theme::ThemeMode::System,
+                    ui::theme::ThemeMode::System => ui::theme::ThemeMode::Dark,
                 };
                 tracing::info!(new_mode = ?new_mode, "theme toggled");
                 self.config.ui.theme_mode = new_mode;
@@ -1523,13 +1747,7 @@ impl App {
                 tracing::info!(mix_id, "monitor mix switched");
                 self.monitored_mix = Some(mix_id);
                 // Set the mix's output to the current headphone device
-                if let Some(output) = self
-                    .engine
-                    .state
-                    .hardware_outputs
-                    .first()
-                    .map(|o| o.id)
-                {
+                if let Some(output) = self.engine.state.hardware_outputs.first().map(|o| o.id) {
                     self.engine.send_command(PluginCommand::SetMixOutput {
                         mix: mix_id,
                         output,
@@ -1539,7 +1757,10 @@ impl App {
 
             // v0.4.0: Channel creation dropdown
             Message::ToggleChannelDropdown => {
-                tracing::debug!(show = !self.show_channel_dropdown, "channel dropdown toggled");
+                tracing::debug!(
+                    show = !self.show_channel_dropdown,
+                    "channel dropdown toggled"
+                );
                 self.show_channel_dropdown = !self.show_channel_dropdown;
                 if self.show_channel_dropdown {
                     self.channel_search_text.clear();
@@ -1560,11 +1781,53 @@ impl App {
                     .find(|a| a.stream_index == stream_index)
                 {
                     let name = app.name.clone();
-                    tracing::info!(stream_index, name = %name, "creating channel from detected app");
-                    self.engine
-                        .send_command(PluginCommand::CreateChannel { name });
+                    let binary = app.binary.clone();
+                    // If a channel with this name already exists, just assign the app to it
+                    let existing = self
+                        .engine
+                        .state
+                        .channels
+                        .iter()
+                        .find(|c| c.name.eq_ignore_ascii_case(&name))
+                        .map(|c| c.id);
+                    if let Some(ch_id) = existing {
+                        tracing::info!(stream_index, name = %name, channel_id = ch_id, "app channel already exists — assigning app");
+                        self.engine.send_command(PluginCommand::RouteApp {
+                            app: stream_index,
+                            channel: ch_id,
+                        });
+                        // Persist binary in config
+                        if let Some(ch_cfg) = self
+                            .config
+                            .channels
+                            .iter_mut()
+                            .find(|c| c.name.eq_ignore_ascii_case(&name))
+                        {
+                            if !binary.is_empty() && !ch_cfg.assigned_apps.contains(&binary) {
+                                ch_cfg.assigned_apps.push(binary);
+                                let _ = self.config.save();
+                            }
+                        }
+                    } else {
+                        tracing::info!(stream_index, name = %name, binary = %binary, "creating channel from detected app");
+                        // Pre-add the app to config so it persists across restarts
+                        let app_key = if binary.is_empty() {
+                            name.clone()
+                        } else {
+                            binary
+                        };
+                        self.config.channels.push(crate::config::ChannelConfig {
+                            name: name.clone(),
+                            effects: Default::default(),
+                            muted: false,
+                            assigned_apps: vec![app_key],
+                        });
+                        let _ = self.config.save();
+                        self.engine
+                            .send_command(PluginCommand::CreateChannel { name });
+                        self.engine.send_command(PluginCommand::GetState);
+                    }
                     self.show_channel_dropdown = false;
-                    // Route the app to the new channel after state refresh
                 }
             }
 
@@ -1584,7 +1847,13 @@ impl App {
 
             // v0.4.0: Effects copy/paste
             Message::CopyEffects(channel_id) => {
-                if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == channel_id) {
+                if let Some(ch) = self
+                    .engine
+                    .state
+                    .channels
+                    .iter()
+                    .find(|c| c.id == channel_id)
+                {
                     tracing::info!(channel_id, name = %ch.name, "copied effects");
                     self.copied_effects = Some(ch.effects.clone());
                 }
@@ -1620,11 +1889,8 @@ impl App {
                         .iter()
                         .find(|c| c.id == channel_id)
                     {
-                        if let Some(cfg) = self
-                            .config
-                            .channels
-                            .iter_mut()
-                            .find(|c| c.name == ch.name)
+                        if let Some(cfg) =
+                            self.config.channels.iter_mut().find(|c| c.name == ch.name)
                         {
                             cfg.name = name;
                             let _ = self.config.save();
@@ -1682,10 +1948,86 @@ impl App {
             Message::PresetNameInput(text) => {
                 self.preset_name_input = text;
             }
+
+            // Channel master volume — scales all routes for this channel proportionally
+            Message::ChannelMasterVolumeChanged { source, volume } => {
+                tracing::debug!(
+                    ?source,
+                    master = volume,
+                    "channel master volume changed (WL3 model)"
+                );
+
+                // Store new master in UI-side HashMap
+                if let SourceId::Channel(ch_id) = source {
+                    self.channel_master_volumes.insert(ch_id, volume);
+                }
+
+                // WL3: recalculate effective PA volume for all cells in this row.
+                // effective = cell_ratio × new_master
+                // Cell ratios don't change — only the effective output changes.
+                let mix_ids: Vec<MixId> = self.engine.state.mixes.iter().map(|m| m.id).collect();
+                for mix_id in mix_ids {
+                    let key = (source, mix_id);
+                    if self.engine.state.routes.contains_key(&key) {
+                        let ratio = self
+                            .engine
+                            .state
+                            .route_ratios
+                            .get(&key)
+                            .copied()
+                            .unwrap_or(1.0);
+                        let effective = (volume * ratio).clamp(0.0, 1.0);
+                        tracing::trace!(
+                            ?source,
+                            mix_id,
+                            ratio,
+                            effective,
+                            "scaling cell by new master"
+                        );
+                        self.engine.send_command(PluginCommand::SetRouteVolume {
+                            source,
+                            mix: mix_id,
+                            volume: effective,
+                        });
+                    }
+                }
+            }
+
+            // Settings
+            Message::ToggleStereoSliders => {
+                self.config.ui.stereo_sliders = !self.config.ui.stereo_sliders;
+                tracing::info!(
+                    stereo = self.config.ui.stereo_sliders,
+                    "stereo sliders toggled"
+                );
+                let _ = self.config.save();
+            }
+
+            // Sound Check
+            Message::SoundCheckStart => {
+                tracing::info!("sound check: start recording");
+                self.sound_check.start_recording();
+            }
+            Message::SoundCheckStop => {
+                tracing::info!("sound check: stop recording");
+                self.sound_check.stop_recording();
+            }
+            Message::SoundCheckPlayback => {
+                tracing::info!("sound check: start playback");
+                self.sound_check.start_playback();
+            }
+            Message::SoundCheckStopPlayback => {
+                tracing::info!("sound check: stop playback");
+                self.sound_check.stop_playback();
+            }
+            Message::SoundCheckSamples(samples) => {
+                self.sound_check.append_samples(&samples);
+            }
+
             Message::SelectedChannel(id) => {
                 // If an app is pending routing, use this channel click to assign it.
                 if let (Some(app_stream), Some(ch_id)) = (self.routing_app, id) {
-                    // Store the binary name for not-running app detection
+                    // Store app identifier for not-running detection (name fallback)
                     if let Some(app_info) = self
                         .engine
                         .state
@@ -1693,7 +2035,11 @@ impl App {
                         .iter()
                         .find(|a| a.stream_index == app_stream)
                     {
-                        let binary = app_info.binary.clone();
+                        let binary = if app_info.binary.is_empty() {
+                            app_info.name.clone()
+                        } else {
+                            app_info.binary.clone()
+                        };
                         // Persist in config
                         if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
                             self.engine
@@ -1752,8 +2098,12 @@ impl App {
                 channel,
                 stream_index,
             } => {
-                tracing::info!(stream_index, channel_id = channel, "assigning app to channel");
-                // Persist binary name in config
+                tracing::info!(
+                    stream_index,
+                    channel_id = channel,
+                    "assigning app to channel"
+                );
+                // Persist app identifier in config (binary if available, else name)
                 if let Some(app_info) = self
                     .engine
                     .state
@@ -1761,7 +2111,11 @@ impl App {
                     .iter()
                     .find(|a| a.stream_index == stream_index)
                 {
-                    let binary = app_info.binary.clone();
+                    let binary = if app_info.binary.is_empty() {
+                        app_info.name.clone() // fallback for apps without binary property
+                    } else {
+                        app_info.binary.clone()
+                    };
                     if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
                         self.engine
                             .state
@@ -1786,8 +2140,12 @@ impl App {
                 channel,
                 stream_index,
             } => {
-                tracing::info!(stream_index, channel_id = channel, "unassigning app from channel");
-                // Remove binary from config
+                tracing::info!(
+                    stream_index,
+                    channel_id = channel,
+                    "unassigning app from channel"
+                );
+                // Remove app identifier from config (binary or name fallback)
                 if let Some(app_info) = self
                     .engine
                     .state
@@ -1795,7 +2153,12 @@ impl App {
                     .iter()
                     .find(|a| a.stream_index == stream_index)
                 {
-                    let binary = &app_info.binary;
+                    let key = if app_info.binary.is_empty() {
+                        &app_info.name
+                    } else {
+                        &app_info.binary
+                    };
+                    let binary = key;
                     if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
                         self.engine
                             .state
@@ -1809,9 +2172,8 @@ impl App {
                         let _ = self.config.save();
                     }
                 }
-                self.engine.send_command(PluginCommand::UnrouteApp {
-                    app: stream_index,
-                });
+                self.engine
+                    .send_command(PluginCommand::UnrouteApp { app: stream_index });
             }
             Message::EffectsToggled { channel, enabled } => {
                 tracing::debug!(channel_id = channel, enabled, "effects toggled");
@@ -1852,6 +2214,7 @@ impl App {
         Subscription::batch([
             Subscription::run(plugin_event_stream),
             Subscription::run(tray_event_stream),
+            Subscription::run(hotkey_event_stream),
             iced::event::listen_with(|event, _status, _id| match event {
                 iced::Event::Window(iced::window::Event::Resized(size)) => Some(
                     Message::WindowResized(size.width as u32, size.height as u32),
@@ -1900,6 +2263,9 @@ impl App {
             ui::theme::ThemeMode::Light => {
                 icon_moon().size(13).color(ui::theme::text_secondary(tm))
             }
+            ui::theme::ThemeMode::System => icon_settings()
+                .size(13)
+                .color(ui::theme::text_secondary(tm)),
         };
         let theme_btn = button(theme_icon_widget)
             .on_press(Message::ThemeToggled)
@@ -1954,13 +2320,11 @@ impl App {
                 device_picker,
                 Space::new().width(Length::Fixed(8.0)),
                 // v0.4.0: Shrink/expand mixes toggle
-                button(
-                    if self.compact_mix_view {
-                        icon_expand().size(13).color(ui::theme::text_secondary(tm))
-                    } else {
-                        icon_shrink().size(13).color(ui::theme::text_secondary(tm))
-                    },
-                )
+                button(if self.compact_mix_view {
+                    icon_expand().size(13).color(ui::theme::text_secondary(tm))
+                } else {
+                    icon_shrink().size(13).color(ui::theme::text_secondary(tm))
+                },)
                 .on_press(Message::ToggleMixesView)
                 .style(move |_theme: &Theme, _status| button::Style {
                     background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
@@ -2017,6 +2381,8 @@ impl App {
             &self.channel_search_text,
             &self.config.seen_apps,
             self.monitored_mix,
+            &self.channel_master_volumes,
+            self.config.ui.stereo_sliders,
         );
 
         // App panel removed — apps auto-create channels or are managed inline
@@ -2119,14 +2485,8 @@ impl App {
                 );
         }
 
-        status_row = status_row.push(Space::new().width(Length::Fill)).push(
-            text(format!(
-                "{} channels  ·  {} routes  ·  {}ms latency",
-                channel_count, route_count, self.config.audio.latency_ms
-            ))
-            .size(11)
-            .color(ui::theme::text_muted(tm)),
-        );
+        // Right side of status bar kept minimal — detailed stats moved to settings
+        status_row = status_row.push(Space::new().width(Length::Fill));
 
         let status_bar = container(status_row.padding([4, 16]))
             .width(Length::Fill)
@@ -2184,6 +2544,17 @@ impl App {
                     text(format!("Config: ~/.config/open-sound-grid/"))
                         .size(11)
                         .color(ui::theme::text_muted(tm)),
+                    Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
+                    button(
+                        text(if self.config.ui.stereo_sliders {
+                            "Sliders: L/R (Stereo)"
+                        } else {
+                            "Sliders: Single (Mono)"
+                        })
+                        .size(12),
+                    )
+                    .on_press(Message::ToggleStereoSliders)
+                    .padding([4, 8]),
                     Space::new().width(Length::Fill).height(Length::Fixed(4.0)),
                     text(format!(
                         "Plugin: {}",
@@ -2246,16 +2617,14 @@ impl App {
                     .collect();
 
                 tracing::trace!(channel_id = ch_id, "rendering channel settings side panel");
-                let side_panel = scrollable(
-                    ui::channel_settings::channel_settings_panel(
-                        ch,
-                        &self.engine.state.applications,
-                        not_running,
-                        self.channel_panel_tab,
-                        tm,
-                        &self.channel_settings_name,
-                    ),
-                )
+                let side_panel = scrollable(ui::channel_settings::channel_settings_panel(
+                    ch,
+                    &self.engine.state.applications,
+                    not_running,
+                    self.channel_panel_tab,
+                    tm,
+                    &self.channel_settings_name,
+                ))
                 .width(Length::Fixed(280.0))
                 .height(Length::Fill);
 
@@ -2284,7 +2653,7 @@ impl App {
 
         // App panel removed — apps auto-create channels
 
-        let right_panel = right_panel.push(sep()).push(status_bar);
+        // Status bar removed — info moved to settings panel
 
         let content = row![sidebar, right_panel];
 
@@ -2406,6 +2775,39 @@ fn tray_event_stream() -> impl iced::futures::Stream<Item = Message> {
                 }
                 None => {
                     tracing::debug!("tray command channel closed");
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    })
+}
+
+// --- Hotkey event stream ---
+
+/// Produces a stream of Messages from the global hotkey listener.
+///
+/// Spawns `hotkeys::spawn_hotkey_listener()` inside the async closure.
+/// If D-Bus / kglobalacceld is unavailable, the stream silently idles.
+fn hotkey_event_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(16, async move |mut sender| {
+        tracing::info!("hotkey subscription stream starting");
+
+        let mut rx = crate::hotkeys::spawn_hotkey_listener();
+        tracing::info!("hotkey listener spawned, waiting for events");
+
+        loop {
+            match rx.recv().await {
+                Some(event) => {
+                    tracing::debug!(?event, "hotkey event received");
+                    let msg = match event {
+                        crate::hotkeys::HotkeyEvent::MuteAll => Message::HotkeyMuteAll,
+                    };
+                    if sender.try_send(msg).is_err() {
+                        tracing::warn!("hotkey subscription sender full, dropping event");
+                    }
+                }
+                None => {
+                    tracing::debug!("hotkey event channel closed");
                     std::future::pending::<()>().await;
                 }
             }

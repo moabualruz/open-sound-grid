@@ -19,8 +19,8 @@ const TRACK_RADIUS: f32 = 4.0;
 const THUMB_WIDTH: f32 = 6.0;
 const THUMB_HEIGHT: f32 = 20.0;
 const THUMB_RADIUS: f32 = 2.0;
-const DB_LABEL_HEIGHT: f32 = 14.0;
-const WIDGET_HEIGHT: f32 = TRACK_HEIGHT + DB_LABEL_HEIGHT;
+const LABEL_HEIGHT: f32 = 14.0;
+const WIDGET_HEIGHT: f32 = TRACK_HEIGHT + LABEL_HEIGHT;
 const PAD_H: f32 = 3.0; // Horizontal padding for thumb travel
 
 /// The canvas program for the merged VU+Slider.
@@ -107,13 +107,9 @@ fn vu_color(peak: f32) -> Color {
     }
 }
 
-/// Format volume as dB string.
-fn volume_to_db(value: f32) -> String {
-    if value <= 0.001 {
-        "-inf dB".to_string()
-    } else {
-        format!("{:.1} dB", 20.0 * value.log10())
-    }
+/// Format volume as percentage string.
+fn volume_to_label(value: f32) -> String {
+    format!("{}%", (value * 100.0).round() as u32)
 }
 
 impl canvas::Program<Message> for VuSliderProgram {
@@ -185,7 +181,7 @@ impl canvas::Program<Message> for VuSliderProgram {
             self.draw_track(frame, bounds.size());
             self.draw_vu_fill(frame, bounds.size());
             self.draw_thumb(frame, bounds.size(), state.dragging);
-            self.draw_db_label(frame, bounds.size());
+            self.draw_volume_label(frame, bounds.size());
         });
         vec![geometry]
     }
@@ -290,13 +286,13 @@ impl VuSliderProgram {
         );
     }
 
-    /// Draw the dB readout below the track.
-    fn draw_db_label(&self, frame: &mut Frame, size: Size) {
-        let db_text = volume_to_db(self.volume);
+    /// Draw volume percentage label below the track.
+    fn draw_volume_label(&self, frame: &mut Frame, size: Size) {
+        let pct_text = volume_to_label(self.volume);
         let label_color = text_muted(self.theme_mode);
 
         frame.fill_text(Text {
-            content: db_text,
+            content: pct_text,
             position: Point::new(size.width / 2.0, TRACK_HEIGHT + 2.0),
             color: label_color,
             size: Pixels(10.0),
@@ -384,14 +380,17 @@ mod tests {
     }
 
     #[test]
-    fn test_volume_to_db_inf() {
-        assert_eq!(volume_to_db(0.0), "-inf dB");
-        assert_eq!(volume_to_db(0.0005), "-inf dB");
+    fn test_volume_to_label_zero() {
+        assert_eq!(volume_to_label(0.0), "0%");
     }
 
     #[test]
-    fn test_volume_to_db_unity() {
-        let db = volume_to_db(1.0);
-        assert!(db.contains("0.0"), "expected ~0 dB, got {db}");
+    fn test_volume_to_label_unity() {
+        assert_eq!(volume_to_label(1.0), "100%");
+    }
+
+    #[test]
+    fn test_volume_to_label_half() {
+        assert_eq!(volume_to_label(0.5), "50%");
     }
 }

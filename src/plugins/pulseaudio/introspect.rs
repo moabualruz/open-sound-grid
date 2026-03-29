@@ -198,6 +198,7 @@ pub fn list_sources_sync(conn: &mut PulseConnection) -> Vec<HardwareInput> {
             id: s.index,
             name: shorten_device_name(&s.description),
             description: s.description,
+            device_id: s.name,
         })
         .collect()
 }
@@ -407,7 +408,9 @@ fn make_channel_volumes(volume: f32) -> ChannelVolumes {
     let raw = (volume * Volume::NORMAL.0 as f32) as u32;
     let vol = Volume(raw);
     let mut cv = ChannelVolumes::default();
-    cv.set(1, vol);
+    // Must set 2 channels (stereo) — loopbacks and null-sinks are stereo by default.
+    // Setting only 1 channel causes libpulse/PipeWire to silently reject the volume change.
+    cv.set(2, vol);
     cv
 }
 

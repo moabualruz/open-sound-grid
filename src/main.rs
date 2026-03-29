@@ -3,14 +3,18 @@ use iced::window;
 use lucide_icons::LUCIDE_FONT_BYTES;
 
 mod app;
+mod autostart;
 mod config;
 mod effects;
 mod engine;
 mod error;
+mod hotkeys;
+mod notifications;
 mod plugin;
 mod plugins;
 mod presets;
 mod resolve;
+mod sound_check;
 mod tray;
 mod ui;
 

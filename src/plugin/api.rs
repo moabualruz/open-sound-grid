@@ -39,6 +39,8 @@ pub struct HardwareInput {
     pub id: u32,
     pub name: String,
     pub description: String,
+    /// PA source name (e.g., "alsa_input.usb-...") for creating loopback monitors.
+    pub device_id: String,
 }
 
 #[allow(dead_code)]
@@ -93,6 +95,8 @@ pub struct ChannelInfo {
     pub assigned_app_binaries: Vec<String>,
     pub muted: bool,
     pub effects: crate::effects::EffectsParams,
+    /// Independent master volume (0.0–1.0). Cells scale proportionally from this.
+    pub master_volume: f32,
 }
 
 #[derive(Debug, Clone)]

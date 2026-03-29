@@ -131,6 +131,7 @@ mod tests {
                 assigned_app_binaries: vec![],
                 muted: false,
                 effects: crate::effects::EffectsParams::default(),
+                master_volume: 1.0,
             }],
             ..Default::default()
         };

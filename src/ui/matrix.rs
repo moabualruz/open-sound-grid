@@ -6,7 +6,9 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
+use iced::widget::{
+    Space, button, column, container, image, pick_list, row, scrollable, text, text_input,
+};
 use iced::{Background, Border, Color, Element, Length, Theme};
 use lucide_icons::iced::{
     icon_audio_waveform, icon_expand, icon_gamepad_2, icon_globe, icon_headphones, icon_mic_vocal,
@@ -76,6 +78,8 @@ pub fn matrix_grid<'a>(
     channel_search: &str,
     seen_apps: &[String],
     monitored_mix: Option<MixId>,
+    channel_master_volumes: &std::collections::HashMap<crate::plugin::api::ChannelId, f32>,
+    stereo_sliders: bool,
 ) -> Element<'a, Message> {
     tracing::trace!(
         channels = state.channels.len(),
@@ -92,7 +96,10 @@ pub fn matrix_grid<'a>(
     // In compact view, only show the selected mix (or all if none selected)
     let visible_mixes: Vec<&MixInfo> = if compact_view {
         if let Some(sel_id) = compact_mix {
-            tracing::debug!(compact_mix = sel_id, "compact view: filtering to selected mix");
+            tracing::debug!(
+                compact_mix = sel_id,
+                "compact view: filtering to selected mix"
+            );
             state.mixes.iter().filter(|m| m.id == sel_id).collect()
         } else {
             tracing::debug!("compact view: no mix selected, showing all mixes");
@@ -123,11 +130,7 @@ pub fn matrix_grid<'a>(
         })
         .text_size(13);
 
-        grid = grid.push(
-            container(mix_picker)
-                .padding([4, 8])
-                .width(Length::Fill),
-        );
+        grid = grid.push(container(mix_picker).padding([4, 8]).width(Length::Fill));
     }
 
     // Header row: empty corner cell + one header per visible mix
@@ -139,9 +142,19 @@ pub fn matrix_grid<'a>(
     ]
     .spacing(CELL_SPACING);
 
+    let output_names: Vec<String> = state
+        .hardware_outputs
+        .iter()
+        .map(|o| o.name.clone())
+        .collect();
+
     for (i, mix) in visible_mixes.iter().enumerate() {
         let color = MIX_COLORS[i % MIX_COLORS.len()];
         let mix_editing = editing_mix == Some(mix.id);
+        let selected_output = mix
+            .output
+            .and_then(|oid| state.hardware_outputs.iter().find(|o| o.id == oid))
+            .map(|o| o.name.clone());
         header_row = header_row.push(mix_header(
             mix.id,
             &mix.name,
@@ -152,6 +165,9 @@ pub fn matrix_grid<'a>(
             theme_mode,
             mix_editing,
             editing_text,
+            i > 0, // first mix (Main/Monitor) is not removable/renameable
+            &output_names,
+            selected_output.as_deref(),
         ));
     }
 
@@ -223,11 +239,11 @@ pub fn matrix_grid<'a>(
             .count();
         let assigned_app_count = running_assigned + not_running.len();
 
-        // Get master volume from the first route (first mix)
+        // Master volume from UI-side HashMap (survives snapshot rebuilds)
         let first_mix_id = state.mixes.first().map(|m| m.id);
-        let master_volume = first_mix_id
-            .and_then(|mid| state.routes.get(&(source, mid)))
-            .map(|r| r.volume)
+        let master_volume = channel_master_volumes
+            .get(&channel.id)
+            .copied()
             .unwrap_or(1.0);
 
         let mut ch_row = row![
@@ -251,14 +267,21 @@ pub fn matrix_grid<'a>(
 
         for (col_index, mix) in visible_mixes.iter().enumerate() {
             let route = state.routes.get(&(source, mix.id));
+            let cell_ratio = state
+                .route_ratios
+                .get(&(source, mix.id))
+                .copied()
+                .unwrap_or(1.0);
             let cell_focused = row_focused && focused_col == Some(col_index);
             ch_row = ch_row.push(matrix_cell(
                 source,
                 mix.id,
                 route,
+                cell_ratio,
                 peak,
                 cell_focused,
                 theme_mode,
+                stereo_sliders,
             ));
         }
 
@@ -267,12 +290,58 @@ pub fn matrix_grid<'a>(
         } else {
             bg_primary(theme_mode)
         };
-        grid = grid.push(
-            container(ch_row).style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(row_bg)),
-                ..Default::default()
-            }),
-        );
+        grid = grid.push(container(ch_row).style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(row_bg)),
+            ..Default::default()
+        }));
+    }
+
+    // Hardware input devices shown as channel rows (mic, line-in, etc.)
+    for input in &state.hardware_inputs {
+        let source = SourceId::Hardware(input.id);
+        let peak = state.peak_levels.get(&source).copied().unwrap_or(0.0);
+        let first_mix_id = state.mixes.first().map(|m| m.id);
+        let master_volume = 1.0; // hardware inputs use direct PA source volume
+
+        let mut hw_row = row![channel_label(
+            &input.name,
+            false, // hardware inputs not mutable
+            source,
+            None, // no app icon for hardware
+            theme_mode,
+            false, // not editing
+            "",
+            &[], // no assigned apps
+            0,
+            peak,
+            first_mix_id,
+            master_volume,
+        )]
+        .spacing(CELL_SPACING);
+
+        for mix in visible_mixes.iter() {
+            let route = state.routes.get(&(source, mix.id));
+            let hw_ratio = state
+                .route_ratios
+                .get(&(source, mix.id))
+                .copied()
+                .unwrap_or(1.0);
+            hw_row = hw_row.push(matrix_cell(
+                source,
+                mix.id,
+                route,
+                hw_ratio,
+                peak,
+                false,
+                theme_mode,
+                stereo_sliders,
+            ));
+        }
+
+        grid = grid.push(container(hw_row).style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(bg_elevated(theme_mode))),
+            ..Default::default()
+        }));
     }
 
     // Channel creation: WL3-style dropdown with detected apps + preset submenu
@@ -301,11 +370,8 @@ pub fn matrix_grid<'a>(
 
         // Detected apps section (WL3: apps appear at top of dropdown)
         if !filtered_apps.is_empty() {
-            dropdown_col = dropdown_col.push(
-                text("Detected Apps")
-                    .size(10)
-                    .color(text_muted(theme_mode)),
-            );
+            dropdown_col =
+                dropdown_col.push(text("Detected Apps").size(10).color(text_muted(theme_mode)));
             for app in &filtered_apps {
                 let stream_idx = app.stream_index;
                 let app_icon: Element<'a, Message> = if let Some(ref path) = app.icon_path {
@@ -322,9 +388,12 @@ pub fn matrix_grid<'a>(
                 };
 
                 let app_btn = button(
-                    row![app_icon, text(&app.name).size(11).color(text_primary(theme_mode)),]
-                        .spacing(6)
-                        .align_y(iced::Alignment::Center),
+                    row![
+                        app_icon,
+                        text(&app.name).size(11).color(text_primary(theme_mode)),
+                    ]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
                 )
                 .on_press(Message::CreateChannelFromApp(stream_idx))
                 .width(Length::Fill)
@@ -355,13 +424,13 @@ pub fn matrix_grid<'a>(
         let not_running_seen: Vec<&String> = seen_apps
             .iter()
             .filter(|b| !running_binaries.contains(&b.as_str()))
-            .filter(|b| {
-                search_lower.is_empty()
-                    || b.to_lowercase().contains(&search_lower)
-            })
+            .filter(|b| search_lower.is_empty() || b.to_lowercase().contains(&search_lower))
             .collect();
         if !not_running_seen.is_empty() {
-            tracing::debug!(count = not_running_seen.len(), "channel picker: rendering not-running seen apps");
+            tracing::debug!(
+                count = not_running_seen.len(),
+                "channel picker: rendering not-running seen apps"
+            );
             for binary in &not_running_seen {
                 let label = text(binary.to_string())
                     .size(11)
@@ -407,7 +476,10 @@ pub fn matrix_grid<'a>(
         );
 
         // Empty channel presets section (WL3: "Add empty channel" submenu)
-        tracing::debug!(presets = CHANNEL_PRESETS.len(), "channel picker: rendering empty channel presets");
+        tracing::debug!(
+            presets = CHANNEL_PRESETS.len(),
+            "channel picker: rendering empty channel presets"
+        );
         dropdown_col = dropdown_col.push(
             text("Add empty channel")
                 .size(10)
@@ -517,6 +589,9 @@ fn mix_header<'a>(
     theme_mode: ThemeMode,
     editing: bool,
     editing_text: &str,
+    is_removable: bool,
+    output_names: &[String],
+    selected_output: Option<&str>,
 ) -> Element<'a, Message> {
     tracing::trace!(mix_id, name = %name, has_output, muted, is_monitored, editing, "rendering mix header");
 
@@ -583,7 +658,11 @@ fn mix_header<'a>(
     let remove_btn = button(icon_x().size(10).color(text_muted(theme_mode)).center())
         .width(12)
         .height(12)
-        .on_press(Message::RemoveMix(mix_id))
+        .on_press_maybe(if is_removable {
+            Some(Message::RemoveMix(mix_id))
+        } else {
+            None
+        })
         .padding(0)
         .style(move |_: &Theme, status| button::Style {
             background: match status {
@@ -598,75 +677,87 @@ fn mix_header<'a>(
 
     tracing::trace!(mix_id, "rendering mix remove button");
 
-    let output_label = if has_output { "1 Output" } else { "0 Outputs" };
+    // Per-mix output device dropdown (with "None" option to unassign)
+    let mut out_options = vec!["None".to_string()];
+    out_options.extend(output_names.iter().cloned());
+    let sel_out = selected_output.map(|s| s.to_string());
+    let mix_for_output = mix_id;
+    let output_picker: Element<'a, Message> = pick_list(out_options, sel_out, move |name| {
+        Message::MixOutputDeviceSelected {
+            mix: mix_for_output,
+            device_name: name,
+        }
+    })
+    .placeholder("Select output...")
+    .text_size(9)
+    .width(Length::Fill)
+    .into();
 
     // WL3 mix icon: map name prefix to icon
     let name_lower = name.to_lowercase();
-    let mix_icon_el: Element<'a, Message> = if name_lower.contains("personal")
-        || name_lower.contains("monitor")
-    {
-        icon_headphones()
-            .size(16)
-            .color(text_secondary(theme_mode))
-            .center()
-            .into()
-    } else if name_lower.contains("chat") || name_lower.contains("voice") {
-        icon_radio_tower()
-            .size(16)
-            .color(text_secondary(theme_mode))
-            .center()
-            .into()
-    } else if name_lower.contains("stream") {
-        icon_users()
-            .size(16)
-            .color(text_secondary(theme_mode))
-            .center()
-            .into()
-    } else {
-        icon_headphones()
-            .size(16)
-            .color(text_muted(theme_mode))
-            .center()
-            .into()
-    };
+    let mix_icon_el: Element<'a, Message> =
+        if name_lower.contains("personal") || name_lower.contains("monitor") {
+            icon_headphones()
+                .size(16)
+                .color(text_secondary(theme_mode))
+                .center()
+                .into()
+        } else if name_lower.contains("chat") || name_lower.contains("voice") {
+            icon_radio_tower()
+                .size(16)
+                .color(text_secondary(theme_mode))
+                .center()
+                .into()
+        } else if name_lower.contains("stream") {
+            icon_users()
+                .size(16)
+                .color(text_secondary(theme_mode))
+                .center()
+                .into()
+        } else {
+            icon_headphones()
+                .size(16)
+                .color(text_muted(theme_mode))
+                .center()
+                .into()
+        };
 
     container(
         column![
             color_bar,
-            row![mute_btn, monitor_btn, Space::new().width(Length::Fill), remove_btn,]
-                .spacing(2)
-                .align_y(iced::Alignment::Center),
             row![
-                mix_icon_el,
-                {
-                    let mix_name_el: Element<'a, Message> = if editing {
-                        text_input("Name...", editing_text)
-                            .on_input(Message::RenameInput)
-                            .on_submit(Message::ConfirmRename)
-                            .size(11)
-                            .width(Length::Fixed(80.0))
-                            .into()
-                    } else {
-                        button(
-                            text(name.to_string())
-                                .size(12)
-                                .color(text_primary(theme_mode))
-                                .center(),
-                        )
-                        .on_press(Message::StartRenameMix(mix_id))
-                        .padding(0)
-                        .style(|_: &Theme, _| button::Style::default())
-                        .into()
-                    };
-                    mix_name_el
-                },
+                mute_btn,
+                monitor_btn,
+                Space::new().width(Length::Fill),
+                remove_btn,
             ]
+            .spacing(2)
+            .align_y(iced::Alignment::Center),
+            row![mix_icon_el, {
+                let mix_name_el: Element<'a, Message> = if editing {
+                    text_input("Name...", editing_text)
+                        .on_input(Message::RenameInput)
+                        .on_submit(Message::ConfirmRename)
+                        .size(11)
+                        .width(Length::Fixed(80.0))
+                        .into()
+                } else {
+                    button(
+                        text(name.to_string())
+                            .size(12)
+                            .color(text_primary(theme_mode))
+                            .center(),
+                    )
+                    .on_press(Message::StartRenameMix(mix_id))
+                    .padding(0)
+                    .style(|_: &Theme, _| button::Style::default())
+                    .into()
+                };
+                mix_name_el
+            },]
             .spacing(4)
             .align_y(iced::Alignment::Center),
-            text(output_label)
-                .size(10)
-                .color(text_muted(theme_mode))
-                .center(),
+            output_picker,
         ]
         .spacing(2)
         .align_x(iced::Alignment::Center),
@@ -790,24 +881,33 @@ fn channel_label<'a>(
         text(name.to_string()).size(12).color(name_color).into()
     };
 
-    // Master volume slider in channel label (WL3: always visible, compact)
-    let master_slider_el: Element<'a, Message> = if let Some(mix_id) = first_mix_id {
+    // Master volume slider — controls ALL routes for this channel proportionally
+    let volume_pct = (master_volume * 100.0).round() as u32;
+    let master_slider_el: Element<'a, Message> = {
         let src = source;
-        iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
-            Message::RouteVolumeChanged {
+        let slider_widget = iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
+            Message::ChannelMasterVolumeChanged {
                 source: src,
-                mix: mix_id,
                 volume: v,
             }
         })
         .step(0.01)
-        .width(Length::Fixed(60.0))
+        .width(Length::Fill);
+
+        row![
+            slider_widget,
+            text(format!("{}%", volume_pct))
+                .size(10)
+                .color(text_secondary(theme_mode))
+                .width(Length::Fixed(30.0)),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center)
         .into()
-    } else {
-        Space::new().width(Length::Fixed(60.0)).into()
     };
 
-    let mut label_row = row![mute_btn, icon_element, name_element, master_slider_el,]
+    // Top row: mute + icon + name
+    let mut label_row = row![mute_btn, icon_element, name_element,]
         .spacing(4)
         .align_y(iced::Alignment::Center);
 
@@ -885,11 +985,13 @@ fn channel_label<'a>(
         label_row = label_row.push(btn);
     }
 
-    let inner = container(label_row)
+    // Stack: name row on top, full-width slider below
+    let label_col = column![label_row, master_slider_el].spacing(2);
+
+    let inner = container(label_col)
         .width(Length::Fixed(LABEL_WIDTH))
         .height(Length::Fixed(CELL_HEIGHT))
         .padding([4, 8])
-        .center_y(Length::Fixed(CELL_HEIGHT))
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(bg_primary(theme_mode))),
             border: Border {
@@ -963,14 +1065,16 @@ fn matrix_cell<'a>(
     source: SourceId,
     mix_id: u32,
     route: Option<&'a crate::plugin::api::RouteState>,
+    cell_ratio: f32, // WL3: the cell's own percentage (0.0-1.0), NOT the effective PA volume
     peak: f32,
     focused: bool,
     theme_mode: ThemeMode,
+    stereo_sliders: bool,
 ) -> Element<'a, Message> {
-    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), peak, focused, "rendering matrix cell");
+    tracing::trace!(source = ?source, mix_id, has_route = route.is_some(), cell_ratio, peak, focused, "rendering matrix cell");
     let cell_content: Element<'a, Message> = match route {
         Some(route) => {
-            let vol = route.volume;
+            let vol = cell_ratio; // show ratio, not effective volume
             let muted = route.muted;
 
             let mute_icon = if muted {
@@ -1001,60 +1105,115 @@ fn matrix_cell<'a>(
                     ..Default::default()
                 });
 
-            // Merged VU+Slider: VU fill IS the slider track background
-            let fader = vu_slider(vol, peak, muted, source, mix_id, theme_mode);
+            let src = source;
+            let mid = mix_id;
+            let vol_pct = (vol * 100.0).round() as u32;
 
-            // Volume percentage label (WL3 parity)
-            let vol_pct = text(format!("{}%", (vol * 100.0) as u32))
-                .size(9)
-                .color(text_muted(theme_mode));
+            if stereo_sliders {
+                // L/R mode: two sliders stacked, labeled L and R
+                let src_l = source;
+                let mid_l = mix_id;
+                let src_r = source;
+                let mid_r = mix_id;
+                let slider_l = row![
+                    text("L").size(8).color(text_muted(theme_mode)),
+                    iced::widget::slider(0.0..=1.0_f32, vol, move |v| {
+                        Message::RouteVolumeChanged {
+                            source: src_l,
+                            mix: mid_l,
+                            volume: v,
+                        }
+                    })
+                    .step(0.01)
+                    .width(Length::Fill),
+                ]
+                .spacing(2)
+                .align_y(iced::Alignment::Center);
 
-            column![
-                row![mute_btn, fader]
-                    .spacing(4)
-                    .align_y(iced::Alignment::Center),
-                vol_pct,
-            ]
-            .spacing(1)
-            .align_x(iced::Alignment::Center)
-            .into()
+                let slider_r = row![
+                    text("R").size(8).color(text_muted(theme_mode)),
+                    iced::widget::slider(0.0..=1.0_f32, vol, move |v| {
+                        Message::RouteVolumeChanged {
+                            source: src_r,
+                            mix: mid_r,
+                            volume: v,
+                        }
+                    })
+                    .step(0.01)
+                    .width(Length::Fill),
+                ]
+                .spacing(2)
+                .align_y(iced::Alignment::Center);
+
+                column![
+                    row![mute_btn].align_y(iced::Alignment::Center),
+                    slider_l,
+                    slider_r,
+                    text(format!("{}%", vol_pct))
+                        .size(9)
+                        .color(text_muted(theme_mode)),
+                ]
+                .spacing(1)
+                .align_x(iced::Alignment::Center)
+                .into()
+            } else {
+                // Single slider mode
+                let fader = iced::widget::slider(0.0..=1.0_f32, vol, move |v| {
+                    Message::RouteVolumeChanged {
+                        source: src,
+                        mix: mid,
+                        volume: v,
+                    }
+                })
+                .step(0.01)
+                .width(Length::Fill);
+
+                column![
+                    row![mute_btn, fader]
+                        .spacing(4)
+                        .align_y(iced::Alignment::Center),
+                    text(format!("{}%", vol_pct))
+                        .size(9)
+                        .color(text_muted(theme_mode)),
+                ]
+                .spacing(1)
+                .align_x(iced::Alignment::Center)
+                .into()
+            }
         }
         None => {
             // Empty cell — subtle "+" that brightens on hover
-            button(
-                icon_plus()
-                    .size(14)
-                    .color(text_muted(theme_mode))
-                    .center(),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .on_press(Message::RouteToggled {
-                source,
-                mix: mix_id,
-            })
-            .padding(0)
-            .style(move |_: &Theme, status| button::Style {
-                background: match status {
-                    button::Status::Hovered | button::Status::Pressed => {
-                        Some(Background::Color(bg_hover(theme_mode)))
-                    }
-                    _ => Some(Background::Color(crate::ui::theme::bg_empty_cell(theme_mode))),
-                },
-                text_color: match status {
-                    button::Status::Hovered | button::Status::Pressed => {
-                        text_primary(theme_mode)
-                    }
-                    _ => text_muted(theme_mode),
-                },
-                border: Border {
-                    color: border_color(theme_mode),
-                    width: 1.0,
-                    radius: CELL_RADIUS.into(),
-                },
-                ..Default::default()
-            })
-            .into()
+            button(icon_plus().size(14).color(text_muted(theme_mode)).center())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .on_press(Message::RouteToggled {
+                    source,
+                    mix: mix_id,
+                })
+                .padding(0)
+                .style(move |_: &Theme, status| button::Style {
+                    background: match status {
+                        button::Status::Hovered | button::Status::Pressed => {
+                            Some(Background::Color(bg_hover(theme_mode)))
+                        }
+                        _ => Some(Background::Color(crate::ui::theme::bg_empty_cell(
+                            theme_mode,
+                        ))),
+                    },
+                    text_color: match status {
+                        button::Status::Hovered | button::Status::Pressed => {
+                            text_primary(theme_mode)
+                        }
+                        _ => text_muted(theme_mode),
+                    },
+                    border: Border {
+                        color: border_color(theme_mode),
+                        width: 1.0,
+                        radius: CELL_RADIUS.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
         }
     };
 

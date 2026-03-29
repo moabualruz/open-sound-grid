@@ -4,15 +4,15 @@
 //! - **Apps**: detected audio apps with checkboxes to assign/unassign from this channel
 //! - **Effects**: EQ, compressor, noise gate (delegates to effects_panel)
 
-use iced::widget::{button, checkbox, column, container, image, row, text, Space};
+use iced::widget::{Space, button, checkbox, column, container, image, row, text};
 use iced::{Background, Border, Element, Length, Theme};
 use lucide_icons::iced::{icon_headphones, icon_x};
 
 use crate::app::{ChannelPanelTab, Message};
 use crate::plugin::api::{AudioApplication, ChannelInfo};
 use crate::ui::theme::{
-    ThemeMode, bg_elevated, bg_hover, bg_primary, border_color, text_muted, text_primary,
-    text_secondary, ACCENT,
+    ACCENT, ThemeMode, bg_elevated, bg_hover, bg_primary, border_color, text_muted, text_primary,
+    text_secondary,
 };
 
 /// Render the channel settings side panel.
@@ -42,9 +42,7 @@ pub fn channel_settings_panel<'a>(
         });
 
     let header = row![
-        text(&channel.name)
-            .size(14)
-            .color(text_primary(theme_mode)),
+        text(&channel.name).size(14).color(text_primary(theme_mode)),
         Space::new().width(Length::Fill),
         close_btn,
     ]
@@ -65,9 +63,12 @@ pub fn channel_settings_panel<'a>(
     // Tab bar
     let apps_tab = tab_button("Apps", active_tab == ChannelPanelTab::Apps, theme_mode)
         .on_press(Message::ChannelPanelTab(ChannelPanelTab::Apps));
-    let effects_tab =
-        tab_button("Effects", active_tab == ChannelPanelTab::Effects, theme_mode)
-            .on_press(Message::ChannelPanelTab(ChannelPanelTab::Effects));
+    let effects_tab = tab_button(
+        "Effects",
+        active_tab == ChannelPanelTab::Effects,
+        theme_mode,
+    )
+    .on_press(Message::ChannelPanelTab(ChannelPanelTab::Effects));
 
     let tab_bar = row![apps_tab, effects_tab].spacing(2);
 
@@ -142,7 +143,12 @@ fn apps_tab_content<'a>(
     theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     let ch_id = channel.id;
-    tracing::trace!(channel_id = ch_id, app_count = apps.len(), not_running_count = not_running_binaries.len(), "rendering apps_tab_content");
+    tracing::trace!(
+        channel_id = ch_id,
+        app_count = apps.len(),
+        not_running_count = not_running_binaries.len(),
+        "rendering apps_tab_content"
+    );
     let mut col = column![
         text("Detected Applications")
             .size(11)
@@ -222,13 +228,9 @@ fn apps_tab_content<'a>(
                 .size(12)
                 .color(text_muted(theme_mode))
                 .center(),
-            text(binary_owned)
-                .size(12)
-                .color(text_muted(theme_mode)),
+            text(binary_owned).size(12).color(text_muted(theme_mode)),
             Space::new().width(Length::Fill),
-            text("not running")
-                .size(9)
-                .color(text_muted(theme_mode)),
+            text("not running").size(9).color(text_muted(theme_mode)),
         ]
         .spacing(6)
         .align_y(iced::Alignment::Center);

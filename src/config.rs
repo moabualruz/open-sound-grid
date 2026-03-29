@@ -84,6 +84,9 @@ pub struct UiConfig {
     pub theme_mode: ThemeMode,
     pub window_width: u32,
     pub window_height: u32,
+    /// When true, sliders show separate L/R (left/right) channels instead of a single mono slider.
+    #[serde(default)]
+    pub stereo_sliders: bool,
 }
 
 impl Default for AppConfig {
@@ -118,7 +121,7 @@ impl Default for AppConfig {
             ],
             mixes: vec![
                 MixConfig {
-                    name: "Monitor".into(),
+                    name: "Main/Monitor".into(),
                     icon: "🎧".into(),
                     color: [100, 149, 237],
                     output_device: None,
@@ -143,6 +146,7 @@ impl Default for AppConfig {
                 theme_mode: ThemeMode::Dark,
                 window_width: 1000,
                 window_height: 600,
+                stereo_sliders: false,
             },
             routes: Vec::new(),
             failover: DeviceFailover::default(),
@@ -176,6 +180,17 @@ impl AppConfig {
                         output_device = ?mix.output_device,
                         "loaded mix config"
                     );
+                }
+                // Enforce first mix is always "Main/Monitor"
+                let mut config = config;
+                if let Some(first_mix) = config.mixes.first_mut() {
+                    if first_mix.name != "Main/Monitor" {
+                        tracing::info!(
+                            old_name = %first_mix.name,
+                            "renaming first mix to Main/Monitor"
+                        );
+                        first_mix.name = "Main/Monitor".into();
+                    }
                 }
                 config
             }

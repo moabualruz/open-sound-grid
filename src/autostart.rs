@@ -10,7 +10,9 @@ use std::path::PathBuf;
 fn autostart_path() -> PathBuf {
     let config_dir = directories::BaseDirs::new()
         .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
+        });
     config_dir.join("autostart").join("open-sound-grid.desktop")
 }
 

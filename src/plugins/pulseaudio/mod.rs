@@ -16,6 +16,7 @@ mod devices;
 mod introspect;
 mod modules;
 mod peaks;
+pub mod spectrum;
 
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -184,6 +185,12 @@ impl PulseAudioPlugin {
             }
 
             PluginCommand::CreateChannel { name } => {
+                // Skip if a channel with this name already exists
+                if self.channels.iter().any(|c| c.name == name) {
+                    tracing::debug!(name = %name, "channel already exists — skipping creation");
+                    let existing_id = self.channels.iter().find(|c| c.name == name).unwrap().id;
+                    return Ok(PluginResponse::ChannelCreated { id: existing_id });
+                }
                 let id = self.next_channel_id;
                 self.next_channel_id += 1;
 
@@ -199,6 +206,19 @@ impl PulseAudioPlugin {
                         tracing::info!(channel_name = %name, channel_id = id, sink_name = %sink_name, "channel created");
                         self.peaks
                             .start_monitoring(&sink_name, SourceId::Channel(id));
+
+                        // Set System channel as default PA sink so all unassigned apps
+                        // route through the matrix automatically (WL3 model)
+                        if sink_name.contains("System") {
+                            tracing::info!(
+                                sink_name = %sink_name,
+                                "setting System channel as default PA sink"
+                            );
+                            let _ = std::process::Command::new("pactl")
+                                .args(["set-default-sink", &sink_name])
+                                .status();
+                        }
+
                         self.channel_sinks.insert(id, sink_name);
                     }
                     Err(e) => {
@@ -209,6 +229,7 @@ impl PulseAudioPlugin {
 
                 let effects = crate::effects::EffectsParams::default();
                 self.effects_chains.insert(id, EffectsChain::new());
+
                 self.channels.push(ChannelInfo {
                     id,
                     name,
@@ -217,6 +238,7 @@ impl PulseAudioPlugin {
                     assigned_app_binaries: vec![],
                     muted: false,
                     effects,
+                    master_volume: 1.0,
                 });
 
                 Ok(PluginResponse::ChannelCreated { id })
@@ -371,10 +393,38 @@ impl PulseAudioPlugin {
                     // Resolve the source sink name for the monitor
                     let channel_id = match source {
                         SourceId::Channel(id) => id,
-                        SourceId::Hardware(_) => {
-                            tracing::warn!(source = ?source, "hardware source routing not yet supported");
-                            self.routes.entry((source, mix)).or_default().enabled = true;
-                            return Ok(PluginResponse::Ok);
+                        SourceId::Hardware(hw_id) => {
+                            // Hardware input routing: find the PA source name from the
+                            // current snapshot's hardware_inputs list
+                            let hw_inputs = DeviceEnumerator::list_inputs(self.connection.as_mut());
+                            let hw_source = hw_inputs
+                                .iter()
+                                .find(|h| h.id == hw_id)
+                                .map(|h| h.device_id.clone());
+                            if let Some(source_name) = hw_source {
+                                let mix_sink = self
+                                    .mix_sinks
+                                    .get(&mix)
+                                    .cloned()
+                                    .ok_or_else(|| OsgError::MixNotFound(mix))?;
+                                tracing::debug!(
+                                    hw_source = %source_name,
+                                    mix_sink = %mix_sink,
+                                    "creating loopback for hardware input route"
+                                );
+                                let module_id = self.modules.create_loopback(
+                                    self.connection.as_mut(),
+                                    &source_name,
+                                    &mix_sink,
+                                    20,
+                                )?;
+                                self.loopback_modules.insert((source, mix), module_id);
+                                self.routes.entry((source, mix)).or_default().enabled = true;
+                                return Ok(PluginResponse::Ok);
+                            } else {
+                                tracing::warn!(hw_id, "hardware input not found for routing");
+                                return Ok(PluginResponse::Ok);
+                            }
                         }
                         SourceId::Mix(_) => {
                             tracing::warn!(source = ?source, "mix-as-source routing not supported");
@@ -726,7 +776,6 @@ impl PulseAudioPlugin {
                 }
                 Ok(PluginResponse::Ok)
             }
-
         }
     }
 }
@@ -869,6 +918,33 @@ impl AudioPlugin for PulseAudioPlugin {
         // After that, all events flow through the unified channel (no polling).
         // No pending_events field anymore — events go through the unified channel.
         Vec::new()
+    }
+
+    fn collect_spectrum(&mut self) -> Vec<(crate::plugin::api::ChannelId, Vec<(f32, f32)>)> {
+        tracing::trace!(
+            channels = self.channel_sinks.len(),
+            "collecting spectrum data for all channels"
+        );
+        let mut results = Vec::new();
+        for (&channel_id, sink_name) in &self.channel_sinks {
+            let samples = spectrum::capture_monitor_samples(sink_name);
+            if !samples.is_empty() {
+                let bins = spectrum::samples_to_spectrum(&samples);
+                if !bins.is_empty() {
+                    tracing::trace!(
+                        channel_id,
+                        bins = bins.len(),
+                        "spectrum data captured for channel"
+                    );
+                    results.push((channel_id, bins));
+                }
+            }
+        }
+        tracing::debug!(
+            channels_with_data = results.len(),
+            "spectrum collection complete"
+        );
+        results
     }
 
     fn cleanup(&mut self) -> Result<()> {

@@ -32,6 +32,7 @@ fn test_app() -> App {
             assigned_app_binaries: vec![],
             muted: false,
             effects: Default::default(),
+            master_volume: 1.0,
         },
         ChannelInfo {
             id: 2,
@@ -41,6 +42,7 @@ fn test_app() -> App {
             assigned_app_binaries: vec![],
             muted: false,
             effects: Default::default(),
+            master_volume: 1.0,
         },
         ChannelInfo {
             id: 3,
@@ -50,6 +52,7 @@ fn test_app() -> App {
             assigned_app_binaries: vec!["firefox".into()],
             muted: false,
             effects: Default::default(),
+            master_volume: 1.0,
         },
     ];
     app.engine.state.mixes = vec![
@@ -334,7 +337,9 @@ fn clicking_create_channel_produces_toggle_message() -> Result<(), Error> {
 
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
-        messages.iter().any(|m| matches!(m, Message::ToggleChannelPicker)),
+        messages
+            .iter()
+            .any(|m| matches!(m, Message::ToggleChannelPicker)),
         "Clicking '+ Create channel' should produce ToggleChannelPicker message"
     );
 

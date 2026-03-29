@@ -1,5 +1,6 @@
 use iced::Color;
 use serde::{Deserialize, Serialize};
+use tracing::{debug, info, instrument, trace};
 
 // =============================================================================
 // Open Sound Grid Theme — Claude/Anthropic Design Language
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub enum ThemeMode {
     Dark,
     Light,
+    System,
 }
 
 impl Default for ThemeMode {
@@ -79,10 +81,60 @@ pub const LIGHT_BORDER: Color = Color::from_rgb(0.898, 0.890, 0.875); // #e5e3df
 
 // --- Theme-aware helpers ---
 
+/// Query the desktop environment for its preferred color scheme.
+///
+/// Uses the freedesktop portal Settings interface (works on KDE, GNOME, etc.).
+/// Returns `Dark` or `Light`. Falls back to `Dark` if D-Bus is unavailable.
+#[instrument]
+pub fn detect_system_theme() -> ThemeMode {
+    debug!("querying system theme via D-Bus");
+    let result = std::process::Command::new("busctl")
+        .args([
+            "--user",
+            "call",
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+            "Read",
+            "ss",
+            "org.freedesktop.appearance",
+            "color-scheme",
+        ])
+        .output();
+
+    match result {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            trace!(raw_output = %stdout, "D-Bus color-scheme response");
+            if stdout.contains('1') {
+                info!("system theme detected: Dark");
+                ThemeMode::Dark
+            } else {
+                info!("system theme detected: Light");
+                ThemeMode::Light
+            }
+        }
+        Err(e) => {
+            debug!(error = %e, "D-Bus query failed — defaulting to Dark");
+            ThemeMode::Dark
+        }
+    }
+}
+
+/// Resolve `ThemeMode::System` to a concrete `Dark` or `Light`.
+#[instrument]
+pub fn resolve_theme(mode: ThemeMode) -> ThemeMode {
+    match mode {
+        ThemeMode::System => detect_system_theme(),
+        other => other,
+    }
+}
+
 pub fn bg_primary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_PRIMARY,
         ThemeMode::Light => LIGHT_BG_PRIMARY,
+        ThemeMode::System => bg_primary(resolve_theme(mode)),
     }
 }
 
@@ -90,6 +142,7 @@ pub fn bg_secondary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_SECONDARY,
         ThemeMode::Light => LIGHT_BG_SECONDARY,
+        ThemeMode::System => bg_secondary(resolve_theme(mode)),
     }
 }
 
@@ -97,6 +150,7 @@ pub fn bg_elevated(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_ELEVATED,
         ThemeMode::Light => LIGHT_BG_ELEVATED,
+        ThemeMode::System => bg_elevated(resolve_theme(mode)),
     }
 }
 
@@ -104,6 +158,7 @@ pub fn bg_hover(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_HOVER,
         ThemeMode::Light => LIGHT_BG_HOVER,
+        ThemeMode::System => bg_hover(resolve_theme(mode)),
     }
 }
 
@@ -111,6 +166,7 @@ pub fn text_primary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_PRIMARY,
         ThemeMode::Light => LIGHT_TEXT_PRIMARY,
+        ThemeMode::System => text_primary(resolve_theme(mode)),
     }
 }
 
@@ -118,6 +174,7 @@ pub fn text_secondary(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_SECONDARY,
         ThemeMode::Light => LIGHT_TEXT_SECONDARY,
+        ThemeMode::System => text_secondary(resolve_theme(mode)),
     }
 }
 
@@ -125,6 +182,7 @@ pub fn text_muted(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => TEXT_MUTED,
         ThemeMode::Light => LIGHT_TEXT_MUTED,
+        ThemeMode::System => text_muted(resolve_theme(mode)),
     }
 }
 
@@ -132,6 +190,7 @@ pub fn border_color(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BORDER,
         ThemeMode::Light => LIGHT_BORDER,
+        ThemeMode::System => border_color(resolve_theme(mode)),
     }
 }
 
@@ -140,5 +199,40 @@ pub fn bg_empty_cell(mode: ThemeMode) -> Color {
     match mode {
         ThemeMode::Dark => BG_EMPTY_CELL,
         ThemeMode::Light => LIGHT_BG_EMPTY_CELL,
+        ThemeMode::System => bg_empty_cell(resolve_theme(mode)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_mode_system_variant_exists() {
+        let mode = ThemeMode::System;
+        assert_ne!(mode, ThemeMode::Dark);
+        assert_ne!(mode, ThemeMode::Light);
+    }
+
+    #[test]
+    fn detect_system_theme_returns_dark_or_light() {
+        let result = detect_system_theme();
+        assert!(result == ThemeMode::Dark || result == ThemeMode::Light);
+    }
+
+    #[test]
+    fn resolve_theme_mode_system_returns_concrete() {
+        let resolved = resolve_theme(ThemeMode::System);
+        assert!(resolved == ThemeMode::Dark || resolved == ThemeMode::Light);
+    }
+
+    #[test]
+    fn resolve_theme_dark_passes_through() {
+        assert_eq!(resolve_theme(ThemeMode::Dark), ThemeMode::Dark);
+    }
+
+    #[test]
+    fn resolve_theme_light_passes_through() {
+        assert_eq!(resolve_theme(ThemeMode::Light), ThemeMode::Light);
     }
 }

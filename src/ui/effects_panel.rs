@@ -111,10 +111,7 @@ pub fn effects_panel_body<'a>(
 }
 
 /// The actual EQ/compressor/gate controls — shared by both panel variants.
-fn effects_controls<'a>(
-    channel: &'a ChannelInfo,
-    theme_mode: ThemeMode,
-) -> Element<'a, Message> {
+fn effects_controls<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
     tracing::trace!(channel_id = ch_id, "rendering effects_controls");

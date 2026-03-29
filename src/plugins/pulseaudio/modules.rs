@@ -33,7 +33,10 @@ impl ModuleManager {
         tracing::debug!(sink_name = %name, description = %description, "creating null sink");
 
         let module_id = if let Some(conn) = conn {
-            let args = format!("sink_name={name} sink_properties=device.description={description}");
+            // PipeWire PA-compat truncates device.description at first space.
+            // Replace spaces with underscores for a clean, distinguishable name.
+            let desc_safe = description.replace(' ', "_");
+            let args = format!("sink_name={name} sink_properties=device.description={desc_safe}");
             introspect::load_module_sync(conn, "module-null-sink", &args)?
         } else {
             tracing::debug!(sink_name = %name, "no PA connection — falling back to pactl for null sink");
@@ -42,7 +45,7 @@ impl ModuleManager {
                     "load-module",
                     "module-null-sink",
                     &format!("sink_name={name}"),
-                    &format!("sink_properties=device.description={description}"),
+                    &format!("sink_properties=device.description={}", description.replace(' ', "_")),
                 ])
                 .output()
                 .map_err(|e| {

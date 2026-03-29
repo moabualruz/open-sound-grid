@@ -83,12 +83,7 @@ trait KGlobalAccel {
     ///
     /// `keys` is a list of Qt key integers; `flags` is a `KGlobalAccel::RegisterFlag`
     /// bitmask.
-    fn set_shortcut(
-        &self,
-        action_id: &[&str],
-        keys: &[i32],
-        flags: u32,
-    ) -> zbus::Result<Vec<i32>>;
+    fn set_shortcut(&self, action_id: &[&str], keys: &[i32], flags: u32) -> zbus::Result<Vec<i32>>;
 
     /// Return the D-Bus object path for the component named `component_unique`.
     fn get_component(
@@ -206,8 +201,7 @@ async fn run_listener(tx: mpsc::UnboundedSender<HotkeyEvent>) -> anyhow::Result<
                 );
 
                 // Filter to our own action only.
-                if args.component_unique == COMPONENT_UNIQUE
-                    && args.action_unique == ACTION_UNIQUE
+                if args.component_unique == COMPONENT_UNIQUE && args.action_unique == ACTION_UNIQUE
                 {
                     info!("Ctrl+Shift+M activated — sending MuteAll event");
                     if tx.send(HotkeyEvent::MuteAll).is_err() {
