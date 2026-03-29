@@ -2,7 +2,7 @@ pub mod app_list;
 pub mod audio_slider;
 pub mod channel_settings;
 pub mod effects_panel;
-pub mod eq_widget;
+pub mod eq;
 pub mod matrix;
 pub mod sidebar;
 pub mod theme;

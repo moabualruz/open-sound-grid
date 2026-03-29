@@ -11,7 +11,7 @@ use lucide_icons::iced::icon_x;
 use crate::app::Message;
 use crate::effects::EffectsParams;
 use crate::plugin::api::ChannelInfo;
-use crate::ui::eq_widget::eq_canvas;
+use crate::ui::eq::eq_canvas;
 use crate::ui::theme::{
     ThemeMode, bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary,
 };

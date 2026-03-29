@@ -6,6 +6,7 @@ use crate::error::{OsgError, Result};
 
 use super::connection::PulseConnection;
 use super::introspect;
+use super::introspect_control;
 
 pub struct ModuleManager {
     loaded_modules: Vec<u32>,
@@ -37,7 +38,7 @@ impl ModuleManager {
             // Replace spaces with underscores for a clean, distinguishable name.
             let desc_safe = description.replace(' ', "_");
             let args = format!("sink_name={name} sink_properties=device.description={desc_safe}");
-            introspect::load_module_sync(conn, "module-null-sink", &args)?
+            introspect_control::load_module_sync(conn, "module-null-sink", &args)?
         } else {
             tracing::debug!(sink_name = %name, "no PA connection — falling back to pactl for null sink");
             let output = Command::new("pactl")
@@ -81,7 +82,7 @@ impl ModuleManager {
 
         let module_id = if let Some(conn) = conn {
             let args = format!("source={source_monitor} sink={sink} latency_msec={latency_ms}");
-            introspect::load_module_sync(conn, "module-loopback", &args)?
+            introspect_control::load_module_sync(conn, "module-loopback", &args)?
         } else {
             tracing::debug!(source = %source_monitor, sink = %sink, "no PA connection — falling back to pactl for loopback");
             let output = Command::new("pactl")
@@ -123,7 +124,7 @@ impl ModuleManager {
         tracing::debug!(module_id = module_id, "unloading module");
 
         if let Some(conn) = conn {
-            introspect::unload_module_sync(conn, module_id)?;
+            introspect_control::unload_module_sync(conn, module_id)?;
         } else {
             tracing::debug!(
                 module_id = module_id,
@@ -233,7 +234,7 @@ impl ModuleManager {
         volume: f32,
     ) -> Result<()> {
         if let Some(conn) = conn {
-            return introspect::set_sink_input_volume_sync(conn, sink_input_idx, volume);
+            return introspect_control::set_sink_input_volume_sync(conn, sink_input_idx, volume);
         }
 
         let percent = (volume * 100.0) as u32;
@@ -275,7 +276,7 @@ impl ModuleManager {
         muted: bool,
     ) -> Result<()> {
         if let Some(conn) = conn {
-            return introspect::set_sink_input_mute_sync(conn, sink_input_idx, muted);
+            return introspect_control::set_sink_input_mute_sync(conn, sink_input_idx, muted);
         }
 
         let mute_val = if muted { "1" } else { "0" };
@@ -316,7 +317,7 @@ impl ModuleManager {
         sink_name: &str,
     ) -> Result<()> {
         if let Some(conn) = conn {
-            return introspect::move_sink_input_sync(conn, sink_input_idx, sink_name);
+            return introspect_control::move_sink_input_sync(conn, sink_input_idx, sink_name);
         }
 
         tracing::debug!(sink_input_idx = sink_input_idx, sink_name = %sink_name, "moving sink-input via pactl (fallback)");
