@@ -26,8 +26,8 @@ audio-gate = "0.2"
 
 # Serialization & Config
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-confy = "0.6"
+toml = "1.1"
+confy = "2.0"
 directories = "6"
 
 # Async
