@@ -1053,8 +1053,20 @@ impl App {
                     app.icon_path = icon_path;
                 }
 
-                // Apps appear as matrix rows directly — no null-sink creation needed.
-                // Volume/mute controlled via set-sink-input-volume on the PA stream.
+                // Track seen apps for persistent history (Journey 1, 8)
+                let mut seen_changed = false;
+                for app in &apps {
+                    if !self.config.seen_apps.contains(&app.binary) {
+                        tracing::info!(binary = %app.binary, name = %app.name, "new app seen — adding to persistent history");
+                        self.config.seen_apps.push(app.binary.clone());
+                        seen_changed = true;
+                    }
+                }
+                if seen_changed {
+                    tracing::debug!(count = self.config.seen_apps.len(), "seen_apps updated, saving config");
+                    let _ = self.config.save();
+                }
+
                 self.engine.state.update_applications(apps);
             }
             Message::PluginPeakLevels(levels) => {
@@ -1869,6 +1881,7 @@ impl App {
             self.compact_mix_view,
             self.compact_selected_mix,
             &self.channel_search_text,
+            &self.config.seen_apps,
         );
 
         // App panel removed — apps auto-create channels or are managed inline

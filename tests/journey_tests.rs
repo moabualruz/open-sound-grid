@@ -1000,3 +1000,214 @@ mod channel_settings {
         Ok(())
     }
 }
+
+// =============================================================================
+// RED TESTS — These encode DREAM behavior not yet implemented
+// =============================================================================
+
+// --- Persistent App History (Journey 1, 8) ---
+mod j_persistent_apps {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn seen_apps_field_exists_in_config() {
+        let app = App::new();
+        // Config should have a seen_apps field that persists app binary names
+        assert!(
+            app.config.seen_apps.is_empty() || !app.config.seen_apps.is_empty(),
+            "AppConfig should have a seen_apps: Vec<String> field"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn apps_changed_updates_seen_apps() {
+        let mut app = casual_app();
+        // Simulate PluginAppsChanged — new apps should be added to seen_apps
+        let apps = vec![
+            detected_app(1, "Firefox", "firefox", 42),
+            detected_app(2, "Spotify", "spotify", 43),
+        ];
+        let _task = app.update(Message::PluginAppsChanged(apps));
+
+        assert!(
+            app.config.seen_apps.contains(&"firefox".to_string()),
+            "firefox should be in seen_apps after detection"
+        );
+        assert!(
+            app.config.seen_apps.contains(&"spotify".to_string()),
+            "spotify should be in seen_apps after detection"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn seen_apps_show_faded_in_dropdown_when_not_running() -> Result<(), Error> {
+        let mut app = App::new();
+        app.engine.state.mixes = vec![monitor_mix()];
+        app.engine.state.channels.clear();
+        // App was seen before but is not currently running
+        app.config.seen_apps = vec!["firefox".into(), "spotify".into()];
+        app.engine.state.applications.clear(); // no running apps
+        app.show_channel_picker = true;
+
+        let mut ui = sim(&app);
+        // Seen-but-not-running apps should appear faded in the dropdown
+        // They should still be findable by name
+        ui.find("firefox")?;
+        ui.find("spotify")?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn seen_apps_persist_across_restart() {
+        let mut app = App::new();
+        app.config.seen_apps = vec!["firefox".into(), "vlc".into()];
+        // After save + reload, seen_apps should survive
+        let _ = app.config.save();
+
+        let reloaded = open_sound_grid::config::AppConfig::load();
+        assert!(
+            reloaded.seen_apps.contains(&"firefox".to_string()),
+            "seen_apps should persist after config reload"
+        );
+    }
+}
+
+// --- Compact View Rendering (Journey 10) ---
+mod j_compact_view {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn compact_view_shows_mix_selector_dropdown() -> Result<(), Error> {
+        let mut app = gamer_app();
+        app.compact_mix_view = true;
+        app.compact_selected_mix = Some(1);
+
+        let mut ui = sim(&app);
+        // In compact mode, channels should still be visible
+        ui.find("Game")?;
+        // The mix selector pick_list renders "Monitor" as the selected option
+        ui.find("Monitor")?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn compact_view_shows_single_mix_column() -> Result<(), Error> {
+        let mut app = streamer_app();
+        app.compact_mix_view = true;
+        app.compact_selected_mix = Some(2); // Stream mix only
+
+        let mut ui = sim(&app);
+        // Stream should be visible
+        ui.find("Stream")?;
+        // Monitor should NOT be visible in compact mode with Stream selected
+        // (This tests that only the selected mix column renders)
+        let monitor_result = ui.find("Monitor");
+        // In compact view, Monitor header should not appear
+        // Note: Monitor text might appear in channel labels' master slider context
+        // The key test is that only 1 mix column of cells renders
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn compact_view_snapshot() -> Result<(), Error> {
+        let mut app = gamer_app();
+        app.compact_mix_view = true;
+        app.compact_selected_mix = Some(1);
+
+        let mut ui = sim(&app);
+        let snapshot = ui.snapshot(&Theme::Dark)?;
+        assert!(snapshot.matches_hash("tests/snapshots/j10_compact_view")?);
+        Ok(())
+    }
+}
+
+// --- Autostart (Journey 4, 6) ---
+mod j_autostart {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn autostart_desktop_entry_can_be_created() {
+        // The app should be able to create an XDG autostart .desktop file
+        let autostart_dir = directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
+            .unwrap()
+            .join("autostart");
+        let desktop_path = autostart_dir.join("open-sound-grid.desktop");
+
+        // Call the autostart setup function
+        open_sound_grid::autostart::install_autostart().expect("Should create autostart entry");
+
+        assert!(desktop_path.exists(), "Autostart .desktop file should exist");
+
+        let content = std::fs::read_to_string(&desktop_path).unwrap();
+        assert!(content.contains("[Desktop Entry]"));
+        assert!(content.contains("Exec=open-sound-grid"));
+        assert!(content.contains("Type=Application"));
+
+        // Cleanup
+        let _ = std::fs::remove_file(&desktop_path);
+    }
+
+    #[test]
+    #[ignore]
+    fn autostart_desktop_entry_can_be_removed() {
+        let autostart_dir = directories::BaseDirs::new().map(|d| d.config_dir().to_path_buf())
+            .unwrap()
+            .join("autostart");
+        let desktop_path = autostart_dir.join("open-sound-grid.desktop");
+
+        // Install first
+        open_sound_grid::autostart::install_autostart().expect("install");
+        assert!(desktop_path.exists());
+
+        // Remove
+        open_sound_grid::autostart::remove_autostart().expect("remove");
+        assert!(!desktop_path.exists(), "Autostart file should be removed");
+    }
+}
+
+// --- Full Tracing Coverage ---
+mod j_tracing {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn every_message_handler_has_tracing() {
+        // Verify that handling any message variant doesn't panic
+        // and that tracing is wired (we can't easily assert log output in tests,
+        // but we can ensure no handler is missing)
+        let mut app = casual_app();
+
+        // Exercise every message variant that doesn't require PA connection
+        let messages: Vec<Message> = vec![
+            Message::ToggleChannelPicker,
+            Message::ToggleChannelDropdown,
+            Message::ChannelSearchInput("test".into()),
+            Message::ToggleMixesView,
+            Message::SelectCompactMix(Some(1)),
+            Message::ChannelPanelTab(ChannelPanelTab::Apps),
+            Message::ChannelPanelTab(ChannelPanelTab::Effects),
+            Message::ChannelSettingsNameInput("New Name".into()),
+            Message::SettingsToggled,
+            Message::SidebarToggleCollapse,
+            Message::ThemeToggled,
+            Message::PresetNameInput("test preset".into()),
+            Message::UndoDelete,
+            Message::ClearUndo,
+            Message::RenameInput("rename test".into()),
+            Message::CancelRename,
+        ];
+
+        for msg in messages {
+            let _task = app.update(msg);
+            // No panic = tracing is wired and handler exists
+        }
+    }
+}

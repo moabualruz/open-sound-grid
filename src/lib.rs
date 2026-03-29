@@ -1,4 +1,5 @@
 pub mod app;
+pub mod autostart;
 pub mod config;
 pub mod effects;
 pub mod engine;

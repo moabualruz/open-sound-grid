@@ -74,6 +74,7 @@ pub fn matrix_grid<'a>(
     compact_view: bool,
     compact_mix: Option<MixId>,
     channel_search: &str,
+    seen_apps: &[String],
 ) -> Element<'a, Message> {
     tracing::trace!(
         channels = state.channels.len(),
@@ -337,6 +338,54 @@ pub fn matrix_grid<'a>(
                     ..Default::default()
                 });
                 dropdown_col = dropdown_col.push(app_btn);
+            }
+        }
+
+        // Seen-but-not-running apps (persistent history, faded)
+        let running_binaries: Vec<&str> = state
+            .applications
+            .iter()
+            .map(|a| a.binary.as_str())
+            .collect();
+        let not_running_seen: Vec<&String> = seen_apps
+            .iter()
+            .filter(|b| !running_binaries.contains(&b.as_str()))
+            .filter(|b| {
+                search_lower.is_empty()
+                    || b.to_lowercase().contains(&search_lower)
+            })
+            .collect();
+        if !not_running_seen.is_empty() {
+            for binary in &not_running_seen {
+                let label = text(binary.to_string())
+                    .size(11)
+                    .color(text_muted(theme_mode));
+                let faded_row = row![
+                    icon_headphones()
+                        .size(14)
+                        .color(text_muted(theme_mode))
+                        .center(),
+                    label,
+                    Space::new().width(Length::Fill),
+                    text("not running").size(9).color(text_muted(theme_mode)),
+                ]
+                .spacing(6)
+                .align_y(iced::Alignment::Center);
+
+                dropdown_col = dropdown_col.push(
+                    container(faded_row)
+                        .padding([4, 8])
+                        .width(Length::Fill)
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(Background::Color(bg_primary(theme_mode))),
+                            border: Border {
+                                color: border_color(theme_mode),
+                                width: 0.0,
+                                radius: 4.0.into(),
+                            },
+                            ..Default::default()
+                        }),
+                );
             }
         }
 

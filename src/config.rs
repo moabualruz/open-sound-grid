@@ -29,6 +29,9 @@ pub struct AppConfig {
     pub routes: Vec<RouteConfig>,
     #[serde(default)]
     pub failover: DeviceFailover,
+    /// Binary names of apps seen during any session (persists across restarts).
+    #[serde(default)]
+    pub seen_apps: Vec<String>,
 }
 
 /// A persisted route between a channel and a mix.
@@ -143,6 +146,7 @@ impl Default for AppConfig {
             },
             routes: Vec::new(),
             failover: DeviceFailover::default(),
+            seen_apps: Vec::new(),
         }
     }
 }
