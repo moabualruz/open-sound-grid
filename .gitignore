@@ -31,3 +31,9 @@ Desktop.ini
 .agent/
 .gsd/
 .superpowers/
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+
+# ── Test snapshots (regenerated on test run) ────────────────
+tests/snapshots/

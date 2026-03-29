@@ -5,7 +5,7 @@ use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Border, Element, Length, Subscription, Task, Theme};
-use lucide_icons::iced::{icon_moon, icon_settings, icon_sun};
+use lucide_icons::iced::{icon_expand, icon_moon, icon_settings, icon_shrink, icon_sun};
 use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ChannelConfig, MixConfig, RouteConfig};
@@ -19,6 +19,13 @@ use crate::ui;
 /// Global slot for the plugin event receiver.
 /// Set once during boot, consumed once by the subscription stream.
 static EVENT_RX: OnceLock<Mutex<Option<mpsc::UnboundedReceiver<PluginEvent>>>> = OnceLock::new();
+
+/// Tab selection for the channel side panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelPanelTab {
+    Apps,
+    Effects,
+}
 
 /// All possible UI messages.
 #[derive(Debug, Clone)]
@@ -50,14 +57,20 @@ pub enum Message {
         mix: MixId,
     },
 
-    // Direct app stream controls (no null-sink, controls PA sink-input directly)
-    AppVolumeChanged {
-        stream_index: u32,
-        volume: f32,
-    },
-    AppMuteToggled(u32), // stream_index
 
     // Application routing
+    /// Assign an app to a channel (checkbox checked in channel settings panel).
+    AssignApp {
+        channel: ChannelId,
+        stream_index: u32,
+    },
+    /// Unassign an app from a channel (checkbox unchecked in channel settings panel).
+    UnassignApp {
+        channel: ChannelId,
+        stream_index: u32,
+    },
+    /// Switch between Apps/Effects tabs in the channel side panel.
+    ChannelPanelTab(ChannelPanelTab),
     #[allow(dead_code)]
     AppRouteChanged {
         app_index: u32,
@@ -150,6 +163,32 @@ pub enum Message {
     SidebarToggleCollapse,
     ThemeToggled,
 
+    // v0.4.0: Channel creation dropdown
+    /// Toggle the channel creation dropdown visibility.
+    ToggleChannelDropdown,
+    /// User typed in the channel creation search field.
+    ChannelSearchInput(String),
+    /// Create a channel directly from a detected app (by stream_index).
+    CreateChannelFromApp(u32),
+
+    // v0.4.0: Shrink/expand mixes view
+    /// Toggle between full matrix and single-mix compact view.
+    ToggleMixesView,
+    /// In compact view, select which single mix to show.
+    SelectCompactMix(Option<MixId>),
+
+    // v0.4.0: Effects copy/paste
+    /// Copy the selected channel's effects chain to clipboard.
+    CopyEffects(ChannelId),
+    /// Paste the copied effects chain to the selected channel.
+    PasteEffects(ChannelId),
+
+    // v0.4.0: Channel name editing in settings panel
+    /// User edited the channel name in the settings panel text input.
+    ChannelSettingsNameInput(String),
+    /// Confirm channel name change from settings panel.
+    ChannelSettingsNameConfirm(ChannelId),
+
     // Presets
     SavePreset(String),
     LoadPreset(String),
@@ -197,6 +236,20 @@ pub struct App {
     pub editing_mix: Option<MixId>,
     /// Current text in the rename input field.
     pub editing_text: String,
+    /// Active tab in the channel side panel (Apps or Effects).
+    pub channel_panel_tab: ChannelPanelTab,
+    /// v0.4.0: Whether the channel creation dropdown is open.
+    pub show_channel_dropdown: bool,
+    /// v0.4.0: Search text in the channel creation dropdown.
+    pub channel_search_text: String,
+    /// v0.4.0: Whether the matrix is in compact (shrunk) single-mix view.
+    pub compact_mix_view: bool,
+    /// v0.4.0: Which mix to show in compact view (None = all channels).
+    pub compact_selected_mix: Option<MixId>,
+    /// v0.4.0: Copied effects chain for paste between channels.
+    pub copied_effects: Option<crate::effects::EffectsParams>,
+    /// v0.4.0: Channel name text in the settings panel name field.
+    pub channel_settings_name: String,
 }
 
 impl App {
@@ -233,6 +286,13 @@ impl App {
             editing_channel: None,
             editing_mix: None,
             editing_text: String::new(),
+            channel_panel_tab: ChannelPanelTab::Apps,
+            show_channel_dropdown: false,
+            channel_search_text: String::new(),
+            compact_mix_view: false,
+            compact_selected_mix: None,
+            copied_effects: None,
+            channel_settings_name: String::new(),
         }
     }
 
@@ -457,25 +517,6 @@ impl App {
                     source,
                     mix,
                     muted: !currently_muted,
-                });
-            }
-            Message::AppVolumeChanged {
-                stream_index,
-                volume,
-            } => {
-                tracing::debug!(stream_index, volume, "app volume changed");
-                self.engine.send_command(PluginCommand::SetAppVolume {
-                    stream_index,
-                    volume,
-                });
-            }
-            Message::AppMuteToggled(stream_index) => {
-                // Toggle: find current mute state from applications list
-                // For now just send mute=true toggle (proper state tracking needed)
-                tracing::debug!(stream_index, "app mute toggled");
-                self.engine.send_command(PluginCommand::SetAppMuted {
-                    stream_index,
-                    muted: true, // TODO: track per-app mute state properly
                 });
             }
             Message::AppRouteChanged {
@@ -1319,6 +1360,25 @@ impl App {
                         self.focused_col = None;
                         tracing::debug!("keyboard: focus cleared");
                     }
+                    // v0.4.0: Ctrl+C/V for effects copy/paste
+                    Key::Character(ref ch)
+                        if (ch.as_str() == "c" || ch.as_str() == "C")
+                            && modifiers.control() =>
+                    {
+                        if let Some(ch_id) = self.selected_channel {
+                            tracing::info!(channel_id = ch_id, "keyboard: copy effects (Ctrl+C)");
+                            return self.update(Message::CopyEffects(ch_id));
+                        }
+                    }
+                    Key::Character(ref ch)
+                        if (ch.as_str() == "v" || ch.as_str() == "V")
+                            && modifiers.control() =>
+                    {
+                        if let Some(ch_id) = self.selected_channel {
+                            tracing::info!(channel_id = ch_id, "keyboard: paste effects (Ctrl+V)");
+                            return self.update(Message::PasteEffects(ch_id));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1331,6 +1391,102 @@ impl App {
                 self.config.ui.theme_mode = new_mode;
                 let _ = self.config.save();
             }
+            // v0.4.0: Channel creation dropdown
+            Message::ToggleChannelDropdown => {
+                tracing::debug!(show = !self.show_channel_dropdown, "channel dropdown toggled");
+                self.show_channel_dropdown = !self.show_channel_dropdown;
+                if self.show_channel_dropdown {
+                    self.channel_search_text.clear();
+                    // Close old picker if open
+                    self.show_channel_picker = false;
+                }
+            }
+            Message::ChannelSearchInput(text) => {
+                tracing::debug!(search = %text, "channel search input");
+                self.channel_search_text = text;
+            }
+            Message::CreateChannelFromApp(stream_index) => {
+                if let Some(app) = self
+                    .engine
+                    .state
+                    .applications
+                    .iter()
+                    .find(|a| a.stream_index == stream_index)
+                {
+                    let name = app.name.clone();
+                    tracing::info!(stream_index, name = %name, "creating channel from detected app");
+                    self.engine
+                        .send_command(PluginCommand::CreateChannel { name });
+                    self.show_channel_dropdown = false;
+                    // Route the app to the new channel after state refresh
+                }
+            }
+
+            // v0.4.0: Shrink/expand mixes view
+            Message::ToggleMixesView => {
+                self.compact_mix_view = !self.compact_mix_view;
+                tracing::debug!(compact = self.compact_mix_view, "mixes view toggled");
+                if self.compact_mix_view {
+                    // Default to first mix
+                    self.compact_selected_mix = self.engine.state.mixes.first().map(|m| m.id);
+                }
+            }
+            Message::SelectCompactMix(mix_id) => {
+                tracing::debug!(mix_id = ?mix_id, "compact mix selected");
+                self.compact_selected_mix = mix_id;
+            }
+
+            // v0.4.0: Effects copy/paste
+            Message::CopyEffects(channel_id) => {
+                if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == channel_id) {
+                    tracing::info!(channel_id, name = %ch.name, "copied effects");
+                    self.copied_effects = Some(ch.effects.clone());
+                }
+            }
+            Message::PasteEffects(channel_id) => {
+                if let Some(params) = self.copied_effects.clone() {
+                    tracing::info!(channel_id, "pasting effects");
+                    self.engine.send_command(PluginCommand::SetEffectsParams {
+                        channel: channel_id,
+                        params,
+                    });
+                }
+            }
+
+            // v0.4.0: Channel name editing in settings panel
+            Message::ChannelSettingsNameInput(text) => {
+                tracing::debug!(text = %text, "channel settings name input");
+                self.channel_settings_name = text;
+            }
+            Message::ChannelSettingsNameConfirm(channel_id) => {
+                let name = self.channel_settings_name.clone();
+                if !name.is_empty() {
+                    tracing::info!(channel_id, name = %name, "renaming channel from settings panel");
+                    self.engine.send_command(PluginCommand::RenameChannel {
+                        id: channel_id,
+                        name: name.clone(),
+                    });
+                    // Update config
+                    if let Some(ch) = self
+                        .engine
+                        .state
+                        .channels
+                        .iter()
+                        .find(|c| c.id == channel_id)
+                    {
+                        if let Some(cfg) = self
+                            .config
+                            .channels
+                            .iter_mut()
+                            .find(|c| c.name == ch.name)
+                        {
+                            cfg.name = name;
+                            let _ = self.config.save();
+                        }
+                    }
+                }
+            }
+
             Message::SavePreset(name) => {
                 tracing::info!(name = %name, "saving preset");
                 let preset = crate::presets::MixerPreset::from_current(
@@ -1426,8 +1582,90 @@ impl App {
                     self.routing_app = None;
                     return Task::none();
                 }
-                tracing::debug!(channel_id = ?id, "selected channel for effects panel");
-                self.selected_channel = id;
+                tracing::debug!(channel_id = ?id, "selected channel for side panel");
+                if self.selected_channel == id {
+                    // Clicking same channel again closes the panel
+                    self.selected_channel = None;
+                } else {
+                    self.selected_channel = id;
+                    self.channel_panel_tab = ChannelPanelTab::Apps;
+                    // Pre-fill channel name in settings panel
+                    if let Some(ch_id) = id {
+                        if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id)
+                        {
+                            self.channel_settings_name = ch.name.clone();
+                        }
+                    }
+                }
+            }
+            Message::ChannelPanelTab(tab) => {
+                tracing::debug!(tab = ?tab, "channel panel tab switched");
+                self.channel_panel_tab = tab;
+            }
+            Message::AssignApp {
+                channel,
+                stream_index,
+            } => {
+                tracing::info!(stream_index, channel_id = channel, "assigning app to channel");
+                // Persist binary name in config
+                if let Some(app_info) = self
+                    .engine
+                    .state
+                    .applications
+                    .iter()
+                    .find(|a| a.stream_index == stream_index)
+                {
+                    let binary = app_info.binary.clone();
+                    if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
+                        self.engine
+                            .state
+                            .channels
+                            .iter()
+                            .find(|ch| ch.id == channel)
+                            .map(|ch| ch.name == c.name)
+                            .unwrap_or(false)
+                    }) {
+                        if !ch_cfg.assigned_apps.contains(&binary) {
+                            ch_cfg.assigned_apps.push(binary);
+                            let _ = self.config.save();
+                        }
+                    }
+                }
+                self.engine.send_command(PluginCommand::RouteApp {
+                    app: stream_index,
+                    channel,
+                });
+            }
+            Message::UnassignApp {
+                channel,
+                stream_index,
+            } => {
+                tracing::info!(stream_index, channel_id = channel, "unassigning app from channel");
+                // Remove binary from config
+                if let Some(app_info) = self
+                    .engine
+                    .state
+                    .applications
+                    .iter()
+                    .find(|a| a.stream_index == stream_index)
+                {
+                    let binary = &app_info.binary;
+                    if let Some(ch_cfg) = self.config.channels.iter_mut().find(|c| {
+                        self.engine
+                            .state
+                            .channels
+                            .iter()
+                            .find(|ch| ch.id == channel)
+                            .map(|ch| ch.name == c.name)
+                            .unwrap_or(false)
+                    }) {
+                        ch_cfg.assigned_apps.retain(|b| b != binary);
+                        let _ = self.config.save();
+                    }
+                }
+                self.engine.send_command(PluginCommand::UnrouteApp {
+                    app: stream_index,
+                });
             }
             Message::EffectsToggled { channel, enabled } => {
                 tracing::debug!(channel_id = channel, enabled, "effects toggled");
@@ -1569,6 +1807,26 @@ impl App {
                 Space::new().width(Length::Fill),
                 device_picker,
                 Space::new().width(Length::Fixed(8.0)),
+                // v0.4.0: Shrink/expand mixes toggle
+                button(
+                    if self.compact_mix_view {
+                        icon_expand().size(13).color(ui::theme::text_secondary(tm))
+                    } else {
+                        icon_shrink().size(13).color(ui::theme::text_secondary(tm))
+                    },
+                )
+                .on_press(Message::ToggleMixesView)
+                .style(move |_theme: &Theme, _status| button::Style {
+                    background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),
+                    border: iced::Border {
+                        radius: iced::border::Radius::from(4.0),
+                        ..Default::default()
+                    },
+                    text_color: ui::theme::text_secondary(tm),
+                    ..Default::default()
+                })
+                .padding([2, 8]),
+                Space::new().width(Length::Fixed(4.0)),
                 theme_btn,
                 Space::new().width(Length::Fixed(4.0)),
                 compact_btn,
@@ -1608,6 +1866,9 @@ impl App {
             self.editing_channel,
             self.editing_mix,
             &self.editing_text,
+            self.compact_mix_view,
+            self.compact_selected_mix,
+            &self.channel_search_text,
         );
 
         // App panel removed — apps auto-create channels or are managed inline
@@ -1793,15 +2054,39 @@ impl App {
             None
         };
 
-        // Build the matrix area: matrix on the left, optional effects panel on the right
+        // Build the matrix area: matrix on the left, optional channel settings panel on the right
         let matrix_area: Element<'_, Message> = if let Some(ch_id) = self.selected_channel {
             if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == ch_id) {
-                tracing::trace!(channel_id = ch_id, "rendering effects panel as side panel");
-                let effects = scrollable(ui::effects_panel::effects_panel(ch, tm))
-                    .width(Length::Fixed(280.0))
-                    .height(Length::Fill);
+                // Compute not-running binaries for this channel
+                let running_binaries: Vec<&str> = self
+                    .engine
+                    .state
+                    .applications
+                    .iter()
+                    .map(|a| a.binary.as_str())
+                    .collect();
+                let not_running: Vec<String> = ch
+                    .assigned_app_binaries
+                    .iter()
+                    .filter(|b| !running_binaries.contains(&b.as_str()))
+                    .cloned()
+                    .collect();
 
-                row![matrix, effects,]
+                tracing::trace!(channel_id = ch_id, "rendering channel settings side panel");
+                let side_panel = scrollable(
+                    ui::channel_settings::channel_settings_panel(
+                        ch,
+                        &self.engine.state.applications,
+                        not_running,
+                        self.channel_panel_tab,
+                        tm,
+                        &self.channel_settings_name,
+                    ),
+                )
+                .width(Length::Fixed(280.0))
+                .height(Length::Fill);
+
+                row![matrix, side_panel,]
                     .spacing(0)
                     .width(Length::Fill)
                     .height(Length::Fill)

@@ -16,7 +16,7 @@ use crate::ui::theme::{
     ThemeMode, bg_elevated, bg_hover, border_color, text_muted, text_primary, text_secondary,
 };
 
-/// Render the effects panel for a selected channel.
+/// Render the standalone effects panel for a selected channel (legacy, with own header/close).
 pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Element<'a, Message> {
     let ch_id = channel.id;
     let params = &channel.effects;
@@ -53,6 +53,69 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     ]
     .align_y(iced::Alignment::Center)
     .spacing(8);
+
+    let channel_label = text(format!("Channel: {}", channel.name))
+        .size(12)
+        .color(text_primary(theme_mode));
+
+    let body = effects_controls(channel, theme_mode);
+
+    let panel = column![
+        channel_label,
+        Space::new().height(Length::Fixed(4.0)),
+        header,
+        body,
+    ]
+    .spacing(2)
+    .padding(8);
+
+    container(panel)
+        .width(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(iced::Background::Color(bg_elevated(theme_mode))),
+            border: iced::Border {
+                color: border_color(theme_mode),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Effects panel body without header/close — used by channel_settings panel.
+pub fn effects_panel_body<'a>(
+    channel: &'a ChannelInfo,
+    theme_mode: ThemeMode,
+) -> Element<'a, Message> {
+    let ch_id = channel.id;
+    let params = &channel.effects;
+
+    let toggle_row = row![
+        text("Effects").size(12).color(text_primary(theme_mode)),
+        Space::new().width(Length::Fill),
+        toggler(params.enabled)
+            .on_toggle(move |enabled| Message::EffectsToggled {
+                channel: ch_id,
+                enabled,
+            })
+            .size(16),
+    ]
+    .align_y(iced::Alignment::Center)
+    .spacing(8);
+
+    let body = effects_controls(channel, theme_mode);
+
+    column![toggle_row, body].spacing(4).into()
+}
+
+/// The actual EQ/compressor/gate controls — shared by both panel variants.
+fn effects_controls<'a>(
+    channel: &'a ChannelInfo,
+    theme_mode: ThemeMode,
+) -> Element<'a, Message> {
+    let ch_id = channel.id;
+    let params = &channel.effects;
 
     let sep = move || {
         container(Space::new())
@@ -219,14 +282,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         .step(1.0)
     };
 
-    let channel_label = text(format!("Channel: {}", channel.name))
-        .size(12)
-        .color(text_primary(theme_mode));
-
-    let panel = column![
-        channel_label,
-        Space::new().height(Length::Fixed(4.0)),
-        header,
+    column![
         sep(),
         Space::new().height(Length::Fixed(4.0)),
         eq_label,
@@ -260,20 +316,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
         gate_hold,
     ]
     .spacing(2)
-    .padding(8);
-
-    container(panel)
-        .width(Length::Fill)
-        .style(move |_: &Theme| container::Style {
-            background: Some(iced::Background::Color(bg_elevated(theme_mode))),
-            border: iced::Border {
-                color: border_color(theme_mode),
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+    .into()
 }
 
 /// Build a modified `EffectsParams` with the named param replaced by `value`.

@@ -53,6 +53,9 @@ libc = "0.2"
 # Icons
 lucide-icons = { version = "0.575", features = ["iced"] }
 
+[dev-dependencies]
+iced_test = "0.14"
+
 [features]
 default = []
 pipewire-backend = ["dep:pipewire", "dep:libspa"]

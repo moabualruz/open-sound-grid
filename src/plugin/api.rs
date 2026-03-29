@@ -178,10 +178,6 @@ pub enum PluginCommand {
     },
     /// Enable/disable effects for a channel.
     SetEffectsEnabled { channel: ChannelId, enabled: bool },
-    /// Set volume directly on an app's PA sink-input (no null-sink).
-    SetAppVolume { stream_index: u32, volume: f32 },
-    /// Mute/unmute an app's PA sink-input directly.
-    SetAppMuted { stream_index: u32, muted: bool },
 }
 
 impl fmt::Display for PluginCommand {
@@ -208,8 +204,6 @@ impl fmt::Display for PluginCommand {
             PluginCommand::SetSourceMuted { .. } => "SetSourceMuted",
             PluginCommand::SetEffectsParams { .. } => "SetEffectsParams",
             PluginCommand::SetEffectsEnabled { .. } => "SetEffectsEnabled",
-            PluginCommand::SetAppVolume { .. } => "SetAppVolume",
-            PluginCommand::SetAppMuted { .. } => "SetAppMuted",
         };
         f.write_str(name)
     }

@@ -727,34 +727,6 @@ impl PulseAudioPlugin {
                 Ok(PluginResponse::Ok)
             }
 
-            PluginCommand::SetAppVolume {
-                stream_index,
-                volume,
-            } => {
-                tracing::debug!(stream_index, volume, "setting app stream volume directly");
-                if let Err(e) = self.modules.set_sink_input_volume(
-                    self.connection.as_mut(),
-                    stream_index,
-                    volume.clamp(0.0, 1.0),
-                ) {
-                    tracing::warn!(stream_index, err = %e, "failed to set app volume");
-                }
-                Ok(PluginResponse::Ok)
-            }
-
-            PluginCommand::SetAppMuted {
-                stream_index,
-                muted,
-            } => {
-                tracing::debug!(stream_index, muted, "setting app stream mute directly");
-                if let Err(e) =
-                    self.modules
-                        .set_sink_input_mute(self.connection.as_mut(), stream_index, muted)
-                {
-                    tracing::warn!(stream_index, err = %e, "failed to set app mute");
-                }
-                Ok(PluginResponse::Ok)
-            }
         }
     }
 }
