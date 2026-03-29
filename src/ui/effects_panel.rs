@@ -6,6 +6,7 @@
 
 use iced::widget::{button, column, container, row, slider, text, toggler, Space};
 use iced::{Background, Element, Length, Theme};
+use lucide_icons::iced::icon_x;
 
 use crate::app::Message;
 use crate::effects::EffectsParams;
@@ -22,7 +23,7 @@ pub fn effects_panel<'a>(channel: &'a ChannelInfo, theme_mode: ThemeMode) -> Ele
     tracing::trace!(channel_id = ch_id, name = %channel.name, effects_enabled = params.enabled, "rendering effects panel");
 
     let close_btn = button(
-        text("×").size(13).color(text_muted(theme_mode)).center(),
+        icon_x().size(13).color(text_muted(theme_mode)).center(),
     )
     .width(20)
     .height(20)

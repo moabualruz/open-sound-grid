@@ -1,5 +1,6 @@
 use iced::window;
 use iced::Size;
+use lucide_icons::LUCIDE_FONT_BYTES;
 
 mod app;
 mod config;
@@ -91,6 +92,7 @@ fn main() -> anyhow::Result<()> {
             app::App::update,
             app::App::view,
         )
+        .font(LUCIDE_FONT_BYTES)
         .subscription(app::App::subscription)
         .theme(app::App::theme)
         .window(window_settings)
@@ -98,6 +100,7 @@ fn main() -> anyhow::Result<()> {
     } else {
         // No plugin — run UI without audio backend
         iced::application(app::App::new, app::App::update, app::App::view)
+            .font(LUCIDE_FONT_BYTES)
             .subscription(app::App::subscription)
             .theme(app::App::theme)
             .window(window_settings)

@@ -49,6 +49,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
 anyhow = "1"
 
+# Icons
+lucide-icons = { version = "0.575", features = ["iced"] }
+
 [features]
 default = []
 pipewire-backend = ["dep:pipewire", "dep:libspa"]

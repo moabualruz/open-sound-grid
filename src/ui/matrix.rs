@@ -6,6 +6,7 @@
 
 use iced::widget::{button, column, container, row, scrollable, text, Space};
 use iced::{Background, Border, Element, Length, Theme};
+use lucide_icons::iced::{icon_plus, icon_volume_2, icon_volume_x, icon_x};
 
 use crate::app::Message;
 use crate::engine::state::MixerState;
@@ -205,12 +206,12 @@ fn mix_header<'a>(
             ..Default::default()
         });
 
-    let mute_label = if muted { "M" } else { " " };
-    let mute_btn = button(
-        text(mute_label)
-            .size(9)
-            .center(),
-    )
+    let mute_icon = if muted {
+        icon_volume_x().size(9).center()
+    } else {
+        icon_volume_2().size(9).center()
+    };
+    let mute_btn = button(mute_icon)
     .width(16)
     .height(16)
     .on_press(Message::MixMuteToggled(mix_id))
@@ -231,10 +232,7 @@ fn mix_header<'a>(
     });
 
     let remove_btn = button(
-        text("×")
-            .size(10)
-            .color(text_muted(theme_mode))
-            .center(),
+        icon_x().size(10).color(text_muted(theme_mode)).center(),
     )
     .width(12)
     .height(12)
@@ -301,12 +299,12 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId, theme_mode: Them
         _ => None,
     };
 
-    let mute_label = if muted { "M" } else { " " };
-    let mute_btn = button(
-        text(mute_label)
-            .size(10)
-            .center(),
-    )
+    let mute_icon = if muted {
+        icon_volume_x().size(10).center()
+    } else {
+        icon_volume_2().size(10).center()
+    };
+    let mute_btn = button(mute_icon)
     .width(20)
     .height(20)
     .on_press(Message::SourceMuteToggled(source))
@@ -331,10 +329,7 @@ fn channel_label<'a>(name: &str, muted: bool, source: SourceId, theme_mode: Them
         tracing::trace!(channel_id = cid, "rendering channel remove button");
         Some(
             button(
-                text("×")
-                    .size(10)
-                    .color(text_muted(theme_mode))
-                    .center(),
+                icon_x().size(10).color(text_muted(theme_mode)).center(),
             )
             .width(12)
             .height(12)
@@ -423,10 +418,12 @@ fn matrix_cell<'a>(
             let vol = route.volume;
             let muted = route.muted;
 
-            let mute_label = if muted { "M" } else { " " };
-            let mute_btn = button(
-                text(mute_label).size(9).center(),
-            )
+            let mute_icon = if muted {
+                icon_volume_x().size(9).center()
+            } else {
+                icon_volume_2().size(9).center()
+            };
+            let mute_btn = button(mute_icon)
             .width(16)
             .height(16)
             .on_press(Message::RouteMuteToggled { source, mix: mix_id })
@@ -468,10 +465,7 @@ fn matrix_cell<'a>(
         None => {
             // Empty cell -- source not routed to this mix; clicking creates the route
             button(
-                text("+")
-                    .size(16)
-                    .color(text_muted(theme_mode))
-                    .center(),
+                icon_plus().size(16).color(text_muted(theme_mode)).center(),
             )
             .width(Length::Fill)
             .height(Length::Fill)

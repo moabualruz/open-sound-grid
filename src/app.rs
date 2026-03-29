@@ -3,6 +3,7 @@ use std::sync::{Mutex, OnceLock};
 
 use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
 use iced::{Element, Length, Subscription, Task, Theme};
+use lucide_icons::iced::{icon_moon, icon_settings, icon_sun};
 use tokio::sync::mpsc;
 
 use crate::config::{AppConfig, ChannelConfig, MixConfig, RouteConfig};
@@ -1118,7 +1119,7 @@ impl App {
             "Open Sound Grid"
         };
         let compact_btn = button(
-            text("⊟").size(13).color(ui::theme::text_secondary(tm)),
+            icon_settings().size(13).color(ui::theme::text_secondary(tm)),
         )
         .on_press(Message::SettingsToggled)
         .style(move |_theme: &Theme, _status| button::Style {
@@ -1132,13 +1133,11 @@ impl App {
         })
         .padding([2, 8]);
 
-        let theme_icon = match self.config.ui.theme_mode {
-            ui::theme::ThemeMode::Dark => "☀",
-            ui::theme::ThemeMode::Light => "☾",
+        let theme_icon_widget = match self.config.ui.theme_mode {
+            ui::theme::ThemeMode::Dark => icon_sun().size(13).color(ui::theme::text_secondary(tm)),
+            ui::theme::ThemeMode::Light => icon_moon().size(13).color(ui::theme::text_secondary(tm)),
         };
-        let theme_btn = button(
-            text(theme_icon).size(13).color(ui::theme::text_secondary(tm)),
-        )
+        let theme_btn = button(theme_icon_widget)
         .on_press(Message::ThemeToggled)
         .style(move |_theme: &Theme, _status| button::Style {
             background: Some(iced::Background::Color(ui::theme::bg_hover(tm))),

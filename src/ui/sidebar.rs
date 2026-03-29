@@ -1,5 +1,6 @@
 use iced::widget::{button, column, container, rule, text, Space};
 use iced::{Background, Border, Element, Length, Theme};
+use lucide_icons::iced::{icon_chevron_left, icon_chevron_right, icon_headphones, icon_settings};
 
 use crate::app::Message;
 use crate::plugin::api::HardwareInput;
@@ -40,7 +41,7 @@ pub fn sidebar<'a>(collapsed: bool, hardware_inputs: &'a [HardwareInput], theme_
 
 fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!(input_count = hardware_inputs.len(), "rendering expanded sidebar");
-    let collapse_btn = button(text("«").size(14).center())
+    let collapse_btn = button(icon_chevron_left().size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
         .style(move |_: &Theme, status| button::Style {
@@ -74,8 +75,15 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode
             ..Default::default()
         });
 
-    let settings_btn = button(text("Settings").size(13).color(text_secondary(theme_mode)))
-        .on_press(Message::SettingsToggled)
+    let settings_btn = button(
+        iced::widget::row![
+            icon_settings().size(13).color(text_secondary(theme_mode)),
+            text("Settings").size(13).color(text_secondary(theme_mode)),
+        ]
+        .spacing(4)
+        .align_y(iced::Alignment::Center),
+    )
+    .on_press(Message::SettingsToggled)
         .padding([6, 8])
         .style(move |_: &Theme, status| button::Style {
             background: match status {
@@ -106,7 +114,7 @@ fn expanded_view<'a>(hardware_inputs: &'a [HardwareInput], theme_mode: ThemeMode
 
 fn collapsed_view<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
     tracing::trace!("rendering collapsed sidebar");
-    let settings_btn = button(text("*").size(16).center())
+    let settings_btn = button(icon_settings().size(16).center())
         .width(32)
         .on_press(Message::SettingsToggled)
         .style(move |_: &Theme, status| button::Style {
@@ -118,7 +126,7 @@ fn collapsed_view<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
             ..Default::default()
         });
 
-    let expand_btn = button(text("»").size(14).center())
+    let expand_btn = button(icon_chevron_right().size(14).center())
         .width(32)
         .on_press(Message::SidebarToggleCollapse)
         .style(move |_: &Theme, status| button::Style {
@@ -132,7 +140,7 @@ fn collapsed_view<'a>(theme_mode: ThemeMode) -> Element<'a, Message> {
 
     column![
         expand_btn,
-        text("#").size(16).color(text_primary(theme_mode)).center(),
+        icon_headphones().size(16).color(text_primary(theme_mode)).center(),
         Space::new().width(Length::Fill).height(Length::Fill),
         settings_btn,
     ]
