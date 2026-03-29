@@ -131,14 +131,10 @@ impl PulseAudioPlugin {
             }
         }
 
-        // Poll PA for current peak levels of all registered monitor sinks.
-        // Only sinks explicitly started via start_monitoring() are queried —
-        // avoids touching every PA sink on the system.
-        // PeakUpdate messages (sent via the unified channel) are the future
-        // path for stream-callback-driven peaks; for now peaks arrive here
-        // on every state refresh triggered by a PA subscribe event or UI command.
-        self.peaks.read_peaks();
-
+        // Peak levels are read from the SharedPeak atomics via get_levels() —
+        // lock-free and instant. read_peaks() (which spawned pactl subprocesses)
+        // has been removed from this path; peaks are updated independently by
+        // the PeakMonitor background thread and do not block state rebuilds.
         MixerSnapshot {
             channels: self.channels.clone(),
             mixes: self.mixes.clone(),

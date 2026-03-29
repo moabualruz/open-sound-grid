@@ -1,9 +1,13 @@
 //! Panel showing detected audio applications with routing controls.
 //!
-//! Each detected app can be assigned to a channel via a button.
+//! Two-step click workflow:
+//! 1. Click an app entry → app becomes "selected" (highlighted, emits AppRoutingStarted)
+//! 2. Click a channel label in the matrix → app is routed there (SelectedChannel handler
+//!    checks routing_app and calls RouteApp if set)
+//! 3. Selection clears automatically after routing
 
 use iced::widget::{button, column, container, row, text, Space};
-use iced::{Background, Border, Element, Length, Theme};
+use iced::{Alignment, Background, Border, Element, Length, Theme};
 
 use crate::app::Message;
 use crate::plugin::api::{AudioApplication, ChannelInfo};
@@ -14,13 +18,21 @@ use crate::ui::theme::{
 
 /// Panel showing detected audio applications.
 ///
-/// Each app has a button per channel to route it there.
+/// Each app is a clickable button. Clicking an app selects it for routing
+/// (highlights with accent background). Then clicking a channel label in the
+/// matrix assigns the app to that channel.
 pub fn app_list_panel<'a>(
     apps: &'a [AudioApplication],
     channels: &'a [ChannelInfo],
     theme_mode: ThemeMode,
+    routing_app: Option<u32>,
 ) -> Element<'a, Message> {
-    tracing::trace!(app_count = apps.len(), channel_count = channels.len(), "rendering app list panel");
+    tracing::trace!(
+        app_count = apps.len(),
+        channel_count = channels.len(),
+        routing_app = ?routing_app,
+        "rendering app list panel"
+    );
 
     let header = text("Applications").size(12).color(text_secondary(theme_mode));
 
@@ -32,10 +44,20 @@ pub fn app_list_panel<'a>(
         ]
         .spacing(4)
     } else {
-        let mut col = column![header].spacing(4);
+        let routing_hint = if routing_app.is_some() {
+            text("Click a channel label to assign →")
+                .size(10)
+                .color(ACCENT)
+        } else {
+            text("Click an app to start routing")
+                .size(10)
+                .color(text_muted(theme_mode))
+        };
+
+        let mut col = column![header, routing_hint].spacing(4);
         for app in apps {
-            let app_row = app_entry(app, channels, theme_mode);
-            col = col.push(app_row);
+            let entry = app_entry(app, channels, theme_mode, routing_app);
+            col = col.push(entry);
         }
         col
     };
@@ -55,55 +77,73 @@ pub fn app_list_panel<'a>(
         .into()
 }
 
-/// Single app entry with name and routing buttons.
+/// Single app entry as a clickable button.
+///
+/// When this app is the active routing selection (`routing_app == Some(stream_index)`),
+/// the button is highlighted with the accent color and shows "Click a channel to assign..."
+/// hint text. Otherwise it shows a subtle "Click to route" label.
 fn app_entry<'a>(
     app: &'a AudioApplication,
     channels: &'a [ChannelInfo],
     theme_mode: ThemeMode,
+    routing_app: Option<u32>,
 ) -> Element<'a, Message> {
-    tracing::trace!(app_name = %app.name, stream_index = app.stream_index, "rendering app entry");
-    let name = text(&app.name).size(11).color(text_primary(theme_mode));
     let stream_idx = app.stream_index;
+    let is_routing = routing_app == Some(stream_idx);
 
-    let mut entry_row = row![name, Space::new().width(Length::Fill)].spacing(4)
-        .align_y(iced::Alignment::Center);
+    tracing::trace!(
+        app_name = %app.name,
+        stream_index = stream_idx,
+        is_routing,
+        "rendering app entry"
+    );
 
-    // One small route button per channel
-    for channel in channels {
-        let is_routed = channel.apps.contains(&stream_idx);
-        let ch_id = channel.id;
-        let label = if is_routed {
-            format!("✓ {}", &channel.name)
-        } else {
-            channel.name.clone()
-        };
+    // Current channel assignment label (e.g. "Music, FX" or "unassigned")
+    let assigned: Vec<&str> = channels
+        .iter()
+        .filter(|ch| ch.apps.contains(&stream_idx))
+        .map(|ch| ch.name.as_str())
+        .collect();
+    let assignment_label = if assigned.is_empty() {
+        "unassigned".to_owned()
+    } else {
+        assigned.join(", ")
+    };
 
-        let btn = button(text(label).size(9).center())
-            .padding([2, 6])
-            .on_press(Message::AppRouteChanged {
-                app_index: stream_idx,
-                channel_index: ch_id,
-            })
-            .style(move |_: &Theme, status| button::Style {
-                background: match (is_routed, status) {
-                    (true, _) => Some(Background::Color(ACCENT)),
-                    (false, button::Status::Hovered) => Some(Background::Color(bg_hover(theme_mode))),
-                    _ => None,
-                },
-                text_color: if is_routed { text_primary(theme_mode) } else { text_secondary(theme_mode) },
-                border: Border {
-                    color: border_color(theme_mode),
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..Default::default()
-            });
+    let hint = if is_routing {
+        text("Click a channel to assign...").size(9).color(text_primary(theme_mode))
+    } else {
+        text(format!("→ {assignment_label}")).size(9).color(text_muted(theme_mode))
+    };
 
-        entry_row = entry_row.push(btn);
-    }
+    let inner = row![
+        text(&app.name).size(11).color(text_primary(theme_mode)),
+        Space::new().width(Length::Fill),
+        hint,
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
 
-    container(entry_row)
-        .padding([2, 4])
+    button(inner)
+        .on_press(Message::AppRoutingStarted(stream_idx))
+        .style(move |_: &Theme, status| button::Style {
+            background: if is_routing {
+                Some(Background::Color(ACCENT))
+            } else {
+                match status {
+                    button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
+                    _ => Some(Background::Color(bg_elevated(theme_mode))),
+                }
+            },
+            text_color: text_secondary(theme_mode),
+            border: Border {
+                color: if is_routing { ACCENT } else { border_color(theme_mode) },
+                width: if is_routing { 2.0 } else { 1.0 },
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding([6, 8])
         .width(Length::Fill)
         .into()
 }

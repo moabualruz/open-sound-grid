@@ -129,6 +129,30 @@ impl PluginManager {
     }
 }
 
+/// Returns `true` if a command mutates graph structure and requires a full
+/// `GetState` refresh to bring the UI in sync.
+///
+/// Volume, mute, and parameter-only commands update in-memory state and PA
+/// atomically — no state rebuild needed. Graph-structural commands (channel /
+/// mix creation/removal, routing changes, hardware output assignment) do need
+/// a refresh because the snapshot shape changes.
+fn needs_state_refresh(cmd: &PluginCommand) -> bool {
+    matches!(
+        cmd,
+        PluginCommand::CreateChannel { .. }
+            | PluginCommand::RemoveChannel { .. }
+            | PluginCommand::CreateMix { .. }
+            | PluginCommand::RemoveMix { .. }
+            | PluginCommand::SetRouteEnabled { .. }
+            | PluginCommand::RouteApp { .. }
+            | PluginCommand::UnrouteApp { .. }
+            | PluginCommand::SetMixOutput { .. }
+            | PluginCommand::ListHardwareInputs
+            | PluginCommand::ListHardwareOutputs
+            | PluginCommand::ListApplications
+    )
+}
+
 /// Plugin thread main loop — fully event-driven, no polling.
 ///
 /// Blocks on `unified_rx.recv()` and wakes only when:
@@ -183,19 +207,30 @@ fn run_plugin_thread(
                         }
                     }
                     other => {
+                        let should_refresh = needs_state_refresh(&other);
+                        tracing::debug!(
+                            command = %other,
+                            needs_refresh = should_refresh,
+                            "command processing — state refresh decision"
+                        );
                         match plugin.handle_command(other) {
                             Ok(_) => {
-                                // Mutation succeeded — refresh state so the UI updates
-                                match plugin.handle_command(PluginCommand::GetState) {
-                                    Ok(PluginResponse::State(snapshot)) => {
-                                        let _ =
-                                            event_tx.send(PluginEvent::StateRefreshed(snapshot));
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        tracing::warn!(error = %e, "post-mutation GetState failed");
+                                if should_refresh {
+                                    // Graph structure changed — rebuild snapshot so the UI reflects
+                                    // the new channel/mix/route topology.
+                                    match plugin.handle_command(PluginCommand::GetState) {
+                                        Ok(PluginResponse::State(snapshot)) => {
+                                            let _ =
+                                                event_tx.send(PluginEvent::StateRefreshed(snapshot));
+                                        }
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, "post-mutation GetState failed");
+                                        }
                                     }
                                 }
+                                // Volume/mute/param commands skip GetState — in-memory state and
+                                // PA volume are already correct; no full rebuild required.
                             }
                             Err(e) => {
                                 tracing::warn!(error = %e, "command produced error");

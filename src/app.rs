@@ -48,10 +48,13 @@ pub enum Message {
     },
 
     // Application routing
+    #[allow(dead_code)]
     AppRouteChanged {
         app_index: u32,
         channel_index: u32,
     },
+    /// User clicked an app entry to begin routing — next channel click will assign it.
+    AppRoutingStarted(u32),
     #[allow(dead_code)]
     RefreshApps,
 
@@ -130,6 +133,9 @@ pub struct App {
     pub available_presets: Vec<String>,
     /// Currently selected channel for effects panel display.
     pub selected_channel: Option<ChannelId>,
+    /// Stream index of the app currently being routed (two-step click workflow).
+    /// Set when the user clicks an app; cleared after they click a channel label.
+    pub routing_app: Option<u32>,
     /// Per-channel FFT spectrum data (populated when SpectrumData plugin events arrive).
     pub spectrum_data: HashMap<ChannelId, Vec<(f32, f32)>>,
 }
@@ -158,6 +164,7 @@ impl App {
             preset_name_input: String::new(),
             available_presets: crate::presets::MixerPreset::list(),
             selected_channel: None,
+            routing_app: None,
             spectrum_data: HashMap::new(),
         }
     }
@@ -350,6 +357,10 @@ impl App {
                     app: app_index,
                     channel: channel_index,
                 });
+            }
+            Message::AppRoutingStarted(stream_index) => {
+                tracing::debug!(stream_index, "app routing started — click a channel to assign");
+                self.routing_app = Some(stream_index);
             }
             Message::RefreshApps => {
                 tracing::debug!("refresh apps requested");
@@ -1031,6 +1042,20 @@ impl App {
                 self.preset_name_input = text;
             }
             Message::SelectedChannel(id) => {
+                // If an app is pending routing, use this channel click to assign it.
+                if let (Some(app_stream), Some(ch_id)) = (self.routing_app, id) {
+                    tracing::info!(
+                        app_stream,
+                        channel_id = ch_id,
+                        "routing app to channel via two-step click"
+                    );
+                    self.engine.send_command(PluginCommand::RouteApp {
+                        app: app_stream,
+                        channel: ch_id,
+                    });
+                    self.routing_app = None;
+                    return Task::none();
+                }
                 tracing::debug!(channel_id = ?id, "selected channel for effects panel");
                 self.selected_channel = id;
             }
@@ -1199,6 +1224,7 @@ impl App {
             &self.engine.state.applications,
             &self.engine.state.channels,
             tm,
+            self.routing_app,
         );
 
         let connected = self.engine.is_connected();
