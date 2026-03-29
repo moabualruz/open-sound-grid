@@ -78,6 +78,7 @@ fn test_app() -> App {
             volume: 0.75,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     // Add a detected application

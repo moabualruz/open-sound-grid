@@ -17,9 +17,12 @@ impl PulseAudioPlugin {
     ) -> Result<PluginResponse> {
         let volume = volume.clamp(0.0, 1.0);
         tracing::debug!(source = ?source, mix = mix, volume = volume, "setting route volume");
-        self.routes.entry((source, mix)).or_default().volume = volume;
+        let route = self.routes.entry((source, mix)).or_default();
+        route.volume = volume;
+        route.volume_left = volume;
+        route.volume_right = volume;
 
-        // Apply via PA if we have a sink-input for this route
+        // Apply volume via PA sink-input on the loopback
         if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
             tracing::debug!(
                 source = ?source, mix = mix, sink_input_idx, volume,
@@ -37,6 +40,45 @@ impl PulseAudioPlugin {
                 source = ?source, mix = mix, volume,
                 loopback_count = self.loopback_sink_inputs.len(),
                 "SetRouteVolume: no sink-input found for route — volume change lost"
+            );
+        }
+
+        Ok(PluginResponse::Ok)
+    }
+
+    pub(crate) fn handle_set_route_stereo_volume(
+        &mut self,
+        source: SourceId,
+        mix: MixId,
+        left: f32,
+        right: f32,
+    ) -> Result<PluginResponse> {
+        let left = left.clamp(0.0, 1.0);
+        let right = right.clamp(0.0, 1.0);
+        tracing::debug!(source = ?source, mix = mix, left, right, "setting route stereo volume");
+        let route = self.routes.entry((source, mix)).or_default();
+        route.volume_left = left;
+        route.volume_right = right;
+        route.volume = (left + right) / 2.0;
+
+        // Apply: PA sink-input (module-loopback) or wpctl (pw-link)
+        if let Some(&sink_input_idx) = self.loopback_sink_inputs.get(&(source, mix)) {
+            tracing::debug!(
+                source = ?source, mix = mix, sink_input_idx, left, right,
+                "applying stereo volume to PA sink-input"
+            );
+            if let Err(e) = self.modules.set_sink_input_stereo_volume(
+                self.connection.as_mut(),
+                sink_input_idx,
+                left,
+                right,
+            ) {
+                tracing::warn!(source = ?source, mix = mix, err = %e, "failed to set stereo route volume via PA");
+            }
+        } else {
+            tracing::warn!(
+                source = ?source, mix = mix, left, right,
+                "SetRouteStereoVolume: no sink-input found for route — volume change lost"
             );
         }
 

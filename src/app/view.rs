@@ -58,6 +58,7 @@ impl App {
             &self.config.seen_apps,
             self.monitored_mix,
             &self.channel_master_volumes,
+            &self.channel_master_stereo,
             self.config.ui.stereo_sliders,
         );
 
@@ -226,6 +227,22 @@ impl App {
                     ]
                     .spacing(4)
                     .align_y(iced::Alignment::Center),
+                    {
+                        // PipeWire latency note
+                        let pw_socket = std::env::var("XDG_RUNTIME_DIR")
+                            .map(|d| std::path::PathBuf::from(d).join("pipewire-0"))
+                            .ok();
+                        let pw_active = pw_socket.as_ref().map_or(false, |p| p.exists());
+                        if pw_active {
+                            text("PipeWire active — latency is managed by PipeWire graph scheduler (typically <5ms)")
+                                .size(10)
+                                .color(ui::theme::ACCENT)
+                        } else {
+                            text("Tip: Install PipeWire for significantly reduced audio latency")
+                                .size(10)
+                                .color(ui::theme::text_muted(tm))
+                        }
+                    },
                     text(format!("Config: ~/.config/open-sound-grid/"))
                         .size(11)
                         .color(ui::theme::text_muted(tm)),

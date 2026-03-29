@@ -96,6 +96,7 @@ impl App {
         }
         tracing::info!(channel_id = id, "removing channel (undo available)");
         self.channel_master_volumes.remove(&id);
+        self.routes_initialized.remove(&id);
         self.engine
             .send_command(PluginCommand::RemoveChannel { id });
         self.engine.send_command(PluginCommand::GetState);

@@ -319,21 +319,42 @@ pub struct RawSinkInputResult {
 
 /// Find the sink-input index belonging to a specific module, using the introspect API.
 ///
-/// Returns `None` if no sink-input with the given `owner_module` is currently registered.
-/// The caller is expected to retry with an inter-attempt delay when the module was just
-/// loaded, since PipeWire may take a moment to register the sink-input.
+/// Primary lookup: match by `owner_module`. Fallback (PipeWire compat): if no
+/// sink-input has a valid `owner_module` matching the module_id, match by the
+/// sink index that the sink-input is connected to (`target_sink_idx`).
+///
+/// PipeWire's PA compatibility layer often sets `owner_module` to `None`,
+/// which causes the primary lookup to fail silently. The sink-based fallback
+/// ensures volume control works on PipeWire.
 #[instrument(skip(conn))]
 pub fn find_sink_input_by_module_sync(
     conn: &mut PulseConnection,
     module_id: u32,
 ) -> Result<Option<u32>> {
+    find_sink_input_by_module_or_sink_sync(conn, module_id, None)
+}
+
+/// Extended sink-input finder: tries `owner_module` first, then falls back to
+/// matching by `target_sink_idx` (the PA sink index the loopback connects to).
+#[instrument(skip(conn))]
+pub fn find_sink_input_by_module_or_sink_sync(
+    conn: &mut PulseConnection,
+    module_id: u32,
+    target_sink_idx: Option<u32>,
+) -> Result<Option<u32>> {
     tracing::debug!(
-        module_id = module_id,
-        "finding sink-input by module via libpulse"
+        module_id, target_sink_idx = ?target_sink_idx,
+        "finding sink-input by module (primary) or sink (fallback)"
     );
 
-    // Collect (sink_input_index, owner_module) for every sink-input.
-    let entries: Arc<Mutex<Vec<(u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    // Collect (sink_input_index, owner_module_opt, sink_idx) for every sink-input.
+    #[derive(Debug)]
+    struct Entry {
+        index: u32,
+        owner_module: Option<u32>,
+        sink: u32,
+    }
+    let entries: Arc<Mutex<Vec<Entry>>> = Arc::new(Mutex::new(Vec::new()));
     let entries_clone = Arc::clone(&entries);
     let ml_ptr: *mut Mainloop = conn.mainloop_mut();
 
@@ -342,17 +363,21 @@ pub fn find_sink_input_by_module_sync(
     conn.context_mut().introspect().get_sink_input_info_list(
         move |list_result| match list_result {
             ListResult::Item(info) => {
-                if let Some(owner) = info.owner_module {
-                    tracing::trace!(
-                        sink_input_idx = info.index,
-                        owner_module = owner,
-                        "got sink-input owner_module"
-                    );
-                    entries_clone.lock().unwrap().push((info.index, owner));
-                }
+                tracing::trace!(
+                    sink_input_idx = info.index,
+                    owner_module = ?info.owner_module,
+                    sink = info.sink,
+                    name = ?info.name,
+                    "sink-input enumerated"
+                );
+                entries_clone.lock().unwrap().push(Entry {
+                    index: info.index,
+                    owner_module: info.owner_module,
+                    sink: info.sink,
+                });
             }
             ListResult::End => {
-                tracing::trace!("sink-input list complete (module search) — signalling mainloop");
+                tracing::trace!("sink-input list complete — signalling mainloop");
                 unsafe { (*ml_ptr).signal(false) };
             }
             ListResult::Error => {
@@ -370,13 +395,90 @@ pub fn find_sink_input_by_module_sync(
         .into_inner()
         .unwrap();
 
-    let found = entries
-        .into_iter()
-        .find(|(_, owner)| *owner == module_id)
-        .map(|(idx, _)| idx);
+    let total = entries.len();
+    let with_owner = entries.iter().filter(|e| e.owner_module.is_some()).count();
+    tracing::debug!(
+        total_sink_inputs = total, with_owner_module = with_owner,
+        "sink-input enumeration complete"
+    );
 
-    tracing::debug!(module_id = module_id, found = ?found, "sink-input module search complete");
-    Ok(found)
+    // Primary: match by owner_module
+    if let Some(found) = entries
+        .iter()
+        .find(|e| e.owner_module == Some(module_id))
+        .map(|e| e.index)
+    {
+        tracing::debug!(
+            module_id, sink_input_idx = found,
+            "found sink-input by owner_module (primary)"
+        );
+        return Ok(Some(found));
+    }
+
+    tracing::debug!(
+        module_id, with_owner,
+        "owner_module match failed — trying sink-based fallback"
+    );
+
+    // Fallback: match by target sink index (for PipeWire where owner_module is None)
+    if let Some(target_sink) = target_sink_idx {
+        if let Some(found) = entries
+            .iter()
+            .find(|e| e.sink == target_sink && e.owner_module.is_none())
+            .map(|e| e.index)
+        {
+            tracing::info!(
+                module_id, target_sink, sink_input_idx = found,
+                "found sink-input by target sink (PipeWire fallback)"
+            );
+            return Ok(Some(found));
+        }
+    }
+
+    tracing::warn!(
+        module_id, target_sink_idx = ?target_sink_idx, total_sink_inputs = total,
+        "sink-input not found by module or sink — volume control unavailable"
+    );
+    Ok(None)
+}
+
+/// Resolve a sink name to its PA sink index.
+#[instrument(skip(conn))]
+pub fn resolve_sink_index_by_name(
+    conn: &mut PulseConnection,
+    sink_name: &str,
+) -> Result<Option<u32>> {
+    tracing::debug!(sink_name = %sink_name, "resolving sink index by name");
+
+    let result: Arc<Mutex<Option<u32>>> = Arc::new(Mutex::new(None));
+    let result_clone = Arc::clone(&result);
+    let ml_ptr: *mut Mainloop = conn.mainloop_mut();
+
+    conn.mainloop_mut().lock();
+
+    conn.context_mut().introspect().get_sink_info_by_name(
+        sink_name,
+        move |list_result| match list_result {
+            ListResult::Item(info) => {
+                tracing::trace!(sink_name = ?info.name, sink_idx = info.index, "resolved sink");
+                *result_clone.lock().unwrap() = Some(info.index);
+            }
+            ListResult::End => {
+                unsafe { (*ml_ptr).signal(false) };
+            }
+            ListResult::Error => {
+                tracing::warn!("get_sink_info_by_name returned error");
+                unsafe { (*ml_ptr).signal(false) };
+            }
+        },
+    );
+
+    conn.mainloop_mut().wait();
+    conn.mainloop_mut().unlock();
+
+    let idx = result.lock().unwrap().take();
+    tracing::debug!(sink_name = %sink_name, resolved_idx = ?idx, "sink index resolution complete");
+    Ok(idx)
 }
 
 // ---------------------------------------------------------------------------

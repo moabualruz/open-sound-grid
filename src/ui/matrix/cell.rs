@@ -64,18 +64,32 @@ pub(super) fn matrix_cell<'a>(
             let eff_pct = (effective * 100.0).round() as u32;
 
             if stereo_sliders {
-                // L/R mode: two sliders stacked, labeled L and R
+                // L/R mode: derive ratios from effective PA volumes / ch_master
+                // (same pattern as mono cell_ratio derivation in apply_snapshot)
+                let ratio_l = if channel_master > 0.001 {
+                    (route.volume_left / channel_master).clamp(0.0, 1.0)
+                } else {
+                    route.volume_left
+                };
+                let ratio_r = if channel_master > 0.001 {
+                    (route.volume_right / channel_master).clamp(0.0, 1.0)
+                } else {
+                    route.volume_right
+                };
+                let l_pct = (ratio_l * 100.0).round() as u32;
+                let r_pct = (ratio_r * 100.0).round() as u32;
+
                 let src_l = source;
                 let mid_l = mix_id;
-                let src_r = source;
-                let mid_r = mix_id;
+                let cur_r = ratio_r; // capture current right ratio for left-slider closure
                 let slider_l = row![
                     text("L").size(8).color(text_muted(theme_mode)),
-                    iced::widget::slider(0.0..=1.0_f32, vol, move |v| {
-                        Message::RouteVolumeChanged {
+                    iced::widget::slider(0.0..=1.0_f32, ratio_l, move |v| {
+                        Message::RouteStereoVolumeChanged {
                             source: src_l,
                             mix: mid_l,
-                            volume: v,
+                            left: v,
+                            right: cur_r,
                         }
                     })
                     .step(0.01)
@@ -84,13 +98,17 @@ pub(super) fn matrix_cell<'a>(
                 .spacing(2)
                 .align_y(iced::Alignment::Center);
 
+                let src_r = source;
+                let mid_r = mix_id;
+                let cur_l = ratio_l; // capture current left ratio for right-slider closure
                 let slider_r = row![
                     text("R").size(8).color(text_muted(theme_mode)),
-                    iced::widget::slider(0.0..=1.0_f32, vol, move |v| {
-                        Message::RouteVolumeChanged {
+                    iced::widget::slider(0.0..=1.0_f32, ratio_r, move |v| {
+                        Message::RouteStereoVolumeChanged {
                             source: src_r,
                             mix: mid_r,
-                            volume: v,
+                            left: cur_l,
+                            right: v,
                         }
                     })
                     .step(0.01)
@@ -103,13 +121,9 @@ pub(super) fn matrix_cell<'a>(
                     row![mute_btn].align_y(iced::Alignment::Center),
                     slider_l,
                     slider_r,
-                    text(if eff_pct != vol_pct {
-                        format!("{}% (→{}%)", vol_pct, eff_pct)
-                    } else {
-                        format!("{}%", vol_pct)
-                    })
-                    .size(9)
-                    .color(text_muted(theme_mode)),
+                    text(format!("L:{}% R:{}%", l_pct, r_pct))
+                        .size(9)
+                        .color(text_muted(theme_mode)),
                 ]
                 .spacing(1)
                 .align_x(iced::Alignment::Center)

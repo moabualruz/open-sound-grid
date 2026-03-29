@@ -177,6 +177,60 @@ pub fn set_sink_input_volume_sync(conn: &mut PulseConnection, idx: u32, volume: 
     Ok(())
 }
 
+/// Build stereo `ChannelVolumes` with independent left/right values.
+fn make_stereo_channel_volumes(left: f32, right: f32) -> ChannelVolumes {
+    let vol_left = linear_to_pa_volume(left);
+    let vol_right = linear_to_pa_volume(right);
+    let mut cv = ChannelVolumes::default();
+    cv.set(2, vol_left); // sets both channels to left initially
+    // Override channel 1 (right) with the right volume
+    let channels = cv.get_mut();
+    channels[1] = vol_right;
+    cv
+}
+
+/// Set independent L/R stereo volume on a sink-input synchronously.
+#[instrument(skip(conn))]
+pub fn set_sink_input_stereo_volume_sync(
+    conn: &mut PulseConnection,
+    idx: u32,
+    left: f32,
+    right: f32,
+) -> Result<()> {
+    tracing::debug!(
+        sink_input_idx = idx, left, right,
+        "setting sink-input stereo volume via libpulse"
+    );
+
+    let cv = make_stereo_channel_volumes(left, right);
+    let done: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    let done_clone = Arc::clone(&done);
+    let ml_ptr: *mut Mainloop = conn.mainloop_mut();
+
+    conn.mainloop_mut().lock();
+
+    let _op = conn.context_mut().introspect().set_sink_input_volume(
+        idx,
+        &cv,
+        Some(Box::new(move |success| {
+            tracing::trace!(
+                sink_input_idx = idx, success,
+                "set_sink_input_volume (stereo) callback fired"
+            );
+            *done_clone.lock().unwrap() = success;
+            unsafe { (*ml_ptr).signal(false) };
+        })),
+    );
+
+    conn.mainloop_mut().wait();
+    conn.mainloop_mut().unlock();
+
+    if !*done.lock().unwrap() {
+        tracing::warn!(sink_input_idx = idx, "set_sink_input_volume (stereo) returned failure");
+    }
+    Ok(())
+}
+
 /// Set the mute state of a sink-input synchronously.
 #[instrument(skip(conn))]
 pub fn set_sink_input_mute_sync(conn: &mut PulseConnection, idx: u32, mute: bool) -> Result<()> {

@@ -69,9 +69,13 @@ pub struct AudioApplication {
 
 #[derive(Debug, Clone)]
 pub struct RouteState {
-    pub volume: f32, // 0.0 - 1.0
+    pub volume: f32, // 0.0 - 1.0 (mono / combined)
     pub enabled: bool,
     pub muted: bool,
+    /// Independent left channel volume (0.0–1.0). Defaults to `volume`.
+    pub volume_left: f32,
+    /// Independent right channel volume (0.0–1.0). Defaults to `volume`.
+    pub volume_right: f32,
 }
 
 impl Default for RouteState {
@@ -80,6 +84,8 @@ impl Default for RouteState {
             volume: 1.0,
             enabled: true,
             muted: false,
+            volume_left: 1.0,
+            volume_right: 1.0,
         }
     }
 }
@@ -175,6 +181,13 @@ pub enum PluginCommand {
     SetMixMuted { mix: MixId, muted: bool },
     /// Mute/unmute a source across all mixes.
     SetSourceMuted { source: SourceId, muted: bool },
+    /// Set independent L/R stereo volume for a route.
+    SetRouteStereoVolume {
+        source: SourceId,
+        mix: MixId,
+        left: f32,
+        right: f32,
+    },
     /// Set effects parameters for a channel.
     SetEffectsParams {
         channel: ChannelId,
@@ -206,6 +219,7 @@ impl fmt::Display for PluginCommand {
             PluginCommand::SetMixMasterVolume { .. } => "SetMixMasterVolume",
             PluginCommand::SetMixMuted { .. } => "SetMixMuted",
             PluginCommand::SetSourceMuted { .. } => "SetSourceMuted",
+            PluginCommand::SetRouteStereoVolume { .. } => "SetRouteStereoVolume",
             PluginCommand::SetEffectsParams { .. } => "SetEffectsParams",
             PluginCommand::SetEffectsEnabled { .. } => "SetEffectsEnabled",
         };
@@ -296,5 +310,7 @@ mod tests {
         assert_eq!(rs.volume, 1.0);
         assert!(rs.enabled);
         assert!(!rs.muted);
+        assert_eq!(rs.volume_left, 1.0);
+        assert_eq!(rs.volume_right, 1.0);
     }
 }

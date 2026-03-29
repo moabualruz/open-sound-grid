@@ -188,6 +188,21 @@ pub enum Message {
         volume: f32,
     },
 
+    /// Independent L/R channel master volume.
+    ChannelMasterStereoVolumeChanged {
+        source: SourceId,
+        left: f32,
+        right: f32,
+    },
+
+    /// Independent L/R stereo volume for a route cell.
+    RouteStereoVolumeChanged {
+        source: SourceId,
+        mix: MixId,
+        left: f32,
+        right: f32,
+    },
+
     // Settings
     ToggleStereoSliders,
 

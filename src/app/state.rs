@@ -81,6 +81,12 @@ pub struct App {
     pub(crate) auto_routes_sent: bool,
     /// Per-channel master volumes (UI-side, survives snapshot rebuilds).
     pub channel_master_volumes: HashMap<ChannelId, f32>,
+    /// Per-channel stereo master volumes: (left, right). When absent, falls back to mono.
+    pub channel_master_stereo: HashMap<ChannelId, (f32, f32)>,
+    /// Channels whose routes have been initialized (prevents route churn on StateRefreshed).
+    pub routes_initialized: std::collections::HashSet<ChannelId>,
+    /// App binaries suppressed from auto-solo channel creation (after explicit unassign).
+    pub suppressed_solo_apps: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -128,6 +134,9 @@ impl App {
             sound_check: crate::sound_check::SoundCheckBuffer::new(5.0),
             auto_routes_sent: false,
             channel_master_volumes: HashMap::new(),
+            channel_master_stereo: HashMap::new(),
+            routes_initialized: std::collections::HashSet::new(),
+            suppressed_solo_apps: std::collections::HashSet::new(),
         }
     }
 

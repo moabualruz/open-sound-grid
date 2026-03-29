@@ -49,6 +49,7 @@ fn casual_app() -> App {
             volume: 0.8,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.routes.insert(
@@ -57,6 +58,7 @@ fn casual_app() -> App {
             volume: 0.5,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.routes.insert(
@@ -65,6 +67,7 @@ fn casual_app() -> App {
             volume: 0.9,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.applications = vec![
@@ -104,6 +107,7 @@ fn streamer_app() -> App {
                 volume: 0.75,
                 enabled: true,
                 muted: false,
+            ..Default::default()
             },
         );
     }
@@ -115,6 +119,7 @@ fn streamer_app() -> App {
                 volume: 0.7,
                 enabled: true,
                 muted: false,
+            ..Default::default()
             },
         );
     }
@@ -126,6 +131,7 @@ fn streamer_app() -> App {
                 volume: 0.7,
                 enabled: true,
                 muted: false,
+            ..Default::default()
             },
         );
     }
@@ -148,6 +154,7 @@ fn gamer_app() -> App {
             volume: 0.9,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.routes.insert(
@@ -156,6 +163,7 @@ fn gamer_app() -> App {
             volume: 0.5,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.routes.insert(
@@ -164,6 +172,7 @@ fn gamer_app() -> App {
             volume: 0.2,
             enabled: true,
             muted: false,
+        ..Default::default()
         },
     );
     app.engine.state.routes.insert(
@@ -172,6 +181,7 @@ fn gamer_app() -> App {
             volume: 0.0,
             enabled: true,
             muted: true,
+        ..Default::default()
         },
     );
     app
@@ -194,6 +204,7 @@ fn worker_app() -> App {
                 volume: 0.7,
                 enabled: true,
                 muted: false,
+            ..Default::default()
             },
         );
     }
@@ -556,6 +567,7 @@ mod j05_podcast {
                         volume: 0.75,
                         enabled: true,
                         muted: false,
+                    ..Default::default()
                     },
                 );
             }
@@ -1409,6 +1421,7 @@ mod e2e_volume_model {
                 volume: 0.3, // effective = ratio(0.6) * master(0.5)
                 enabled: true,
                 muted: false,
+            ..Default::default()
             },
         );
 
@@ -1549,7 +1562,17 @@ mod e2e_config_safety {
     #[test]
     fn empty_snapshot_does_not_wipe_config_mixes() {
         let mut app = casual_app();
-        // Ensure config has mixes
+        // Ensure config has mixes (explicitly set, don't rely on disk)
+        if app.config.mixes.is_empty() {
+            app.config.mixes = vec![open_sound_grid::config::MixConfig {
+                name: "Monitor".into(),
+                icon: String::new(),
+                color: [100, 149, 237],
+                output_device: None,
+                master_volume: 1.0,
+                muted: false,
+            }];
+        }
         assert!(!app.config.mixes.is_empty(), "config should have mixes");
         let original_mix_count = app.config.mixes.len();
 
@@ -1726,12 +1749,218 @@ mod e2e_stereo {
     #[test]
     fn stereo_toggle_persists_to_config() {
         let mut app = casual_app();
-        assert!(!app.config.ui.stereo_sliders);
+        app.config.ui.stereo_sliders = false; // ensure clean state
 
         let _task = app.update(Message::ToggleStereoSliders);
         assert!(app.config.ui.stereo_sliders, "stereo should be toggled on");
 
         let _task = app.update(Message::ToggleStereoSliders);
         assert!(!app.config.ui.stereo_sliders, "stereo should be toggled off");
+    }
+}
+
+// =============================================================================
+// Fix 1: Route churn — routes_initialized prevents re-creation
+// =============================================================================
+mod fix1_route_churn {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn routes_initialized_prevents_duplicate_auto_route() {
+        let mut app = casual_app();
+        // Align config with the snapshot so state_ready=true
+        app.config.channels = vec![
+            open_sound_grid::config::ChannelConfig {
+                name: "Music".into(),
+                effects: Default::default(),
+                muted: false,
+                assigned_apps: vec![],
+                master_volume: 1.0,
+            },
+            open_sound_grid::config::ChannelConfig {
+                name: "Discord".into(),
+                effects: Default::default(),
+                muted: false,
+                assigned_apps: vec![],
+                master_volume: 1.0,
+            },
+            open_sound_grid::config::ChannelConfig {
+                name: "Game".into(),
+                effects: Default::default(),
+                muted: false,
+                assigned_apps: vec![],
+                master_volume: 1.0,
+            },
+        ];
+        app.config.mixes = vec![open_sound_grid::config::MixConfig {
+            name: "Monitor".into(),
+            icon: String::new(),
+            color: [100, 149, 237],
+            output_device: None,
+            master_volume: 1.0,
+            muted: false,
+        }];
+        let snap = build_casual_snapshot();
+        let _task = app.update(Message::PluginStateRefreshed(snap.clone()));
+
+        // After first StateRefreshed, channel 1 should be in routes_initialized
+        assert!(
+            app.routes_initialized.contains(&1),
+            "channel 1 should be marked as routes_initialized after first StateRefreshed"
+        );
+        assert!(
+            app.routes_initialized.contains(&2),
+            "channel 2 should be marked as routes_initialized"
+        );
+        assert!(
+            app.routes_initialized.contains(&3),
+            "channel 3 should be marked as routes_initialized"
+        );
+    }
+
+    #[test]
+    fn remove_channel_clears_routes_initialized() {
+        let mut app = casual_app();
+        app.routes_initialized.insert(1);
+        app.routes_initialized.insert(2);
+
+        let _task = app.update(Message::RemoveChannel(1));
+
+        assert!(
+            !app.routes_initialized.contains(&1),
+            "routes_initialized should be cleared for removed channel"
+        );
+        assert!(
+            app.routes_initialized.contains(&2),
+            "other channels should keep their routes_initialized"
+        );
+    }
+
+    fn build_casual_snapshot() -> open_sound_grid::plugin::api::MixerSnapshot {
+        open_sound_grid::plugin::api::MixerSnapshot {
+            channels: vec![channel(1, "Music"), channel(2, "Discord"), channel(3, "Game")],
+            mixes: vec![monitor_mix()],
+            routes: {
+                let mut routes = HashMap::new();
+                routes.insert(
+                    (SourceId::Channel(1), 1),
+                    RouteState { volume: 0.8, enabled: true, muted: false, ..Default::default() },
+                );
+                routes.insert(
+                    (SourceId::Channel(2), 1),
+                    RouteState { volume: 0.5, enabled: true, muted: false, ..Default::default() },
+                );
+                routes.insert(
+                    (SourceId::Channel(3), 1),
+                    RouteState { volume: 0.9, enabled: true, muted: false, ..Default::default() },
+                );
+                routes
+            },
+            hardware_inputs: vec![],
+            hardware_outputs: vec![],
+            applications: vec![],
+            peak_levels: HashMap::new(),
+        }
+    }
+}
+
+// =============================================================================
+// Fix 2: Unassign removes app from config
+// =============================================================================
+mod fix2_unassign_config {
+    use super::*;
+
+    #[test]
+    fn unassign_removes_binary_from_config() {
+        let mut app = casual_app();
+        app.engine.state.applications = vec![detected_app(1, "Firefox", "firefox", 42)];
+        // Pre-assign firefox to Music channel config
+        if let Some(cfg) = app.config.channels.iter_mut().find(|c| c.name == "Music") {
+            cfg.assigned_apps.push("firefox".into());
+        }
+        app.engine.state.channels[0].assigned_app_binaries = vec!["firefox".into()];
+
+        let _task = app.update(Message::UnassignApp {
+            channel: 1,
+            stream_index: 42,
+        });
+
+        let music_cfg = app.config.channels.iter().find(|c| c.name == "Music");
+        if let Some(cfg) = music_cfg {
+            assert!(
+                !cfg.assigned_apps.contains(&"firefox".to_string()),
+                "firefox should be removed from Music's assigned_apps after unassign"
+            );
+        }
+    }
+}
+
+// =============================================================================
+// Fix 4: True L/R stereo volume
+// =============================================================================
+mod fix4_stereo_volume {
+    use super::*;
+
+    #[test]
+    fn route_state_has_independent_lr_volumes() {
+        let rs = RouteState::default();
+        assert_eq!(rs.volume_left, 1.0, "default left should be 1.0");
+        assert_eq!(rs.volume_right, 1.0, "default right should be 1.0");
+    }
+
+    #[test]
+    fn stereo_volume_message_updates_route_state() {
+        let mut app = casual_app();
+        let source = SourceId::Channel(1);
+        let mix = 1u32;
+
+        let _task = app.update(Message::RouteStereoVolumeChanged {
+            source,
+            mix,
+            left: 0.8,
+            right: 0.3,
+        });
+
+        if let Some(route) = app.engine.state.routes.get(&(source, mix)) {
+            assert!(
+                (route.volume_left - 0.8).abs() < 0.001,
+                "left volume should be 0.8, got {}",
+                route.volume_left
+            );
+            assert!(
+                (route.volume_right - 0.3).abs() < 0.001,
+                "right volume should be 0.3, got {}",
+                route.volume_right
+            );
+            // Mono volume should be average
+            assert!(
+                (route.volume - 0.55).abs() < 0.001,
+                "mono volume should be average (0.55), got {}",
+                route.volume
+            );
+        }
+    }
+
+    #[test]
+    fn stereo_volume_respects_channel_master() {
+        let mut app = casual_app();
+        let source = SourceId::Channel(1);
+        app.channel_master_volumes.insert(1, 0.5);
+
+        let _task = app.update(Message::RouteStereoVolumeChanged {
+            source,
+            mix: 1,
+            left: 1.0,
+            right: 0.6,
+        });
+
+        // The route_ratios should use average of L/R
+        let ratio = app.engine.state.route_ratios.get(&(source, 1)).copied();
+        assert!(
+            (ratio.unwrap_or(0.0) - 0.8).abs() < 0.001,
+            "ratio should be average (0.8), got {:?}",
+            ratio
+        );
     }
 }

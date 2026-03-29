@@ -161,6 +161,12 @@ impl PulseAudioPlugin {
                 self.handle_set_source_muted(source, muted)
             }
 
+            PluginCommand::SetRouteStereoVolume {
+                source,
+                mix,
+                left,
+                right,
+            } => self.handle_set_route_stereo_volume(source, mix, left, right),
             PluginCommand::SetEffectsParams { channel, params } => {
                 self.handle_set_effects_params(channel, params)
             }

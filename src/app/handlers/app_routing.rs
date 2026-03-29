@@ -153,8 +153,6 @@ impl App {
         }
         self.engine
             .send_command(PluginCommand::UnrouteApp { app: stream_index });
-        // Refresh state — the auto-create solo channel logic in
-        // StateRefreshed will recreate the app's solo channel.
         self.engine.send_command(PluginCommand::GetState);
     }
 

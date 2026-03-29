@@ -42,6 +42,12 @@ pub struct RouteConfig {
     pub volume: f32,
     pub enabled: bool,
     pub muted: bool,
+    /// Independent left channel volume (0.0–1.0). Defaults to mono volume for backward compat.
+    #[serde(default = "default_volume")]
+    pub volume_left: f32,
+    /// Independent right channel volume (0.0–1.0). Defaults to mono volume for backward compat.
+    #[serde(default = "default_volume")]
+    pub volume_right: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -72,6 +78,11 @@ pub struct MixConfig {
 }
 
 fn default_volume() -> f32 {
+    1.0
+}
+
+/// Public version for use by other modules (presets).
+pub fn default_volume_pub() -> f32 {
     1.0
 }
 

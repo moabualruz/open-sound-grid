@@ -79,6 +79,8 @@ impl App {
                         volume: r.volume,
                         enabled: r.enabled,
                         muted: r.muted,
+                        volume_left: r.volume_left,
+                        volume_right: r.volume_right,
                     })
                     .collect();
             }

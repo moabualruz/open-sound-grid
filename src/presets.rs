@@ -25,6 +25,10 @@ pub struct PresetRoute {
     pub volume: f32,
     pub enabled: bool,
     pub muted: bool,
+    #[serde(default = "crate::config::default_volume_pub")]
+    pub volume_left: f32,
+    #[serde(default = "crate::config::default_volume_pub")]
+    pub volume_right: f32,
 }
 
 impl MixerPreset {
@@ -61,6 +65,8 @@ impl MixerPreset {
                     volume: route.volume,
                     enabled: route.enabled,
                     muted: route.muted,
+                    volume_left: route.volume_left,
+                    volume_right: route.volume_right,
                 }
             })
             .collect();
@@ -180,6 +186,8 @@ mod tests {
                 volume: 0.8,
                 enabled: true,
                 muted: false,
+                volume_left: 0.8,
+                volume_right: 0.8,
             }],
         };
         let toml = toml::to_string_pretty(&preset).unwrap();

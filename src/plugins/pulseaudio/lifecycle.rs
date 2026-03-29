@@ -14,6 +14,8 @@ use super::spectrum;
 
 impl Drop for PulseAudioPlugin {
     fn drop(&mut self) {
+        // Destroy pw-link connections first (if PipeWire mode)
+        self.modules.destroy_all_pwlinks();
         // Unload all PA modules (null-sinks + loopbacks) we created
         tracing::info!("dropping PulseAudioPlugin — cleaning up all modules");
         self.modules.unload_all(self.connection.as_mut());

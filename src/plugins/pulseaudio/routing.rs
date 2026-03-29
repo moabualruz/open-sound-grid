@@ -47,7 +47,9 @@ impl PulseAudioPlugin {
                         self.loopback_modules.insert((source, mix), module_id);
 
                         // Discover sink-input for volume control (same as software channels)
-                        match self.modules.find_loopback_sink_input(self.connection.as_mut(), module_id)? {
+                        match self.modules.find_loopback_sink_input_with_fallback(
+                            self.connection.as_mut(), module_id, Some(&mix_sink),
+                        )? {
                             Some(idx) => {
                                 tracing::debug!(module_id, sink_input_idx = idx, "found hardware loopback sink-input");
                                 self.loopback_sink_inputs.insert((source, mix), idx);
@@ -108,15 +110,21 @@ impl PulseAudioPlugin {
             tracing::debug!(module_id = module_id, source = ?source, mix = mix, "loopback module created");
             self.loopback_modules.insert((source, mix), module_id);
 
-            // find_loopback_sink_input has its own retry logic (3 attempts, 100ms each)
+            // find_loopback_sink_input with PipeWire fallback: pass the mix sink
+            // name so it can match by target sink when owner_module is unavailable.
             match self
                 .modules
-                .find_loopback_sink_input(self.connection.as_mut(), module_id)?
+                .find_loopback_sink_input_with_fallback(
+                    self.connection.as_mut(),
+                    module_id,
+                    Some(&mix_sink),
+                )?
             {
                 Some(idx) => {
                     tracing::debug!(
                         module_id,
                         sink_input_idx = idx,
+                        mix_sink = %mix_sink,
                         "found loopback sink-input"
                     );
                     self.loopback_sink_inputs.insert((source, mix), idx);
@@ -124,6 +132,7 @@ impl PulseAudioPlugin {
                 None => {
                     tracing::warn!(
                         module_id,
+                        mix_sink = %mix_sink,
                         "loopback sink-input not found — volume control unavailable for this route"
                     );
                 }

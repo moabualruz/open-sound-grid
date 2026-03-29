@@ -144,6 +144,7 @@ impl App {
         // assigns the app, and persists to config. These are real channels
         // with full volume control — they just can't be renamed or have
         // additional apps manually assigned while in "solo" mode.
+        // Skip apps in suppressed_solo_apps (explicitly unassigned by user).
         {
             let solo_stream_indices: Vec<u32> = apps
                 .iter()

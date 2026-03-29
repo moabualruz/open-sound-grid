@@ -154,13 +154,31 @@ impl App {
                                 "route restore: recovered ratio from saved effective volume"
                             );
 
+                            // Restore L/R stereo state into engine route
+                            if let Some(rs) = self.engine.state.routes.get_mut(&(source, mix)) {
+                                rs.volume_left = route.volume_left;
+                                rs.volume_right = route.volume_right;
+                            }
+
                             // Send the effective volume to PA
-                            let effective = (ratio * ch_master).clamp(0.0, 1.0);
-                            self.engine.send_command(PluginCommand::SetRouteVolume {
-                                source,
-                                mix,
-                                volume: effective,
-                            });
+                            // If L/R differ, send stereo; otherwise send mono
+                            if (route.volume_left - route.volume_right).abs() > 0.001 {
+                                let eff_l = (route.volume_left * ch_master).clamp(0.0, 1.0);
+                                let eff_r = (route.volume_right * ch_master).clamp(0.0, 1.0);
+                                self.engine.send_command(PluginCommand::SetRouteStereoVolume {
+                                    source,
+                                    mix,
+                                    left: eff_l,
+                                    right: eff_r,
+                                });
+                            } else {
+                                let effective = (ratio * ch_master).clamp(0.0, 1.0);
+                                self.engine.send_command(PluginCommand::SetRouteVolume {
+                                    source,
+                                    mix,
+                                    volume: effective,
+                                });
+                            }
                             if route.muted {
                                 self.engine.send_command(PluginCommand::SetRouteMuted {
                                     source,
@@ -183,11 +201,22 @@ impl App {
             }
         }
 
-        // Auto-create routes for any channel that has NO routes to any mix.
-        // This handles both first startup AND newly created channels (solo apps).
+        // Auto-create routes for any channel that has NO routes to any mix
+        // AND hasn't been initialized yet. The `routes_initialized` guard prevents
+        // re-sending SetRouteEnabled on every StateRefreshed, which would tear down
+        // and recreate loopbacks (via the duplicate guard in routing.rs), giving new
+        // sink-input indices and invalidating any volume commands in flight.
         if state_ready {
             let mut new_routes = 0u32;
             for ch in &self.engine.state.channels {
+                // Skip channels whose routes have already been initialized
+                if self.routes_initialized.contains(&ch.id) {
+                    tracing::trace!(
+                        channel_id = ch.id, channel = %ch.name,
+                        "skipping auto-route — already initialized"
+                    );
+                    continue;
+                }
                 let has_any_route = self.engine.state.mixes.iter().any(|mx| {
                     self.engine
                         .state
@@ -195,6 +224,10 @@ impl App {
                         .contains_key(&(SourceId::Channel(ch.id), mx.id))
                 });
                 if !has_any_route {
+                    tracing::debug!(
+                        channel_id = ch.id, channel = %ch.name,
+                        "auto-creating routes for channel without routes"
+                    );
                     for mx in &self.engine.state.mixes {
                         self.engine.send_command(PluginCommand::SetRouteEnabled {
                             source: SourceId::Channel(ch.id),
@@ -204,6 +237,8 @@ impl App {
                         new_routes += 1;
                     }
                 }
+                // Mark this channel as initialized whether it had routes or not
+                self.routes_initialized.insert(ch.id);
             }
             if new_routes > 0 {
                 tracing::info!(new_routes, "auto-enabled routes for channels without routes");
@@ -269,5 +304,13 @@ impl App {
                 }
             }
         }
+
+        tracing::debug!(
+            routes_initialized = self.routes_initialized.len(),
+            suppressed_solo_apps = self.suppressed_solo_apps.len(),
+            pending_outputs = self.pending_output_restores.len(),
+            pending_routes = self.pending_route_restores.len(),
+            "apply_deferred_restores complete"
+        );
     }
 }

@@ -50,6 +50,14 @@ impl App {
                 tracing::debug!(?source, ?mix, new_muted = !currently_muted, "route mute toggled");
                 self.engine.send_command(PluginCommand::SetRouteMuted { source, mix, muted: !currently_muted });
             }
+            Message::RouteStereoVolumeChanged {
+                source,
+                mix,
+                left,
+                right,
+            } => {
+                self.handle_route_stereo_volume_changed(source, mix, left, right);
+            }
 
             // ── App routing (delegated) ────────────────────────────────
             Message::AppRouteChanged { app_index, channel_index } => {
@@ -267,6 +275,9 @@ impl App {
             Message::ChannelMasterVolumeChanged { source, volume } => {
                 self.handle_channel_master_volume_changed(source, volume);
             }
+            Message::ChannelMasterStereoVolumeChanged { source, left, right } => {
+                self.handle_channel_master_stereo_volume_changed(source, left, right);
+            }
 
             // ── Audio settings ──────────────────────────────────────────
             Message::LatencyInput(text) => {
@@ -280,6 +291,25 @@ impl App {
             Message::ToggleStereoSliders => {
                 self.config.ui.stereo_sliders = !self.config.ui.stereo_sliders;
                 tracing::info!(stereo = self.config.ui.stereo_sliders, "stereo sliders toggled");
+
+                if !self.config.ui.stereo_sliders {
+                    // Switching to mono: link L/R to the mono volume value
+                    for route in self.engine.state.routes.values_mut() {
+                        route.volume_left = route.volume;
+                        route.volume_right = route.volume;
+                    }
+                    tracing::debug!("stereo→mono: linked L/R volumes to mono value");
+                } else {
+                    // Switching to stereo: initialize L/R from mono if still equal
+                    for route in self.engine.state.routes.values_mut() {
+                        if (route.volume_left - route.volume_right).abs() < 0.001 {
+                            route.volume_left = route.volume;
+                            route.volume_right = route.volume;
+                        }
+                    }
+                    tracing::debug!("mono→stereo: initialized L/R from mono value");
+                }
+
                 let _ = self.config.save();
             }
 

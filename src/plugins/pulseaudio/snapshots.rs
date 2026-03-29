@@ -50,10 +50,20 @@ impl PulseAudioPlugin {
             }
         }
 
-        // Peak levels are read from the SharedPeak atomics via get_levels() —
-        // lock-free and instant. read_peaks() (which spawned pactl subprocesses)
-        // has been removed from this path; peaks are updated independently by
-        // the PeakMonitor background thread and do not block state rebuilds.
+        // Poll current peak levels from PA before reading the shared atomics.
+        // read_peaks() queries `pactl get-sink-volume` for each registered sink
+        // and stores the result in SharedPeak atomics. get_levels() then reads
+        // them lock-free. This ensures VU meters show real data instead of zeros.
+        tracing::trace!("polling VU peak levels before snapshot");
+        self.peaks.read_peaks();
+        let peak_levels = self.peaks.get_levels();
+        let nonzero_peaks = peak_levels.values().filter(|&&v| v > 0.0).count();
+        if nonzero_peaks > 0 {
+            tracing::debug!(
+                nonzero_peaks, total = peak_levels.len(),
+                "VU meters: non-zero peak levels captured"
+            );
+        }
         MixerSnapshot {
             channels: self.channels.clone(),
             mixes: self.mixes.clone(),
@@ -61,7 +71,7 @@ impl PulseAudioPlugin {
             hardware_inputs,
             hardware_outputs,
             applications,
-            peak_levels: self.peaks.get_levels(),
+            peak_levels,
         }
     }
 

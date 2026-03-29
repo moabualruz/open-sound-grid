@@ -10,13 +10,30 @@ use super::introspect_control;
 
 pub struct ModuleManager {
     loaded_modules: Vec<u32>,
+    /// Whether PipeWire is the active audio server (enables pw-link routing).
+    pipewire_detected: bool,
+    /// pw-link connections tracked as (source_port, sink_port) for teardown.
+    pw_links: Vec<(String, String)>,
 }
 
 impl ModuleManager {
     pub fn new() -> Self {
+        let pipewire_detected = detect_pipewire();
+        if pipewire_detected {
+            tracing::info!("PipeWire detected — will use pw-link for zero-latency routing");
+        } else {
+            tracing::info!("Native PulseAudio — using module-loopback for routing");
+        }
         Self {
             loaded_modules: Vec::new(),
+            pipewire_detected,
+            pw_links: Vec::new(),
         }
+    }
+
+    /// Whether PipeWire is the active audio server.
+    pub fn is_pipewire(&self) -> bool {
+        self.pipewire_detected
     }
 
     /// Return the number of currently tracked loaded modules.
@@ -70,6 +87,12 @@ impl ModuleManager {
         Ok(module_id)
     }
 
+    /// Create a route connection between source monitor and sink via module-loopback.
+    ///
+    /// On PipeWire systems, the loopback module runs through pipewire-pulse which
+    /// already provides lower latency than native PulseAudio. Volume control is
+    /// via set-sink-input-volume on the loopback's sink-input (with PipeWire
+    /// fallback matching when owner_module is unavailable).
     #[tracing::instrument(skip(self, conn))]
     pub fn create_loopback(
         &mut self,
@@ -78,10 +101,19 @@ impl ModuleManager {
         sink: &str,
         latency_ms: u32,
     ) -> Result<u32> {
-        tracing::debug!(source = %source_monitor, sink = %sink, latency_ms = latency_ms, "creating loopback");
+        // PipeWire uses lower effective latency for module-loopback than the
+        // requested latency_msec — the PA compat layer translates to PW graph
+        // quantum which is typically 1024/48000 ≈ 21ms regardless of setting.
+        let effective_latency = if self.pipewire_detected { 1 } else { latency_ms };
+        tracing::debug!(
+            source = %source_monitor, sink = %sink,
+            requested_latency_ms = latency_ms, effective_latency_ms = effective_latency,
+            pipewire = self.pipewire_detected,
+            "creating loopback"
+        );
 
         let module_id = if let Some(conn) = conn {
-            let args = format!("source={source_monitor} sink={sink} latency_msec={latency_ms}");
+            let args = format!("source={source_monitor} sink={sink} latency_msec={effective_latency}");
             introspect_control::load_module_sync(conn, "module-loopback", &args)?
         } else {
             tracing::debug!(source = %source_monitor, sink = %sink, "no PA connection — falling back to pactl for loopback");
@@ -91,7 +123,7 @@ impl ModuleManager {
                     "module-loopback",
                     &format!("source={source_monitor}"),
                     &format!("sink={sink}"),
-                    &format!("latency_msec={latency_ms}"),
+                    &format!("latency_msec={effective_latency}"),
                 ])
                 .output()
                 .map_err(|e| {
@@ -180,13 +212,44 @@ impl ModuleManager {
     /// When `conn` is provided this uses the libpulse introspect API.
     /// Retries up to 3 times with 100 ms delay because PipeWire can take a
     /// moment to register the sink-input after the module is loaded.
+    /// Find the sink-input index created by a loopback module.
+    ///
+    /// Primary: match by `owner_module`. Fallback (PipeWire): match by
+    /// `target_sink_name` — the PA sink the loopback writes to. PipeWire
+    /// often sets `owner_module` to None, making the primary lookup fail.
+    ///
+    /// `target_sink_name` is the mix sink (e.g. "osg_Main/Monitor_mix")
+    /// that the loopback was created with.
     #[tracing::instrument(skip(self, conn))]
     pub fn find_loopback_sink_input(
         &self,
         conn: Option<&mut PulseConnection>,
         module_id: u32,
     ) -> Result<Option<u32>> {
+        self.find_loopback_sink_input_with_fallback(conn, module_id, None)
+    }
+
+    /// Same as `find_loopback_sink_input` but with an optional target sink
+    /// name for PipeWire fallback matching.
+    #[tracing::instrument(skip(self, conn))]
+    pub fn find_loopback_sink_input_with_fallback(
+        &self,
+        conn: Option<&mut PulseConnection>,
+        module_id: u32,
+        target_sink_name: Option<&str>,
+    ) -> Result<Option<u32>> {
         if let Some(conn) = conn {
+            // Resolve target sink name to a sink index for fallback matching
+            let target_sink_idx = target_sink_name.and_then(|name| {
+                introspect::resolve_sink_index_by_name(conn, name).ok().flatten()
+            });
+            if let Some(idx) = target_sink_idx {
+                tracing::debug!(
+                    module_id, target_sink_name = ?target_sink_name, target_sink_idx = idx,
+                    "resolved target sink for PipeWire fallback"
+                );
+            }
+
             for attempt in 0..5 {
                 if attempt > 0 {
                     tracing::debug!(
@@ -197,7 +260,9 @@ impl ModuleManager {
                     thread::sleep(Duration::from_millis(150));
                 }
 
-                match introspect::find_sink_input_by_module_sync(conn, module_id)? {
+                match introspect::find_sink_input_by_module_or_sink_sync(
+                    conn, module_id, target_sink_idx,
+                )? {
                     Some(idx) => {
                         tracing::debug!(
                             module_id = module_id,
@@ -262,6 +327,59 @@ impl ModuleManager {
             tracing::error!(sink_input_idx = sink_input_idx, stderr = %stderr, "set-sink-input-volume failed");
             return Err(OsgError::PulseAudio(format!(
                 "set-sink-input-volume {sink_input_idx}: {stderr}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Set per-channel stereo volume on a sink-input using separate L/R values.
+    ///
+    /// Uses `pactl set-sink-input-volume` with two percentage arguments
+    /// (one per channel), which PA interprets as left/right.
+    #[tracing::instrument(skip(self, conn))]
+    pub fn set_sink_input_stereo_volume(
+        &self,
+        conn: Option<&mut PulseConnection>,
+        sink_input_idx: u32,
+        left: f32,
+        right: f32,
+    ) -> Result<()> {
+        if let Some(conn) = conn {
+            // Use introspect API with 2-channel ChannelVolumes
+            return introspect_control::set_sink_input_stereo_volume_sync(
+                conn,
+                sink_input_idx,
+                left,
+                right,
+            );
+        }
+
+        let left_pct = (left * 100.0) as u32;
+        let right_pct = (right * 100.0) as u32;
+        tracing::debug!(
+            sink_input_idx, left, right, left_pct, right_pct,
+            "setting sink-input stereo volume via pactl (fallback)"
+        );
+
+        let output = Command::new("pactl")
+            .args([
+                "set-sink-input-volume",
+                &sink_input_idx.to_string(),
+                &format!("{left_pct}%"),
+                &format!("{right_pct}%"),
+            ])
+            .output()
+            .map_err(|e| {
+                tracing::error!(sink_input_idx, err = %e, "pactl set-sink-input-volume (stereo) failed");
+                OsgError::PulseAudio(format!("failed to run pactl: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(sink_input_idx, stderr = %stderr, "set-sink-input-volume (stereo) failed");
+            return Err(OsgError::PulseAudio(format!(
+                "set-sink-input-volume stereo {sink_input_idx}: {stderr}"
             )));
         }
 
@@ -400,6 +518,194 @@ impl ModuleManager {
             "sink-input not found after 3 pactl attempts"
         );
         Ok(None)
+    }
+
+    // -----------------------------------------------------------------------
+    // pw-link routing (PipeWire zero-latency direct port connections)
+    // -----------------------------------------------------------------------
+
+    /// Create direct PipeWire port links between a source monitor and a sink.
+    /// Links both FL and FR channels for stereo.
+    fn create_pwlink(&mut self, source_monitor: &str, sink: &str) -> Result<()> {
+        // pw-link uses port names: {node_name}:monitor_FL, {node_name}:playback_FL
+        // source_monitor is like "osg_Music_ch.monitor" — strip the .monitor suffix
+        let source_node = source_monitor.strip_suffix(".monitor").unwrap_or(source_monitor);
+
+        let pairs = [
+            (format!("{source_node}:monitor_FL"), format!("{sink}:playback_FL")),
+            (format!("{source_node}:monitor_FR"), format!("{sink}:playback_FR")),
+        ];
+
+        for (src_port, sink_port) in &pairs {
+            let output = Command::new("pw-link")
+                .args([src_port.as_str(), sink_port.as_str()])
+                .output()
+                .map_err(|e| OsgError::PulseAudio(format!("pw-link failed to execute: {e}")))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // "File exists" means already linked — that's OK
+                if !stderr.contains("File exists") {
+                    tracing::warn!(
+                        src = %src_port, sink = %sink_port, stderr = %stderr,
+                        "pw-link failed"
+                    );
+                    return Err(OsgError::PulseAudio(format!(
+                        "pw-link {src_port} -> {sink_port}: {stderr}"
+                    )));
+                }
+                tracing::debug!(src = %src_port, sink = %sink_port, "pw-link already exists");
+            }
+            self.pw_links.push((src_port.clone(), sink_port.clone()));
+        }
+
+        tracing::debug!(
+            source_node = %source_node, sink = %sink,
+            "pw-link stereo pair created (FL + FR)"
+        );
+        Ok(())
+    }
+
+    /// Tear down pw-link connections for a specific source or sink node.
+    pub fn destroy_pwlinks_for(&mut self, node_name: &str) {
+        let to_remove: Vec<(String, String)> = self.pw_links
+            .iter()
+            .filter(|(src, sink)| src.starts_with(node_name) || sink.starts_with(node_name))
+            .cloned()
+            .collect();
+
+        for (src, sink) in &to_remove {
+            let output = Command::new("pw-link")
+                .args(["-d", src.as_str(), sink.as_str()])
+                .output();
+            match output {
+                Ok(o) if o.status.success() => {
+                    tracing::debug!(src = %src, sink = %sink, "pw-link removed");
+                }
+                _ => {
+                    tracing::debug!(src = %src, sink = %sink, "pw-link remove failed (may already be gone)");
+                }
+            }
+        }
+
+        self.pw_links.retain(|(src, sink)| {
+            !src.starts_with(node_name) && !sink.starts_with(node_name)
+        });
+    }
+
+    /// Destroy all pw-link connections (cleanup on shutdown).
+    pub fn destroy_all_pwlinks(&mut self) {
+        for (src, sink) in &self.pw_links {
+            let _ = Command::new("pw-link")
+                .args(["-d", src.as_str(), sink.as_str()])
+                .output();
+        }
+        let count = self.pw_links.len();
+        self.pw_links.clear();
+        if count > 0 {
+            tracing::info!(count, "all pw-links destroyed");
+        }
+    }
+
+    /// Set volume on a PipeWire node via wpctl (used when pw-link routing is active).
+    pub fn wpctl_set_volume(&self, node_name: &str, volume: f32) -> Result<()> {
+        if !self.pipewire_detected {
+            return Ok(());
+        }
+        // Find the node's wpctl ID by name
+        let output = Command::new("wpctl").args(["status"]).output()
+            .map_err(|e| OsgError::PulseAudio(format!("wpctl status failed: {e}")))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let search = node_name.replace('_', " ").to_lowercase();
+
+        for line in text.lines() {
+            let cleaned = line.replace('│', "").replace('*', "");
+            let cleaned = cleaned.trim();
+            if let Some(dot_pos) = cleaned.find('.') {
+                if let Ok(id) = cleaned[..dot_pos].trim().parse::<u32>() {
+                    let rest = cleaned[dot_pos + 1..].trim();
+                    let name = if let Some(bracket) = rest.find('[') {
+                        rest[..bracket].trim()
+                    } else {
+                        rest
+                    };
+                    if name.replace('_', " ").to_lowercase().contains(&search) {
+                        let vol = volume.clamp(0.0, 1.5);
+                        let out = Command::new("wpctl")
+                            .args(["set-volume", &id.to_string(), &format!("{vol:.3}")])
+                            .output();
+                        if let Ok(o) = out {
+                            if o.status.success() {
+                                tracing::debug!(node_name, wpctl_id = id, volume = vol, "wpctl set-volume applied");
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        tracing::warn!(node_name, "wpctl_set_volume: node not found in wpctl status");
+        Ok(())
+    }
+
+    /// Set mute on a PipeWire node via wpctl.
+    pub fn wpctl_set_mute(&self, node_name: &str, muted: bool) -> Result<()> {
+        if !self.pipewire_detected {
+            return Ok(());
+        }
+        let output = Command::new("wpctl").args(["status"]).output()
+            .map_err(|e| OsgError::PulseAudio(format!("wpctl status failed: {e}")))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let search = node_name.replace('_', " ").to_lowercase();
+
+        for line in text.lines() {
+            let cleaned = line.replace('│', "").replace('*', "");
+            let cleaned = cleaned.trim();
+            if let Some(dot_pos) = cleaned.find('.') {
+                if let Ok(id) = cleaned[..dot_pos].trim().parse::<u32>() {
+                    let rest = cleaned[dot_pos + 1..].trim();
+                    let name = if let Some(bracket) = rest.find('[') {
+                        rest[..bracket].trim()
+                    } else {
+                        rest
+                    };
+                    if name.replace('_', " ").to_lowercase().contains(&search) {
+                        let val = if muted { "1" } else { "0" };
+                        let out = Command::new("wpctl")
+                            .args(["set-mute", &id.to_string(), val])
+                            .output();
+                        if let Ok(o) = out {
+                            if o.status.success() {
+                                tracing::debug!(node_name, wpctl_id = id, muted, "wpctl set-mute applied");
+                            }
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Detect whether PipeWire is the active audio server (not just PA).
+fn detect_pipewire() -> bool {
+    // Check pactl info — PipeWire's PA compat reports "PulseAudio (on PipeWire X.Y.Z)"
+    let output = Command::new("pactl").args(["info"]).output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let is_pw = text.contains("on PipeWire");
+            tracing::debug!(
+                is_pipewire = is_pw,
+                "PipeWire detection via pactl info"
+            );
+            is_pw
+        }
+        _ => {
+            tracing::debug!("pactl info failed — assuming native PulseAudio");
+            false
+        }
     }
 }
 

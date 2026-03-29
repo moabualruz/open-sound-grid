@@ -32,7 +32,9 @@ pub(super) fn channel_label<'a>(
     _peak: f32,
     _first_mix_id: Option<MixId>,
     master_volume: f32,
+    master_stereo: Option<(f32, f32)>,
     stereo_sliders: bool,
+    is_solo_channel: bool,
 ) -> Element<'a, Message> {
     tracing::trace!(name, muted, source = ?source, has_icon = icon_path.is_some(), editing, not_running = not_running_apps.len(), assigned_apps = assigned_app_count, "rendering channel label");
     let name_color = if muted {
@@ -128,15 +130,18 @@ pub(super) fn channel_label<'a>(
         let src = source;
 
         if stereo_sliders {
-            // L/R mode: two stacked sliders (both control same value for now)
+            // L/R mode: independent stereo master sliders
+            let (master_l, master_r) = master_stereo.unwrap_or((master_volume, master_volume));
             let src_l = source;
             let src_r = source;
+            let cur_r = master_r;
             let slider_l = row![
                 text("L").size(8).color(text_muted(theme_mode)),
-                iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
-                    Message::ChannelMasterVolumeChanged {
+                iced::widget::slider(0.0..=1.0_f32, master_l, move |v| {
+                    Message::ChannelMasterStereoVolumeChanged {
                         source: src_l,
-                        volume: v,
+                        left: v,
+                        right: cur_r,
                     }
                 })
                 .step(0.01)
@@ -145,12 +150,14 @@ pub(super) fn channel_label<'a>(
             .spacing(2)
             .align_y(iced::Alignment::Center);
 
+            let cur_l = master_l;
             let slider_r = row![
                 text("R").size(8).color(text_muted(theme_mode)),
-                iced::widget::slider(0.0..=1.0_f32, master_volume, move |v| {
-                    Message::ChannelMasterVolumeChanged {
+                iced::widget::slider(0.0..=1.0_f32, master_r, move |v| {
+                    Message::ChannelMasterStereoVolumeChanged {
                         source: src_r,
-                        volume: v,
+                        left: cur_l,
+                        right: v,
                     }
                 })
                 .step(0.01)
@@ -159,10 +166,12 @@ pub(super) fn channel_label<'a>(
             .spacing(2)
             .align_y(iced::Alignment::Center);
 
+            let l_pct = (master_l * 100.0).round() as u32;
+            let r_pct = (master_r * 100.0).round() as u32;
             column![
                 slider_l,
                 slider_r,
-                text(format!("{}%", volume_pct))
+                text(format!("L:{}% R:{}%", l_pct, r_pct))
                     .size(9)
                     .color(text_secondary(theme_mode)),
             ]
@@ -291,6 +300,12 @@ pub(super) fn channel_label<'a>(
         });
 
     if let Some(cid) = channel_id {
+        // Solo app channels: no settings panel, no context menu
+        if is_solo_channel {
+            tracing::trace!(channel_id = cid, "solo app channel — click disabled");
+            return inner.into();
+        }
+
         tracing::trace!(
             channel_id = cid,
             "channel label is clickable, will emit SelectedChannel"

@@ -76,20 +76,26 @@ impl App {
                 self.pending_route_restores = preset
                     .routes
                     .iter()
-                    .map(|r| RouteConfig {
-                        channel_name: r.channel_name.clone(),
-                        mix_name: r.mix_name.clone(),
-                        volume: r.volume,
-                        enabled: r.enabled,
-                        muted: r.muted,
+                    .map(|r| {
+                        RouteConfig {
+                            channel_name: r.channel_name.clone(),
+                            mix_name: r.mix_name.clone(),
+                            volume: r.volume,
+                            enabled: r.enabled,
+                            muted: r.muted,
+                            volume_left: r.volume_left,
+                            volume_right: r.volume_right,
+                        }
                     })
                     .collect();
                 tracing::debug!(
                     count = self.pending_route_restores.len(),
                     "route restores queued for next StateRefreshed"
                 );
-                // Reset auto-routes flag so routes are recreated for new channels
+                // Reset route initialization so routes are recreated for new channels
                 self.auto_routes_sent = false;
+                self.routes_initialized.clear();
+                tracing::debug!("cleared routes_initialized for preset load");
                 let _ = self.config.save();
                 self.restore_from_config();
             }

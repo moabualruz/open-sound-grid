@@ -35,6 +35,7 @@ pub fn matrix_grid<'a>(
     _seen_apps: &[String],
     monitored_mix: Option<MixId>,
     channel_master_volumes: &std::collections::HashMap<crate::plugin::api::ChannelId, f32>,
+    channel_master_stereo: &std::collections::HashMap<crate::plugin::api::ChannelId, (f32, f32)>,
     stereo_sliders: bool,
 ) -> Element<'a, Message> {
     tracing::trace!(
@@ -202,6 +203,14 @@ pub fn matrix_grid<'a>(
             .copied()
             .unwrap_or(1.0);
 
+        let master_stereo = channel_master_stereo.get(&channel.id).copied();
+        // Solo app channels: auto-created with exactly 1 assigned binary
+        // that matches the channel name. These should not be editable.
+        let is_solo = channel.assigned_app_binaries.len() == 1
+            && state.applications.iter().any(|a| {
+                a.name.eq_ignore_ascii_case(&channel.name)
+                    || a.binary.eq_ignore_ascii_case(&channel.name)
+            });
         let mut ch_row = row![
             // Channel name cell with app icon + inline rename + master VU+slider
             channel_label(
@@ -217,7 +226,9 @@ pub fn matrix_grid<'a>(
                 peak,
                 first_mix_id,
                 master_volume,
+                master_stereo,
                 stereo_sliders,
+                is_solo,
             ),
         ]
         .spacing(CELL_SPACING);
@@ -278,7 +289,9 @@ pub fn matrix_grid<'a>(
             peak,
             first_mix_id,
             master_volume,
+            None, // hardware inputs: no stereo master
             stereo_sliders,
+            false, // hardware inputs are not solo channels
         )]
         .spacing(CELL_SPACING);
 

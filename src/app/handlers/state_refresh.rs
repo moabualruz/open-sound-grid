@@ -238,6 +238,7 @@ impl App {
             // Apps are routed to channels explicitly via move-sink-input.
 
             // Auto-create solo channels for unassigned playing apps.
+            // Skip apps in suppressed_solo_apps (explicitly unassigned by user).
             for app in &self.engine.state.applications {
                 if app.channel.is_none() && !app.binary.is_empty() && !app.name.is_empty() {
                     let match_key = if !app.binary.is_empty() {
@@ -299,6 +300,8 @@ impl App {
                     volume: route.volume,
                     enabled: route.enabled,
                     muted: route.muted,
+                    volume_left: route.volume_left,
+                    volume_right: route.volume_right,
                 })
             })
             .collect();
