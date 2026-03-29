@@ -3,7 +3,7 @@ use iced::{Background, Border, Element, Length, Theme};
 use lucide_icons::iced::{icon_chevron_left, icon_chevron_right, icon_headphones, icon_settings};
 
 use crate::app::Message;
-use crate::plugin::api::HardwareInput;
+use crate::plugin::api::{HardwareInput, MixInfo};
 use crate::ui::theme::{
     ACCENT, ThemeMode, bg_hover, bg_secondary, border_color, text_muted, text_primary,
     text_secondary,
@@ -15,11 +15,13 @@ const COLLAPSED_WIDTH: f32 = 48.0;
 pub fn sidebar<'a>(
     collapsed: bool,
     hardware_inputs: &'a [HardwareInput],
+    mixes: &'a [MixInfo],
     theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(
         collapsed = collapsed,
         input_count = hardware_inputs.len(),
+        mix_count = mixes.len(),
         "rendering sidebar"
     );
     let width = if collapsed {
@@ -31,7 +33,7 @@ pub fn sidebar<'a>(
     let content = if collapsed {
         collapsed_view(theme_mode)
     } else {
-        expanded_view(hardware_inputs, theme_mode)
+        expanded_view(hardware_inputs, mixes, theme_mode)
     };
 
     // Sidebar container with right border baked in (no separate rule widget)
@@ -53,10 +55,12 @@ pub fn sidebar<'a>(
 
 fn expanded_view<'a>(
     hardware_inputs: &'a [HardwareInput],
+    mixes: &'a [MixInfo],
     theme_mode: ThemeMode,
 ) -> Element<'a, Message> {
     tracing::trace!(
         input_count = hardware_inputs.len(),
+        mix_count = mixes.len(),
         "rendering expanded sidebar"
     );
     let collapse_btn = button(icon_chevron_left().size(14).center())
@@ -71,28 +75,50 @@ fn expanded_view<'a>(
             ..Default::default()
         });
 
-    let header = text("DEVICES").size(11).color(text_secondary(theme_mode));
+    let sep = move || {
+        rule::horizontal(1).style(move |_: &Theme| rule::Style {
+            color: border_color(theme_mode),
+            radius: 0.0.into(),
+            fill_mode: rule::FillMode::Full,
+            snap: true,
+        })
+    };
 
-    let mut devices = column![header].spacing(4);
+    // Section 1: Your Devices (WL3 structure)
+    let devices_header = text("Your Devices").size(10).color(text_muted(theme_mode));
+
+    let mut devices_section = column![devices_header].spacing(4);
     for input in hardware_inputs {
-        devices = devices.push(text(&input.name).size(13).color(text_primary(theme_mode)));
+        devices_section =
+            devices_section.push(text(&input.name).size(12).color(text_primary(theme_mode)));
     }
     if hardware_inputs.is_empty() {
-        devices = devices.push(text("No devices").size(12).color(text_muted(theme_mode)));
+        devices_section =
+            devices_section.push(text("No devices").size(11).color(text_muted(theme_mode)));
     }
 
-    // Active mix item with left accent border
-    let mix_item = container(text("Mixes").size(13).color(text_primary(theme_mode)))
-        .padding([4, 8])
-        .style(|_: &Theme| container::Style {
-            border: Border {
-                color: ACCENT,
-                width: 2.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        });
+    // Section 2: Sound & Mixes (WL3 structure)
+    let mixes_header = text("Sound & Mixes").size(10).color(text_muted(theme_mode));
 
+    let mut mixes_section = column![mixes_header].spacing(4);
+    for mix in mixes {
+        let mix_item = container(text(&mix.name).size(12).color(text_primary(theme_mode)))
+            .padding([2, 8])
+            .style(|_: &Theme| container::Style {
+                border: Border {
+                    color: ACCENT,
+                    width: 2.0,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            });
+        mixes_section = mixes_section.push(mix_item);
+    }
+    if mixes.is_empty() {
+        mixes_section = mixes_section.push(text("No mixes").size(11).color(text_muted(theme_mode)));
+    }
+
+    // Section 3: Settings
     let settings_btn = button(
         iced::widget::row![
             icon_settings().size(13).color(text_secondary(theme_mode)),
@@ -114,15 +140,11 @@ fn expanded_view<'a>(
 
     column![
         collapse_btn,
-        devices,
-        rule::horizontal(1).style(move |_: &Theme| rule::Style {
-            color: border_color(theme_mode),
-            radius: 0.0.into(),
-            fill_mode: rule::FillMode::Full,
-            snap: true,
-        }),
-        mix_item,
+        devices_section,
+        sep(),
+        mixes_section,
         Space::new().width(Length::Fill).height(Length::Fill),
+        sep(),
         settings_btn,
     ]
     .spacing(8)

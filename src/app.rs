@@ -4,7 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, text, text_input,
 };
-use iced::{Element, Length, Subscription, Task, Theme};
+use iced::{Border, Element, Length, Subscription, Task, Theme};
 use lucide_icons::iced::{icon_moon, icon_settings, icon_sun};
 use tokio::sync::mpsc;
 
@@ -67,9 +67,13 @@ pub enum Message {
     /// Toggle the channel type picker visibility.
     ToggleChannelPicker,
 
-    // Channel/mix removal
+    // Channel/mix removal (with undo support)
     RemoveChannel(ChannelId),
     RemoveMix(MixId),
+    /// Undo the last delete operation.
+    UndoDelete,
+    /// Clear the undo buffer (called by timer).
+    ClearUndo,
 
     // Inline rename (double-click)
     StartRenameChannel(ChannelId),
@@ -173,6 +177,9 @@ pub struct App {
     pub spectrum_data: HashMap<ChannelId, Vec<(f32, f32)>>,
     /// Whether the channel type picker is visible.
     pub show_channel_picker: bool,
+    /// Last deleted item for undo support (name, was_channel).
+    /// Cleared after 10 seconds or after undo is triggered.
+    pub undo_buffer: Option<(String, bool)>,
     /// Channel currently being renamed (inline edit mode).
     pub editing_channel: Option<ChannelId>,
     /// Mix currently being renamed (inline edit mode).
@@ -211,6 +218,7 @@ impl App {
             routing_app: None,
             spectrum_data: HashMap::new(),
             show_channel_picker: false,
+            undo_buffer: None,
             editing_channel: None,
             editing_mix: None,
             editing_text: String::new(),
@@ -537,15 +545,38 @@ impl App {
                 self.engine.send_command(PluginCommand::GetState);
             }
             Message::RemoveChannel(id) => {
-                tracing::info!(channel_id = id, "removing channel");
+                // Store name in undo buffer before deleting
+                if let Some(ch) = self.engine.state.channels.iter().find(|c| c.id == id) {
+                    self.undo_buffer = Some((ch.name.clone(), true));
+                }
+                tracing::info!(channel_id = id, "removing channel (undo available)");
                 self.engine
                     .send_command(PluginCommand::RemoveChannel { id });
                 self.engine.send_command(PluginCommand::GetState);
             }
             Message::RemoveMix(id) => {
-                tracing::info!(mix_id = id, "removing mix");
+                if let Some(mx) = self.engine.state.mixes.iter().find(|m| m.id == id) {
+                    self.undo_buffer = Some((mx.name.clone(), false));
+                }
+                tracing::info!(mix_id = id, "removing mix (undo available)");
                 self.engine.send_command(PluginCommand::RemoveMix { id });
                 self.engine.send_command(PluginCommand::GetState);
+            }
+            Message::UndoDelete => {
+                if let Some((name, is_channel)) = self.undo_buffer.take() {
+                    if is_channel {
+                        tracing::info!(name = %name, "undoing channel deletion");
+                        self.engine
+                            .send_command(PluginCommand::CreateChannel { name });
+                    } else {
+                        tracing::info!(name = %name, "undoing mix deletion");
+                        self.engine.send_command(PluginCommand::CreateMix { name });
+                    }
+                    self.engine.send_command(PluginCommand::GetState);
+                }
+            }
+            Message::ClearUndo => {
+                self.undo_buffer = None;
             }
             // Plugin events — arrive instantly via async subscription
             Message::PluginStateRefreshed(snapshot) => {
@@ -1457,6 +1488,7 @@ impl App {
         let sidebar = ui::sidebar::sidebar(
             self.sidebar_collapsed,
             &self.engine.state.hardware_inputs,
+            &self.engine.state.mixes,
             tm,
         );
 
@@ -1505,30 +1537,66 @@ impl App {
                 ..Default::default()
             });
 
+        // Undo button (shown when undo_buffer has content)
+        let undo_element: Option<Element<'_, Message>> =
+            self.undo_buffer.as_ref().map(|(name, is_ch)| {
+                let label = if *is_ch {
+                    format!("Undo delete '{name}'")
+                } else {
+                    format!("Undo delete '{name}'")
+                };
+                button(text(label).size(10).color(ui::theme::text_primary(tm)))
+                    .on_press(Message::UndoDelete)
+                    .padding([2, 8])
+                    .style(move |_: &Theme, status| button::Style {
+                        background: match status {
+                            button::Status::Hovered => {
+                                Some(iced::Background::Color(ui::theme::ACCENT))
+                            }
+                            _ => Some(iced::Background::Color(ui::theme::bg_hover(tm))),
+                        },
+                        text_color: ui::theme::text_primary(tm),
+                        border: Border {
+                            color: ui::theme::border_color(tm),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            });
+
         // Status bar — same bg as header/sidebar for visual frame
-        let status_bar = container(
-            row![
-                status_dot,
-                Space::new().width(Length::Fixed(6.0)),
-                text(status_text)
-                    .size(11)
-                    .color(ui::theme::text_secondary(tm)),
-                Space::new().width(Length::Fill),
-                text(format!(
-                    "{} channels  ·  {} routes  ·  {}ms latency",
-                    channel_count, route_count, self.config.audio.latency_ms
-                ))
+        let mut status_row = row![
+            status_dot,
+            Space::new().width(Length::Fixed(6.0)),
+            text(status_text)
                 .size(11)
-                .color(ui::theme::text_muted(tm)),
-            ]
-            .padding([4, 16])
-            .align_y(iced::Alignment::Center),
-        )
-        .width(Length::Fill)
-        .style(move |_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(ui::theme::bg_secondary(tm))),
-            ..Default::default()
-        });
+                .color(ui::theme::text_secondary(tm)),
+        ]
+        .align_y(iced::Alignment::Center);
+
+        if let Some(undo) = undo_element {
+            status_row = status_row
+                .push(Space::new().width(Length::Fixed(12.0)))
+                .push(undo);
+        }
+
+        status_row = status_row.push(Space::new().width(Length::Fill)).push(
+            text(format!(
+                "{} channels  ·  {} routes  ·  {}ms latency",
+                channel_count, route_count, self.config.audio.latency_ms
+            ))
+            .size(11)
+            .color(ui::theme::text_muted(tm)),
+        );
+
+        let status_bar = container(status_row.padding([4, 16]))
+            .width(Length::Fill)
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(ui::theme::bg_secondary(tm))),
+                ..Default::default()
+            });
 
         // Settings overlay — shown when settings_open is true
         let settings_panel: Option<Element<'_, Message>> = if self.settings_open {

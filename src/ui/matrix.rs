@@ -7,8 +7,10 @@
 use std::path::PathBuf;
 
 use iced::widget::{Space, button, column, container, image, row, scrollable, text, text_input};
-use iced::{Background, Border, Element, Length, Theme};
-use lucide_icons::iced::{icon_headphones, icon_plus, icon_volume_2, icon_volume_x, icon_x};
+use iced::{Background, Border, Color, Element, Length, Theme};
+use lucide_icons::iced::{
+    icon_headphones, icon_plus, icon_sliders_vertical, icon_volume_2, icon_volume_x, icon_x,
+};
 
 use iced_aw::ContextMenu;
 
@@ -488,8 +490,36 @@ fn channel_label<'a>(
         .spacing(4)
         .align_y(iced::Alignment::Center);
 
+    // FX button — opens effects side panel for this channel (GAP-006)
+    if let Some(cid) = channel_id {
+        let fx_btn = button(
+            icon_sliders_vertical()
+                .size(10)
+                .color(text_muted(theme_mode))
+                .center(),
+        )
+        .width(16)
+        .height(16)
+        .on_press(Message::SelectedChannel(Some(cid)))
+        .padding(0)
+        .style(move |_: &Theme, status| button::Style {
+            background: match status {
+                button::Status::Hovered => Some(Background::Color(bg_hover(theme_mode))),
+                _ => None,
+            },
+            text_color: text_muted(theme_mode),
+            ..Default::default()
+        });
+        label_row = label_row
+            .push(Space::new().width(Length::Fill))
+            .push(fx_btn);
+    }
+
     if let Some(btn) = remove_btn {
-        label_row = label_row.push(Space::new().width(Length::Fill)).push(btn);
+        if channel_id.is_none() {
+            label_row = label_row.push(Space::new().width(Length::Fill));
+        }
+        label_row = label_row.push(btn);
     }
 
     let inner = container(label_row)
@@ -615,8 +645,9 @@ fn matrix_cell<'a>(
                 .into()
         }
         None => {
-            // Empty cell -- source not routed to this mix; clicking creates the route
-            button(icon_plus().size(16).color(text_muted(theme_mode)).center())
+            // Empty cell — visually recessive (darker bg, subtle icon)
+            // Wave Link 3.0: empty cells are dark/inactive with no slider
+            button(icon_plus().size(12).color(text_muted(theme_mode)).center())
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .on_press(Message::RouteToggled {
@@ -627,20 +658,33 @@ fn matrix_cell<'a>(
                 .style(move |_: &Theme, status| button::Style {
                     background: match status {
                         button::Status::Hovered | button::Status::Pressed => {
-                            Some(Background::Color(ACCENT))
+                            Some(Background::Color(bg_hover(theme_mode)))
                         }
-                        _ => Some(Background::Color(bg_elevated(theme_mode))),
+                        _ => Some(Background::Color(bg_primary(theme_mode))),
                     },
                     text_color: text_muted(theme_mode),
                     border: Border {
                         color: border_color(theme_mode),
-                        width: 1.0,
-                        radius: 4.0.into(),
+                        width: 0.0,
+                        radius: 0.0.into(),
                     },
                     ..Default::default()
                 })
                 .into()
         }
+    };
+
+    // Muted cells get a subtle red tint (GAP-004)
+    let is_muted = route.map(|r| r.muted).unwrap_or(false);
+    let cell_bg = if is_muted {
+        Color {
+            r: bg_elevated(theme_mode).r + 0.06,
+            g: bg_elevated(theme_mode).g,
+            b: bg_elevated(theme_mode).b,
+            a: 1.0,
+        }
+    } else {
+        bg_elevated(theme_mode)
     };
 
     container(cell_content)
@@ -650,7 +694,7 @@ fn matrix_cell<'a>(
         .center_x(Length::Fixed(COL_WIDTH))
         .center_y(Length::Fixed(CELL_HEIGHT))
         .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(bg_elevated(theme_mode))),
+            background: Some(Background::Color(cell_bg)),
             border: Border {
                 color: if focused {
                     ACCENT
