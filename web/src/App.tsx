@@ -1,6 +1,7 @@
 import { GraphProvider } from "./stores/graphStore";
 import { SessionProvider } from "./stores/sessionStore";
 import { MixerSettingsProvider } from "./stores/mixerSettings";
+import { LevelsProvider } from "./stores/levelsStore";
 import Mixer from "./components/Mixer";
 
 export default function App() {
@@ -8,7 +9,9 @@ export default function App() {
     <GraphProvider>
       <SessionProvider>
         <MixerSettingsProvider>
-          <Mixer />
+          <LevelsProvider>
+            <Mixer />
+          </LevelsProvider>
         </MixerSettingsProvider>
       </SessionProvider>
     </GraphProvider>

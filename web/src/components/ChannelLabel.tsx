@@ -22,6 +22,8 @@ interface ChannelLabelProps {
   descriptor: EndpointDescriptor;
   endpoint: Endpoint;
   dragHandle?: () => JSX.Element;
+  peakLeft?: number;
+  peakRight?: number;
 }
 
 const DEBOUNCE_MS = 16;
@@ -251,6 +253,39 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             </div>
           </div>
         </Show>
+        {/* Peak level bar */}
+        <div class="mt-0.5 flex gap-0.5">
+          <div class="h-[3px] flex-1 rounded-full bg-bg-primary">
+            <div
+              class="h-full rounded-full transition-all duration-75"
+              style={{
+                width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
+                background:
+                  (props.peakLeft ?? 0) > 0.9
+                    ? "var(--color-vu-hot)"
+                    : (props.peakLeft ?? 0) > 0.7
+                      ? "var(--color-vu-warm)"
+                      : "var(--color-vu-safe)",
+              }}
+            />
+          </div>
+          <Show when={isStereo()}>
+            <div class="h-[3px] flex-1 rounded-full bg-bg-primary">
+              <div
+                class="h-full rounded-full transition-all duration-75"
+                style={{
+                  width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
+                  background:
+                    (props.peakRight ?? 0) > 0.9
+                      ? "var(--color-vu-hot)"
+                      : (props.peakRight ?? 0) > 0.7
+                        ? "var(--color-vu-warm)"
+                        : "var(--color-vu-safe)",
+                }}
+              />
+            </div>
+          </Show>
+        </div>
       </div>
     </div>
   );

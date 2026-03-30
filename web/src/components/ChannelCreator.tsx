@@ -101,7 +101,7 @@ export default function ChannelCreator(): JSX.Element {
       })
       .filter((n) => {
         const name = inputNodeName(n, graphState.graph);
-        return name.toLowerCase().includes(q) && !existingChannelNames().has(name);
+        return name.toLowerCase().includes(q) && !existingDeviceNodeIds().has(n.id);
       })
       .sort((a, b) =>
         inputNodeName(a, graphState.graph).localeCompare(inputNodeName(b, graphState.graph)),
@@ -110,16 +110,16 @@ export default function ChannelCreator(): JSX.Element {
 
   const runningApps = () => {
     const q = search().toLowerCase();
-    const existing = existingChannelNames();
     return (Object.values(state.session.apps) as App[])
       .filter((app) => {
         const display = app.name || app.binary;
         if (!display || display.includes("(deleted)")) return false;
-        return display.toLowerCase().includes(q) && !existing.has(display);
+        return display.toLowerCase().includes(q);
       })
       .sort((a, b) => (a.name || a.binary).localeCompare(b.name || b.binary));
   };
 
+  /** Display names of visible channels — for filtering presets only. */
   const existingChannelNames = () => {
     const names = new Set<string>();
     for (const [, ep] of state.session.endpoints) {
@@ -128,6 +128,24 @@ export default function ChannelCreator(): JSX.Element {
       if (ep.customName) names.add(ep.customName);
     }
     return names;
+  };
+
+  /** PW node IDs already used as visible channels — for filtering devices. */
+  const existingDeviceNodeIds = () => {
+    const ids = new Set<number>();
+    const nodes = Object.values(graphState.graph.nodes) as PwNode[];
+    // Group node names match channel display names or custom names
+    for (const [, ep] of state.session.endpoints) {
+      if (!ep.visible) continue;
+      const name = ep.customName ?? ep.displayName;
+      const node = nodes.find(
+        (n) =>
+          (n.identifier.nodeDescription === name || n.identifier.nodeNick === name) &&
+          !isOsgNode(n),
+      );
+      if (node) ids.add(node.id);
+    }
+    return ids;
   };
 
   const availableTemplates = () => {

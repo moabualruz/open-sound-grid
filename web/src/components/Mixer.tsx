@@ -11,7 +11,8 @@ import ChannelCreator from "./ChannelCreator";
 import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
 import DragReorder from "./DragReorder";
-import type { Endpoint, EndpointDescriptor, MixerLink } from "../types";
+import { useLevels } from "../stores/levelsStore";
+import type { Endpoint, EndpointDescriptor, MixerLink, PwGroupNode } from "../types";
 
 const MIX_COLORS: Record<string, string> = {
   Monitor: "var(--color-mix-monitor)",
@@ -52,7 +53,16 @@ function findLink(
 export default function Mixer() {
   const { state, send } = useSession();
   const graphState = useGraph();
+  const levels = useLevels();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+
+  /** Resolve a channel descriptor to its PW node ID via groupNodes. */
+  function getPwNodeId(desc: EndpointDescriptor): number | null {
+    if (!("channel" in desc)) return null;
+    const ulid = desc.channel;
+    const group = graphState.graph.groupNodes[ulid] as PwGroupNode | undefined;
+    return group?.id ?? null;
+  }
 
   function channelKind(desc: EndpointDescriptor): string | undefined {
     if (!("channel" in desc)) return undefined;
@@ -270,7 +280,13 @@ export default function Mixer() {
               >
                 {(ch, _idx, dragHandle) => (
                   <div class="flex items-stretch gap-2">
-                    <ChannelLabel descriptor={ch.desc} endpoint={ch.ep} dragHandle={dragHandle} />
+                    <ChannelLabel
+                      descriptor={ch.desc}
+                      endpoint={ch.ep}
+                      dragHandle={dragHandle}
+                      peakLeft={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.left ?? 0}
+                      peakRight={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.right ?? 0}
+                    />
                     <For each={mixes()}>
                       {({ desc: sinkDesc, ep: sinkEp }) => (
                         <MatrixCell
