@@ -1,23 +1,79 @@
 @import "tailwindcss";
 
 @theme {
-  --color-surface: oklch(0.15 0.01 260);
-  --color-surface-alt: oklch(0.2 0.01 260);
-  --color-surface-hover: oklch(0.25 0.01 260);
-  --color-border: oklch(0.35 0.01 260);
-  --color-text: oklch(0.93 0.01 260);
-  --color-text-muted: oklch(0.6 0.01 260);
-  --color-accent: oklch(0.7 0.15 220);
-  --color-accent-hover: oklch(0.75 0.15 220);
-  --color-source: oklch(0.7 0.12 145);
-  --color-sink: oklch(0.7 0.12 25);
+  /* Design spec: Claude/Anthropic dark theme */
+  --color-bg-primary: #1a1a1a;
+  --color-bg-secondary: #242424;
+  --color-bg-elevated: #2e2e2e;
+  --color-bg-hover: #383838;
 
-  --font-sans: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-text-primary: #e8e4df;
+  --color-text-secondary: #a39e96;
+  --color-text-muted: #6b6660;
+
+  --color-accent: #da7756;
+  --color-accent-hover: #c46a4b;
+  --color-accent-secondary: #7c9cbf;
+
+  --color-border: #333333;
+  --color-border-active: #da7756;
+
+  /* VU meter */
+  --color-vu-safe: #4caf50;
+  --color-vu-warm: #ff9800;
+  --color-vu-hot: #f44336;
+
+  /* Mix column colors */
+  --color-mix-monitor: #7c9cbf;
+  --color-mix-stream: #da7756;
+  --color-mix-vod: #8b6fb0;
+  --color-mix-chat: #5daa68;
+  --color-mix-aux: #c4a35a;
+
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", monospace;
 }
 
 body {
-  background-color: var(--color-surface);
-  color: var(--color-text);
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
   font-family: var(--font-sans);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* Custom slider styling */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-bg-hover);
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+input[type="range"]:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
