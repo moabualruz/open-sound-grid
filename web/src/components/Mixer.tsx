@@ -83,6 +83,15 @@ export default function Mixer() {
 
   const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
 
+  // Optimistic local order — instant UI update, then persist to backend
+  const [localOrder, setLocalOrder] = createSignal<EndpointDescriptor[]>([]);
+
+  // Sync from backend when it sends display order
+  createEffect(() => {
+    const backendOrder = state.session.displayOrder;
+    if (backendOrder.length > 0) setLocalOrder(backendOrder);
+  });
+
   function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): EndpointEntry[] {
     if (order.length === 0) return items;
     const orderKeys = order.map(descKey);
@@ -99,16 +108,18 @@ export default function Mixer() {
     return ordered;
   }
 
-  const channels = createMemo(() => applyOrder(rawChannels(), state.session.displayOrder));
+  const channels = createMemo(() => applyOrder(rawChannels(), localOrder()));
   const mixes = createMemo(() =>
     applyOrder(
       rawMixes().filter((m): m is { desc: EndpointDescriptor; ep: Endpoint } => m.ep != null),
-      state.session.displayOrder,
+      localOrder(),
     ),
   );
 
   function persistOrder(reordered: EndpointEntry[]) {
-    send({ type: "setDisplayOrder", order: reordered.map((item) => item.desc) });
+    const order = reordered.map((item) => item.desc);
+    setLocalOrder(order);
+    send({ type: "setDisplayOrder", order });
   }
 
   // TODO(backend): persist output device assignments to settings.toml
