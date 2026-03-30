@@ -24,6 +24,13 @@ pub enum Command {
         volume: f32,
     },
 
+    /// Set independent L/R stereo volume on an endpoint.
+    SetStereoVolume {
+        endpoint: EndpointDescriptor,
+        left: f32,
+        right: f32,
+    },
+
     /// Set mute state on an endpoint.
     SetMute {
         endpoint: EndpointDescriptor,
@@ -91,6 +98,11 @@ impl Command {
             Self::CreateChannel { name, kind } => StateMsg::AddChannel(name, kind),
             Self::RemoveEndpoint { endpoint } => StateMsg::RemoveEndpoint(endpoint),
             Self::SetVolume { endpoint, volume } => StateMsg::SetVolume(endpoint, volume),
+            Self::SetStereoVolume {
+                endpoint,
+                left,
+                right,
+            } => StateMsg::SetStereoVolume(endpoint, left, right),
             Self::SetMute { endpoint, muted } => StateMsg::SetMute(endpoint, muted),
             Self::SetVolumeLocked { endpoint, locked } => {
                 StateMsg::SetVolumeLocked(endpoint, locked)

@@ -153,6 +153,7 @@ export type Command =
   | { type: "createChannel"; name: string; kind: GroupNodeKind }
   | { type: "removeEndpoint"; endpoint: EndpointDescriptor }
   | { type: "setVolume"; endpoint: EndpointDescriptor; volume: number }
+  | { type: "setStereoVolume"; endpoint: EndpointDescriptor; left: number; right: number }
   | { type: "setMute"; endpoint: EndpointDescriptor; muted: boolean }
   | { type: "setVolumeLocked"; endpoint: EndpointDescriptor; locked: boolean }
   | { type: "renameEndpoint"; endpoint: EndpointDescriptor; name: string | null }

@@ -198,6 +198,34 @@ impl MixerSession {
                     None
                 }
 
+                StateMsg::SetStereoVolume(ep_desc, left, right) => {
+                    let nodes = self.resolve_endpoint(ep_desc, graph, settings);
+                    let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
+                        break 'handler None;
+                    };
+                    endpoint.volume = (left + right) / 2.0;
+                    endpoint.volume_mixed = (left - right).abs() > f32::EPSILON;
+
+                    if let Some(nodes) = nodes {
+                        let msgs: Vec<_> = nodes
+                            .into_iter()
+                            .map(|n| {
+                                let vols = if n.channel_volumes.len() >= 2 {
+                                    vec![left, right]
+                                } else {
+                                    vec![(left + right) / 2.0]
+                                };
+                                ToPipewireMessage::NodeVolume(n.id, vols)
+                            })
+                            .collect();
+                        if !msgs.is_empty() {
+                            endpoint.volume_pending = true;
+                        }
+                        pw_messages.extend(msgs);
+                    }
+                    None
+                }
+
                 StateMsg::SetMute(ep_desc, muted) => {
                     let nodes = self.resolve_endpoint(ep_desc, graph, settings);
                     let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {

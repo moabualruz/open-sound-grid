@@ -17,6 +17,7 @@ pub enum StateMsg {
     AddChannel(String, ChannelKind),
     RemoveEndpoint(EndpointDescriptor),
     SetVolume(EndpointDescriptor, f32),
+    SetStereoVolume(EndpointDescriptor, f32, f32),
     SetMute(EndpointDescriptor, bool),
     SetVolumeLocked(EndpointDescriptor, bool),
     /// `None` resets to the default display name.
