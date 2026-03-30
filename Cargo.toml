@@ -7,6 +7,32 @@ edition = "2024"
 license = "MPL-2.0"
 repository = "https://github.com/moabualruz/open-sound-grid"
 
+# ADR-005 coding standards enforced via clippy lints
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# SOLID: small functions, few parameters
+too_many_arguments = "warn"
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+# Immutability: prefer &T over &mut T
+needless_pass_by_ref_mut = "warn"
+# Code quality
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+# Dead code
+unused_self = "warn"
+# Error handling: no string errors
+manual_let_else = "warn"
+
 [workspace.dependencies]
 # Async
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util"] }
