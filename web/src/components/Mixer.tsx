@@ -139,9 +139,7 @@ export default function Mixer() {
     // Use PipeWire's default.audio.sink to find the right device
     const defaultName = graphState.graph.defaultSinkName;
     if (defaultName) {
-      const defaultDev = allDevs.find((d) =>
-        d.nodeName.toLowerCase().includes(defaultName.toLowerCase()),
-      );
+      const defaultDev = allDevs.find((d) => d.pwNodeName === defaultName);
       if (defaultDev && mixOutputs[monitorKey] !== defaultDev.deviceId) {
         setMixOutputs(monitorKey, defaultDev.deviceId);
         return;

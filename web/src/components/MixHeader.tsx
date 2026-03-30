@@ -11,6 +11,8 @@ export interface OutputDevice {
   deviceId: string;
   deviceName: string;
   nodeName: string;
+  /** PipeWire node name (ALSA identifier) — used for matching default sink */
+  pwNodeName: string | null;
 }
 
 interface MixHeaderProps {
@@ -54,6 +56,7 @@ export function getOutputDevices(
           deviceName: dev.name,
           nodeName:
             node.identifier.nodeDescription ?? node.identifier.nodeName ?? `Node ${node.id}`,
+          pwNodeName: node.identifier.nodeName,
         });
       }
     }
