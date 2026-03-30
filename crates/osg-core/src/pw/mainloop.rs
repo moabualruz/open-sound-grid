@@ -384,7 +384,11 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
     }
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_lines, clippy::cognitive_complexity)]
+#[allow(
+    clippy::type_complexity,
+    clippy::too_many_lines,
+    clippy::cognitive_complexity
+)]
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
 ) -> Result<

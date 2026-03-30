@@ -270,9 +270,8 @@ impl Store {
             .expect("node must exist when receiving its param update");
 
         // deserialize the pod
-        let (_, value) =
-            PodDeserializer::deserialize_any_from(pod.as_bytes())
-                .expect("PW-provided pod bytes must be deserializable");
+        let (_, value) = PodDeserializer::deserialize_any_from(pod.as_bytes())
+            .expect("PW-provided pod bytes must be deserializable");
 
         let node_props = NodeProps::new(value);
 

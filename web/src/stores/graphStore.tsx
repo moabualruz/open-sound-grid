@@ -1,9 +1,4 @@
-import {
-  createContext,
-  useContext,
-  onCleanup,
-  type ParentProps,
-} from "solid-js";
+import { createContext, useContext, onCleanup, type ParentProps } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import type { AudioGraph } from "../types";
 
@@ -58,11 +53,7 @@ export function GraphProvider(props: ParentProps) {
     ws?.close();
   });
 
-  return (
-    <GraphContext.Provider value={state}>
-      {props.children}
-    </GraphContext.Provider>
-  );
+  return <GraphContext.Provider value={state}>{props.children}</GraphContext.Provider>;
 }
 
 export function useGraph(): GraphState {

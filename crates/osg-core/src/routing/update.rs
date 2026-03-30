@@ -7,7 +7,7 @@ use itertools::Itertools;
 use tracing::warn;
 
 use crate::graph::{
-    Channel, ChannelId, MixerSession, Endpoint, EndpointDescriptor, Link, LinkState,
+    Channel, ChannelId, Endpoint, EndpointDescriptor, Link, LinkState, MixerSession,
     ReconcileSettings, average_volumes,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};

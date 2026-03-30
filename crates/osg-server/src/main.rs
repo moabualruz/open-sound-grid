@@ -56,10 +56,7 @@ async fn get_graph(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// WebSocket endpoint: sends AudioGraph snapshot on connect, then streams updates.
-async fn ws_graph(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn ws_graph(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_graph(socket, state))
 }
 

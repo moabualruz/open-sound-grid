@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, MixerSession, EndpointDescriptor, Link, LinkState, PersistentNodeId,
-    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
+    App, EndpointDescriptor, Link, LinkState, MixerSession, PersistentNodeId, ReconcileSettings,
+    VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -45,7 +45,11 @@ impl ReconciliationService {
 
 impl MixerSession {
     /// Run the full reconciliation pass. Returns PipeWire commands to execute.
-    pub fn diff(&mut self, graph: &AudioGraph, settings: &ReconcileSettings) -> Vec<ToPipewireMessage> {
+    pub fn diff(
+        &mut self,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+    ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.diff_channels(&endpoint_nodes);
         messages.extend(self.diff_properties(&endpoint_nodes));
@@ -140,10 +144,7 @@ impl MixerSession {
                 .get(&endpoint_desc)
                 .and_then(|nodes| nodes.first())
             {
-                let channel = self
-                    .channels
-                    .get_mut(&id)
-                    .expect("channel must exist");
+                let channel = self.channels.get_mut(&id).expect("channel must exist");
                 if channel.pending {
                     channel.pending = false;
                 }
@@ -151,10 +152,7 @@ impl MixerSession {
                     channel.pipewire_id = Some(node.id);
                 }
             } else {
-                let channel = self
-                    .channels
-                    .get_mut(&id)
-                    .expect("channel must exist");
+                let channel = self.channels.get_mut(&id).expect("channel must exist");
                 if !channel.pending {
                     channel.pending = true;
                     let ep = self

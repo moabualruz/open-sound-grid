@@ -37,19 +37,16 @@ impl OsgCore {
         let tx_clone = graph_tx.clone();
         let pw_sender_clone = pw_sender.clone();
 
-        let pw_handle = PipewireHandle::init(
-            (pw_sender_clone, pw_receiver),
-            move |new_graph| {
-                let snapshot = *new_graph;
-                // Mutex should never be poisoned — only held briefly for snapshot assignment
-                #[allow(clippy::unwrap_used)]
-                {
-                    *graph_clone.lock().unwrap() = snapshot.clone();
-                }
-                // Broadcast to all subscribers (ignore error if no receivers)
-                let _ = tx_clone.send(snapshot);
-            },
-        )?;
+        let pw_handle = PipewireHandle::init((pw_sender_clone, pw_receiver), move |new_graph| {
+            let snapshot = *new_graph;
+            // Mutex should never be poisoned — only held briefly for snapshot assignment
+            #[allow(clippy::unwrap_used)]
+            {
+                *graph_clone.lock().unwrap() = snapshot.clone();
+            }
+            // Broadcast to all subscribers (ignore error if no receivers)
+            let _ = tx_clone.send(snapshot);
+        })?;
 
         debug!("OsgCore initialized, PipeWire connected");
 
@@ -76,8 +73,6 @@ impl OsgCore {
 
     /// Send a command to the PipeWire thread.
     pub fn send(&self, msg: ToPipewireMessage) -> Result<(), PwError> {
-        self._pw_sender
-            .send(msg)
-            .map_err(|_| PwError::ThreadExited)
+        self._pw_sender.send(msg).map_err(|_| PwError::ThreadExited)
     }
 }

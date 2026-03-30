@@ -35,13 +35,8 @@ pub enum NodeCommand {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MetadataCommand {
-    RedirectStream {
-        stream_id: u32,
-        target_sink_id: u32,
-    },
-    ClearRedirect {
-        stream_id: u32,
-    },
+    RedirectStream { stream_id: u32, target_sink_id: u32 },
+    ClearRedirect { stream_id: u32 },
 }
 
 /// Config persistence events — low frequency, debounced at 30s.
