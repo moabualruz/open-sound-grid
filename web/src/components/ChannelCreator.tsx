@@ -1,6 +1,7 @@
 import { For, Show, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
-import type { PwClient } from "../types";
+import { useGraph } from "../stores/graphStore";
+import type { PwNode } from "../types";
 
 const PRESETS = [
   { name: "Music", icon: "🎵", kind: "duplex" as const },
@@ -9,20 +10,36 @@ const PRESETS = [
   { name: "Game", icon: "🎮", kind: "duplex" as const },
   { name: "Voice Chat", icon: "💬", kind: "duplex" as const },
   { name: "SFX", icon: "🔊", kind: "duplex" as const },
+  { name: "Aux 1", icon: "🎛️", kind: "duplex" as const },
 ];
 
-interface ChannelCreatorProps {
-  apps: PwClient[];
+/** Get a human-friendly name for a PipeWire node. */
+function nodeName(node: PwNode): string {
+  return node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
 }
 
-export default function ChannelCreator(props: ChannelCreatorProps) {
+/** Filter out internal/system nodes, keep user-facing audio apps. */
+function isUserApp(node: PwNode): boolean {
+  const name = node.identifier.nodeName ?? "";
+  // Skip internal PipeWire/system nodes
+  if (name.startsWith("Midi-Bridge") || name.startsWith("bluez_midi")) return false;
+  if (name.includes("v4l2_")) return false; // video devices
+  // Must have audio ports
+  return node.ports.length > 0;
+}
+
+export default function ChannelCreator() {
   const { send } = useSession();
+  const { graph } = useGraph();
   const [open, setOpen] = createSignal(false);
   const [search, setSearch] = createSignal("");
 
-  const filteredApps = () => {
+  const audioApps = () => {
     const q = search().toLowerCase();
-    return props.apps.filter((a) => a.name.toLowerCase().includes(q));
+    return (Object.values(graph.nodes) as PwNode[])
+      .filter(isUserApp)
+      .filter((n) => nodeName(n).toLowerCase().includes(q))
+      .sort((a, b) => nodeName(a).localeCompare(nodeName(b)));
   };
 
   const filteredPresets = () => {
@@ -46,16 +63,13 @@ export default function ChannelCreator(props: ChannelCreatorProps) {
       </button>
 
       <Show when={open()}>
-        {/* Backdrop */}
         <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
 
-        {/* Dropdown */}
-        <div class="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-lg border border-border bg-bg-elevated shadow-xl">
-          {/* Search */}
+        <div class="absolute bottom-full left-0 z-30 mb-1 w-72 rounded-lg border border-border bg-bg-elevated shadow-xl">
           <div class="border-b border-border p-2">
             <input
               type="text"
-              placeholder="Search apps..."
+              placeholder="Search..."
               value={search()}
               onInput={(e) => setSearch(e.currentTarget.value)}
               autofocus
@@ -63,31 +77,35 @@ export default function ChannelCreator(props: ChannelCreatorProps) {
             />
           </div>
 
-          <div class="max-h-64 overflow-y-auto">
-            {/* Detected apps */}
-            <Show when={filteredApps().length > 0}>
+          <div class="max-h-72 overflow-y-auto">
+            <Show when={audioApps().length > 0}>
               <div class="px-2 pt-2">
                 <div class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-                  Running Apps
+                  Audio Sources
                 </div>
-                <For each={filteredApps()}>
-                  {(app) => (
-                    <button
-                      onClick={() => create(app.name, "duplex")}
-                      class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                    >
-                      <span class="text-sm">📱</span>
-                      <span class="flex-1 truncate">{app.name}</span>
-                      <span class="rounded-full bg-vu-safe/20 px-1.5 py-0.5 text-[10px] text-vu-safe">
-                        {app.nodes.length}
-                      </span>
-                    </button>
-                  )}
+                <For each={audioApps()}>
+                  {(node) => {
+                    const name = nodeName(node);
+                    const hasPorts = node.ports.length > 0;
+                    return (
+                      <button
+                        onClick={() => create(name, "duplex")}
+                        class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        <span class="text-base">🔈</span>
+                        <span class="flex-1 truncate">{name}</span>
+                        <Show when={hasPorts}>
+                          <span class="rounded-full bg-vu-safe/20 px-1.5 py-0.5 text-[10px] text-vu-safe">
+                            live
+                          </span>
+                        </Show>
+                      </button>
+                    );
+                  }}
                 </For>
               </div>
             </Show>
 
-            {/* Presets */}
             <div class="px-2 py-2">
               <div class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
                 Add Empty Channel
@@ -96,9 +114,9 @@ export default function ChannelCreator(props: ChannelCreatorProps) {
                 {(preset) => (
                   <button
                     onClick={() => create(preset.name, preset.kind)}
-                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
                   >
-                    <span class="text-sm">{preset.icon}</span>
+                    <span class="text-base">{preset.icon}</span>
                     <span>{preset.name}</span>
                   </button>
                 )}

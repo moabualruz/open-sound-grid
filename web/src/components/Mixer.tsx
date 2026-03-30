@@ -3,7 +3,7 @@ import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import MatrixCell from "./MatrixCell";
 import ChannelCreator from "./ChannelCreator";
-import type { Endpoint, PwClient } from "../types";
+import type { Endpoint, PwDevice } from "../types";
 
 const DEFAULT_MIXES = ["Monitor", "Stream"];
 
@@ -53,10 +53,9 @@ export default function Mixer() {
       .filter(([desc]) => "channel" in desc)
       .map(([desc, ep]) => ({ desc, ep }));
 
-  const detectedApps = (): PwClient[] => {
-    const clients = Object.values(graph.clients) as PwClient[];
-    return clients
-      .filter((c) => !c.isOsg && c.nodes.length > 0 && c.name)
+  const hardwareDevices = (): PwDevice[] => {
+    return (Object.values(graph.devices) as PwDevice[])
+      .filter((d) => d.nodes.length > 0)
       .sort((a, b) => a.name.localeCompare(b.name));
   };
 
@@ -78,28 +77,38 @@ export default function Mixer() {
 
       <div class="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <aside class="flex w-52 shrink-0 flex-col border-r border-border bg-bg-secondary">
+        <aside class="flex w-52 shrink-0 flex-col border-r border-border bg-[#161616]">
           <div class="border-b border-border px-4 py-2.5">
             <h2 class="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
               Devices
             </h2>
           </div>
           <div class="flex-1 overflow-y-auto px-3 py-2">
-            <For each={detectedApps()}>
-              {(client) => (
-                <button
-                  onClick={() => send({ type: "createChannel", name: client.name, kind: "duplex" })}
-                  class="mb-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-[13px] text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary"
-                >
-                  <span class="truncate">{client.name}</span>
-                  <span class="ml-auto rounded-full bg-bg-hover px-1.5 py-0.5 text-[10px] text-text-muted">
-                    {client.nodes.length}
-                  </span>
-                </button>
+            <For each={hardwareDevices()}>
+              {(device) => (
+                <div class="group mb-1 flex w-full flex-col gap-1.5 rounded-md px-2.5 py-2.5">
+                  <div class="flex items-center gap-2">
+                    <span class="text-base">🎤</span>
+                    <span class="truncate text-[13px] font-medium text-text-primary">
+                      {device.name}
+                    </span>
+                  </div>
+                  {/* VU meter bar */}
+                  <div class="h-1.5 w-full overflow-hidden rounded-full bg-[#1a1a1a]">
+                    <div
+                      class="h-full rounded-full transition-all"
+                      style={{
+                        width: "35%",
+                        background:
+                          "linear-gradient(to right, var(--color-vu-safe) 0%, var(--color-vu-safe) 70%, var(--color-vu-warm) 85%, var(--color-vu-hot) 100%)",
+                      }}
+                    />
+                  </div>
+                </div>
               )}
             </For>
           </div>
-          <div class="border-t border-border p-3">
+          <div class="border-t border-[#222] p-3">
             <div class="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
               Mixes & Effects
             </div>
@@ -199,7 +208,7 @@ export default function Mixer() {
             {/* Create channel button */}
             <div class="flex gap-3">
               <div class="w-52 shrink-0">
-                <ChannelCreator apps={detectedApps()} />
+                <ChannelCreator />
               </div>
             </div>
 
