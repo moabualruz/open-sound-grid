@@ -3,8 +3,9 @@
 use std::{cell::RefCell, rc::Rc, sync::mpsc, thread::JoinHandle};
 
 use pipewire::{
-    context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, properties::properties,
-    proxy::ProxyT, registry::RegistryRc, spa::param::ParamType, types::ObjectType,
+    context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, metadata::Metadata,
+    properties::properties, proxy::ProxyT, registry::RegistryRc, spa::param::ParamType,
+    types::ObjectType,
 };
 use tracing::{debug, trace, warn};
 use ulid::Ulid;
@@ -86,6 +87,14 @@ impl Master {
                                 }
                                 ObjectType::Device => {
                                     init_device_listeners(store.clone(), global.id);
+                                }
+                                ObjectType::Metadata => {
+                                    init_metadata_listener(
+                                        &registry,
+                                        store.clone(),
+                                        sender.clone(),
+                                        global,
+                                    );
                                 }
                                 _ => {}
                             }
@@ -382,6 +391,41 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
             .enum_params(0, Some(ParamType::Route), 0, u32::MAX);
         device.proxy.subscribe_params(&[ParamType::Route]);
     }
+}
+
+/// Bind and listen for PipeWire metadata `default.audio.sink` changes.
+fn init_metadata_listener(
+    registry: &RegistryRc,
+    store: Rc<RefCell<Store>>,
+    sender: pipewire::channel::Sender<ToPipewireMessage>,
+    global: &pipewire::registry::GlobalObject<&pipewire::spa::utils::dict::DictRef>,
+) {
+    let Ok(metadata) = registry.bind::<Metadata, _>(global) else {
+        warn!("[PW] failed to bind metadata object {}", global.id);
+        return;
+    };
+    let listener = metadata
+        .add_listener_local()
+        .property({
+            let store = store.clone();
+            let sender = sender.clone();
+            move |_subject, key, _type, value| {
+                if key == Some("default.audio.sink") {
+                    let name = value
+                        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+                        .and_then(|v| v.get("name")?.as_str().map(String::from));
+                    debug!("default.audio.sink changed: {name:?}");
+                    store.borrow_mut().default_sink_name = name;
+                    let _ = sender.send(ToPipewireMessage::Update);
+                }
+                0
+            }
+        })
+        .register();
+
+    // Leak — must stay alive for the mainloop duration.
+    std::mem::forget(metadata);
+    std::mem::forget(listener);
 }
 
 #[allow(

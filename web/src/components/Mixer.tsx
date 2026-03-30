@@ -111,16 +111,29 @@ export default function Mixer() {
   );
 
   // TODO(backend): persist output device assignments to settings.toml
-  // TODO(backend): two-way sync with PipeWire metadata default.audio.sink
   const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
 
-  // Auto-assign first output device to Monitor mix
+  // Auto-assign OS default output device to Monitor mix
   createEffect(() => {
     const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
     if (allDevs.length === 0) return;
     const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
     if (!monitorMix) return;
     const monitorKey = JSON.stringify(monitorMix.desc);
+
+    // Use PipeWire's default.audio.sink to find the right device
+    const defaultName = graphState.graph.defaultSinkName;
+    if (defaultName) {
+      const defaultDev = allDevs.find((d) =>
+        d.nodeName.toLowerCase().includes(defaultName.toLowerCase()),
+      );
+      if (defaultDev && mixOutputs[monitorKey] !== defaultDev.deviceId) {
+        setMixOutputs(monitorKey, defaultDev.deviceId);
+        return;
+      }
+    }
+
+    // Fallback: assign first device if nothing assigned yet
     if (!mixOutputs[monitorKey]) {
       setMixOutputs(monitorKey, allDevs[0].deviceId);
     }

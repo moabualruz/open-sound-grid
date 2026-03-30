@@ -434,12 +434,24 @@ impl MixerSession {
 
                 StateMsg::SetMixOutput(channel_id, output_node_id) => {
                     if let Some(ch) = self.channels.get_mut(&channel_id) {
+                        let old_output = ch.output_node_id;
                         ch.output_node_id = output_node_id;
-                        // TODO: Create PW links from mix sink to output device
-                        // pw_messages.push(ToPipewireMessage::CreateNodeLinks {
-                        //     start_id: ch.pipewire_id.unwrap(),
-                        //     end_id: output_node_id.unwrap(),
-                        // });
+
+                        // Remove old links if previously assigned
+                        if let (Some(pw_id), Some(old_id)) = (ch.pipewire_id, old_output) {
+                            pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+                                start_id: pw_id,
+                                end_id: old_id,
+                            });
+                        }
+
+                        // Create new links to the output device
+                        if let (Some(pw_id), Some(new_id)) = (ch.pipewire_id, output_node_id) {
+                            pw_messages.push(ToPipewireMessage::CreateNodeLinks {
+                                start_id: pw_id,
+                                end_id: new_id,
+                            });
+                        }
                     }
                     None
                 }

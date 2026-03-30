@@ -70,6 +70,7 @@ export interface AudioGraph {
   nodes: Record<string, PwNode>;
   ports: Record<string, PwPort>;
   links: Record<string, PwLink>;
+  defaultSinkName: string | null;
 }
 
 // ---------------------------------------------------------------------------

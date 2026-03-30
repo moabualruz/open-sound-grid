@@ -35,6 +35,8 @@ pub(super) struct Store {
     pub(super) nodes: HashMap<u32, Node>,
     pub(super) ports: HashMap<u32, Port>,
     pub(super) links: HashMap<u32, Link>,
+    /// PipeWire node name of the OS default audio sink.
+    pub(super) default_sink_name: Option<String>,
 }
 
 impl Store {
@@ -47,6 +49,7 @@ impl Store {
             nodes: HashMap::new(),
             ports: HashMap::new(),
             links: HashMap::new(),
+            default_sink_name: None,
         }
     }
 
@@ -408,6 +411,7 @@ impl Store {
             nodes: self.nodes.iter().map(|(id, node)| (*id, node.without_proxy())).collect(),
             ports: self.ports.iter().map(|(id, port)| (*id, port.without_proxy())).collect(),
             links: self.links.iter().map(|(id, link)| (*id, link.without_proxy())).collect(),
+            default_sink_name: self.default_sink_name.clone(),
         }
     }
 }
