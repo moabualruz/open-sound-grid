@@ -127,7 +127,8 @@ pub type Port = object::Port<()>;
 pub type Link = object::Link<()>;
 
 /// Read-only projection of PipeWire's current graph state. DDD read model.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioGraph {
     pub group_nodes: HashMap<Ulid, GroupNode>,
     pub clients: HashMap<u32, Client>,

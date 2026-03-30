@@ -39,7 +39,7 @@ oneshot = "0.1"
 dirs = "6.0"
 
 # Web server (osg-server only)
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["fs", "cors"] }
 tokio-tungstenite = "0.29"

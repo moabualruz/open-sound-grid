@@ -117,13 +117,15 @@ impl ObjectConvertErrorExt for GlobalObject<&DictRef> {
 // --- GroupNode ---
 // Replaced `derivative` with manual Debug impl that skips the listener field.
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GroupNode<P = pipewire::node::Node, L = pipewire::proxy::ProxyListener> {
     pub id: Option<u32>,
     pub name: String,
     pub kind: GroupNodeKind,
+    #[serde(skip)]
     pub(super) proxy: P,
-    // This just needs to be stored here because dropping it removes the listener
+    #[serde(skip)]
     pub(super) _listener: L,
 }
 
@@ -211,14 +213,17 @@ impl Client<()> {
 // --- Device ---
 // Replaced `derivative` with manual Debug impl that skips the listener field.
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Device<P = pipewire::device::Device, L = Option<pipewire::device::DeviceListener>> {
     pub id: u32,
     pub name: String,
     pub client: u32,
     pub nodes: Vec<u32>,
     pub active_routes: Vec<DeviceActiveRoute>,
+    #[serde(skip)]
     pub(super) proxy: P,
+    #[serde(skip)]
     pub(super) listener: L,
 }
 
@@ -276,7 +281,8 @@ impl Device {
 // --- Node ---
 // Replaced `derivative` with manual Debug impl that skips the listener field.
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Node<P = pipewire::node::Node, L = Option<pipewire::node::NodeListener>> {
     pub id: u32,
     pub identifier: NodeIdentifier,
@@ -285,8 +291,9 @@ pub struct Node<P = pipewire::node::Node, L = Option<pipewire::node::NodeListene
     pub ports: Vec<(u32, PortKind, bool)>,
     pub channel_volumes: Vec<f32>,
     pub mute: bool,
+    #[serde(skip)]
     pub(super) proxy: P,
-    // listener is set by mainloop
+    #[serde(skip)]
     pub(super) listener: L,
 }
 

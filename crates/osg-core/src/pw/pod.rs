@@ -192,7 +192,8 @@ pub fn build_node_mute_pod(mute: bool) -> (ParamType, PodBytes) {
     (ParamType::Props, pod)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceActiveRoute {
     pub route_index: i32,
     pub device_index: i32,
