@@ -6,7 +6,7 @@ import type { MixerSession, Command } from "../types";
 const EMPTY_SESSION: MixerSession = {
   activeSources: [],
   activeSinks: [],
-  endpoints: {},
+  endpoints: [],
   links: [],
   persistentNodes: {},
   apps: {},

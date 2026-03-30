@@ -131,7 +131,7 @@ export interface App {
 export interface MixerSession {
   activeSources: EndpointDescriptor[];
   activeSinks: EndpointDescriptor[];
-  endpoints: Record<string, Endpoint>;
+  endpoints: [EndpointDescriptor, Endpoint][];
   links: MixerLink[];
   persistentNodes: Record<string, [NodeIdentifier, PortKind]>;
   apps: Record<string, App>;

@@ -82,12 +82,15 @@ pub fn debounced_graph_sender(
     msg_tx: mpsc::UnboundedSender<ReducerMsg>,
 ) -> impl Fn(Box<AudioGraph>) + Send + 'static {
     let pending: Arc<Mutex<Option<Box<AudioGraph>>>> = Arc::new(Mutex::new(None));
+    // Capture the Tokio runtime handle so this closure works from non-Tokio threads
+    // (e.g. the PipeWire std::thread callback).
+    let handle = tokio::runtime::Handle::current();
 
     move |new_graph| {
         let pending = pending.clone();
         let tx = msg_tx.clone();
 
-        tokio::spawn(async move {
+        handle.spawn(async move {
             let mut guard = pending.lock().await;
             if guard.is_some() {
                 // A debounce timer is already running; just replace the graph.

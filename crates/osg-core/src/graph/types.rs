@@ -412,6 +412,10 @@ pub struct Device;
 pub struct MixerSession {
     pub active_sources: Vec<EndpointDescriptor>,
     pub active_sinks: Vec<EndpointDescriptor>,
+    #[serde(
+        serialize_with = "crate::graph::serde_helpers::serialize_map_as_vec",
+        deserialize_with = "crate::graph::serde_helpers::deserialize_map_from_vec"
+    )]
     pub endpoints: HashMap<EndpointDescriptor, Endpoint>,
     #[serde(skip)]
     pub candidates: Vec<(u32, PortKind, NodeIdentifier)>,

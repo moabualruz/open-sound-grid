@@ -5,7 +5,7 @@ import EndpointRow from "./EndpointRow";
 export default function MixerPanel() {
   const { state } = useSession();
 
-  const endpoints = () => Object.values(state.session.endpoints);
+  const endpoints = () => state.session.endpoints.map(([, ep]) => ep);
   const sources = () =>
     endpoints().filter((ep) => {
       const d = ep.descriptor;
