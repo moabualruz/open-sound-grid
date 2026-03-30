@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import EndpointRow from "./EndpointRow";
+import LinkList from "./LinkList";
 
 export default function MixerPanel() {
   const { state } = useSession();
@@ -10,7 +11,10 @@ export default function MixerPanel() {
     endpoints().filter((ep) => {
       const d = ep.descriptor;
       return (
-        "app" in d || "channel" in d || ("persistentNode" in d && d.persistentNode[1] === "source")
+        "app" in d ||
+        "channel" in d ||
+        ("persistentNode" in d && d.persistentNode[1] === "source") ||
+        ("ephemeralNode" in d && d.ephemeralNode[1] === "source")
       );
     });
   const sinks = () =>
@@ -30,7 +34,7 @@ export default function MixerPanel() {
         when={endpoints().length > 0}
         fallback={
           <p class="text-text-muted text-sm">
-            No endpoints in session. Create a channel to get started.
+            No endpoints in session. Create a channel or add a node to get started.
           </p>
         }
       >
@@ -58,6 +62,10 @@ export default function MixerPanel() {
               <p class="text-text-muted text-sm">No outputs</p>
             </Show>
           </div>
+        </div>
+
+        <div class="mt-6">
+          <LinkList />
         </div>
       </Show>
     </section>

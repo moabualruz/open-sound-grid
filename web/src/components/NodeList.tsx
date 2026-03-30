@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import { useGraph } from "../stores/graphStore";
+import { useSession } from "../stores/sessionStore";
 import type { PwNode } from "../types";
 
 function getNodeDisplayName(node: PwNode): string {
@@ -18,8 +19,18 @@ function getPortSummary(node: PwNode): string {
 
 export default function NodeList() {
   const { graph, connected } = useGraph();
+  const { send } = useSession();
 
   const sortedNodes = () => Object.values(graph.nodes).sort((a, b) => a.id - b.id);
+
+  function addAsEphemeral(node: PwNode) {
+    const hasSources = node.ports.some(([, kind]) => kind === "source");
+    send({
+      type: "createChannel",
+      name: getNodeDisplayName(node),
+      kind: hasSources ? "source" : "sink",
+    });
+  }
 
   return (
     <section>
@@ -52,6 +63,14 @@ export default function NodeList() {
                   <span class="text-text-muted">{getPortSummary(node)}</span>
                   <Show when={node.mute}>
                     <span class="rounded bg-sink/20 px-1.5 py-0.5 text-sink">muted</span>
+                  </Show>
+                  <Show when={node.ports.length > 0}>
+                    <button
+                      onClick={() => addAsEphemeral(node)}
+                      class="rounded bg-accent/20 px-2 py-0.5 text-accent hover:bg-accent/30"
+                    >
+                      + mixer
+                    </button>
                   </Show>
                 </div>
               </li>
