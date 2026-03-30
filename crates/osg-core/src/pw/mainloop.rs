@@ -25,6 +25,8 @@ struct Master {
     pw_core: CoreRc,
     registry: RegistryRc,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
+    /// PipeWire settings metadata proxy — used to set default.audio.sink.
+    settings_metadata: Rc<RefCell<Option<Metadata>>>,
 }
 
 impl Master {
@@ -39,6 +41,7 @@ impl Master {
             pw_core,
             registry,
             sender,
+            settings_metadata: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -74,6 +77,7 @@ impl Master {
                 let store = self.store.clone();
                 let registry = self.registry.clone();
                 let sender = self.sender.clone();
+                let settings_metadata = self.settings_metadata.clone();
                 move |global| {
                     let result = { store.borrow_mut().add_object(&registry, global) };
                     match result {
@@ -93,6 +97,7 @@ impl Master {
                                         &registry,
                                         store.clone(),
                                         sender.clone(),
+                                        &settings_metadata,
                                         global,
                                     );
                                 }
@@ -394,10 +399,13 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
 }
 
 /// Bind and listen for PipeWire metadata `default.audio.sink` changes.
+/// Stores the metadata proxy in `metadata_out` so it can be used to set the default sink.
+#[allow(clippy::too_many_arguments)]
 fn init_metadata_listener(
     registry: &RegistryRc,
     store: Rc<RefCell<Store>>,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
+    metadata_out: &Rc<RefCell<Option<Metadata>>>,
     global: &pipewire::registry::GlobalObject<&pipewire::spa::utils::dict::DictRef>,
 ) {
     let Ok(metadata) = registry.bind::<Metadata, _>(global) else {
@@ -423,8 +431,8 @@ fn init_metadata_listener(
         })
         .register();
 
-    // Leak — must stay alive for the mainloop duration.
-    std::mem::forget(metadata);
+    // Store the proxy so we can call set_property later. Leak the listener.
+    *metadata_out.borrow_mut() = Some(metadata);
     std::mem::forget(listener);
 }
 
@@ -534,6 +542,20 @@ pub(super) fn init_mainloop(
                 ToPipewireMessage::RemoveGroupNode(name) => {
                     if let Err(err) = master.remove_group_node(name) {
                         warn!("Error removing group node: {err:?}");
+                    }
+                }
+                ToPipewireMessage::SetDefaultSink(node_name) => {
+                    let value = format!(r#"{{"name":"{node_name}"}}"#);
+                    if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                        metadata.set_property(
+                            0,
+                            "default.audio.sink",
+                            Some("Spa:String:JSON"),
+                            Some(&value),
+                        );
+                        debug!("[PW] set default.audio.sink to {value}");
+                    } else {
+                        warn!("[PW] no metadata proxy available for SetDefaultSink");
                     }
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),

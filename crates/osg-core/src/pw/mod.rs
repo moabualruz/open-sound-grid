@@ -159,6 +159,8 @@ pub enum ToPipewireMessage {
     CreateGroupNode(String, Ulid, GroupNodeKind),
     /// Domain: RemoveChannel. Removes a virtual audio bus (Channel) from PipeWire.
     RemoveGroupNode(Ulid),
+    /// Set the OS default audio sink via PipeWire metadata.
+    SetDefaultSink(String),
     Exit,
 }
 

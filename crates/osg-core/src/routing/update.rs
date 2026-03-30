@@ -465,6 +465,21 @@ impl MixerSession {
                                 end_id: new_id,
                             });
                         }
+
+                        // If this is the Monitor mix, update OS default sink
+                        let desc = EndpointDescriptor::Channel(channel_id);
+                        let is_monitor = self
+                            .endpoints
+                            .get(&desc)
+                            .map(|ep| ep.display_name.to_lowercase().contains("monitor"))
+                            .unwrap_or(false);
+                        if is_monitor
+                            && let Some(new_id) = output_node_id
+                            && let Some(node) = graph.nodes.get(&new_id)
+                            && let Some(name) = node.identifier.node_name()
+                        {
+                            pw_messages.push(ToPipewireMessage::SetDefaultSink(name.to_owned()));
+                        }
                     }
                     None
                 }

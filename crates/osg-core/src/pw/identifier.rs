@@ -114,6 +114,10 @@ impl NodeIdentifier {
         self.details_.take();
     }
 
+    pub fn node_name(&self) -> Option<&str> {
+        self.node_name.as_deref()
+    }
+
     pub fn icon_name(&self) -> &str {
         self.icon_name_.get_or_init(|| {
             self.app_icon_name
