@@ -311,6 +311,7 @@ impl MixerSession {
                             start: source,
                             end: sink,
                             state: LinkState::ConnectedUnlocked,
+                            cell_volume: 1.0,
                             pending: !msgs.is_empty(),
                         });
                     }
@@ -380,6 +381,7 @@ impl MixerSession {
                                 start: source,
                                 end: sink,
                                 state: LinkState::DisconnectedLocked,
+                                cell_volume: 1.0,
                                 pending: false,
                             });
                         }
@@ -428,6 +430,17 @@ impl MixerSession {
                             }
                             _ => endpoint.custom_name = name,
                         }
+                    }
+                    None
+                }
+
+                StateMsg::SetLinkVolume(source, sink, volume) => {
+                    if let Some(link) = self
+                        .links
+                        .iter_mut()
+                        .find(|l| l.start == source && l.end == sink)
+                    {
+                        link.cell_volume = volume.clamp(0.0, 1.0);
                     }
                     None
                 }

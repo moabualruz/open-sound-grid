@@ -33,6 +33,8 @@ pub enum StateMsg {
     Link(EndpointDescriptor, EndpointDescriptor),
     RemoveLink(EndpointDescriptor, EndpointDescriptor),
     SetLinkLocked(EndpointDescriptor, EndpointDescriptor, bool),
+    /// Set per-route cell volume (independent of channel master).
+    SetLinkVolume(EndpointDescriptor, EndpointDescriptor, f32),
 }
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,7 @@ export interface MixerLink {
   start: EndpointDescriptor;
   end: EndpointDescriptor;
   state: LinkState;
+  cellVolume: number;
 }
 
 export interface Channel {
@@ -162,6 +163,12 @@ export type Command =
       source: EndpointDescriptor;
       target: EndpointDescriptor;
       locked: boolean;
+    }
+  | {
+      type: "setLinkVolume";
+      source: EndpointDescriptor;
+      target: EndpointDescriptor;
+      volume: number;
     }
   | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
   | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }

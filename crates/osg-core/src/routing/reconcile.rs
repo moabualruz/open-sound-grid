@@ -353,12 +353,14 @@ impl MixerSession {
                     start: source_desc,
                     end: sink_desc,
                     state: LinkState::ConnectedUnlocked,
+                    cell_volume: 1.0,
                     pending: false,
                 }),
                 None => self.links.push(Link {
                     start: source_desc,
                     end: sink_desc,
                     state: LinkState::PartiallyConnected,
+                    cell_volume: 1.0,
                     pending: false,
                 }),
                 Some(false) => {}

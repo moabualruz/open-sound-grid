@@ -230,9 +230,17 @@ pub struct Link {
     pub start: EndpointDescriptor,
     pub end: EndpointDescriptor,
     pub state: LinkState,
+    /// Per-route volume ratio (0.0–1.0). Independent of channel master volume.
+    /// Effective volume to PipeWire = master × cell_volume.
+    #[serde(default = "default_one")]
+    pub cell_volume: f32,
     /// Transient: a link command is in-flight to PipeWire.
     #[serde(skip)]
     pub pending: bool,
+}
+
+fn default_one() -> f32 {
+    1.0
 }
 
 /// The desired link state. There is no "DisconnectedUnlocked" variant;

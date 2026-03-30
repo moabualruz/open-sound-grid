@@ -73,6 +73,13 @@ pub enum Command {
         visible: bool,
     },
 
+    /// Set per-route cell volume (0.0–1.0, independent of channel master).
+    SetLinkVolume {
+        source: EndpointDescriptor,
+        target: EndpointDescriptor,
+        volume: f32,
+    },
+
     /// Set the display order for endpoints.
     SetDisplayOrder { order: Vec<EndpointDescriptor> },
 }
@@ -96,6 +103,11 @@ impl Command {
                 target,
                 locked,
             } => StateMsg::SetLinkLocked(source, target, locked),
+            Self::SetLinkVolume {
+                source,
+                target,
+                volume,
+            } => StateMsg::SetLinkVolume(source, target, volume),
             Self::SetMixOutput {
                 channel,
                 output_node_id,

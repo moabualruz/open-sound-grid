@@ -5,15 +5,10 @@ import { Volume2, VolumeX, Plus } from "lucide-solid";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
 interface MatrixCellProps {
-  /** The link between this channel and mix, or null if unrouted */
   link: MixerLink | null;
-  /** Source (channel) endpoint info — used for volume display when linked */
   sourceEndpoint: Endpoint | undefined;
-  /** Source descriptor */
   sourceDescriptor: EndpointDescriptor;
-  /** Sink (mix) descriptor */
   sinkDescriptor: EndpointDescriptor;
-  /** Mix color for accent */
   mixColor: string;
 }
 
@@ -21,29 +16,38 @@ const DEBOUNCE_MS = 16;
 
 export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
-  const [local, setLocal] = createSignal(0);
+  const [cellVol, setCellVol] = createSignal(1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Sync from server — runs whenever sourceEndpoint.volume changes
-  createEffect(() => setLocal(props.sourceEndpoint?.volume ?? 0));
+  // Sync cell volume from link's cellVolume (per-route, independent)
+  createEffect(() => setCellVol(props.link?.cellVolume ?? 1));
 
   const isMuted = () => {
     const s = props.sourceEndpoint?.volumeLockedMuted;
     return s === "mutedLocked" || s === "mutedUnlocked" || s === "muteMixed";
   };
 
+  const masterVol = () => props.sourceEndpoint?.volume ?? 1;
+  const cellPct = () => Math.round(cellVol() * 100);
+  const effectivePct = () => Math.round(cellVol() * masterVol() * 100);
+
   function handleInput(value: number) {
-    setLocal(value);
+    setCellVol(value);
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      send({ type: "setVolume", endpoint: props.sourceDescriptor, volume: value });
+      send({
+        type: "setLinkVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        volume: value,
+      });
     }, DEBOUNCE_MS);
   }
 
   function handleWheel(e: WheelEvent) {
     e.preventDefault();
     const step = e.deltaY > 0 ? -0.01 : 0.01;
-    const next = Math.max(0, Math.min(1, local() + step));
+    const next = Math.max(0, Math.min(1, cellVol() + step));
     handleInput(next);
   }
 
@@ -58,8 +62,6 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   onCleanup(() => {
     if (debounceTimer) clearTimeout(debounceTimer);
   });
-
-  const pct = () => Math.round(local() * 100);
 
   return (
     <div class="group min-w-[10rem] flex-1">
@@ -78,14 +80,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           </div>
         }
       >
-        {/* Active cell */}
         <div
           style={{ "--mix-accent": props.mixColor }}
-          class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2.5 transition-colors duration-150 ${
+          class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-150 ${
             isMuted() ? "border-vu-hot/20 bg-vu-hot/5" : "border-border bg-bg-elevated"
           }`}
         >
-          {/* Per-cell mute button */}
+          {/* Per-cell mute */}
           <button
             type="button"
             onClick={toggleMute}
@@ -100,16 +101,24 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             </Show>
           </button>
 
-          {/* VU-as-slider-track */}
+          {/* Cell volume slider */}
           <div class="relative flex-1" onWheel={handleWheel}>
-            {/* Volume level indicator — neutral until backend provides real peak data */}
-            {/* TODO(backend): Replace with real-time peak levels from /ws/levels endpoint */}
+            {/* Effective volume ghost indicator (master × cell) */}
+            <div
+              class="pointer-events-none absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full"
+              style={{
+                width: `${effectivePct()}%`,
+                background: isMuted() ? "var(--color-text-muted)" : "var(--color-vu-safe)",
+                opacity: isMuted() ? 0.08 : 0.25,
+              }}
+            />
+            {/* Cell ratio indicator */}
             <div
               class="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full"
               style={{
-                width: `${pct()}%`,
+                width: `${cellPct()}%`,
                 background: isMuted() ? "var(--color-text-muted)" : "var(--color-accent)",
-                opacity: isMuted() ? 0.1 : 0.2,
+                opacity: isMuted() ? 0.1 : 0.15,
               }}
             />
             <input
@@ -117,23 +126,26 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               min="0"
               max="1"
               step="0.01"
-              value={local()}
+              value={cellVol()}
               disabled={isMuted()}
               onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
-              aria-label="Volume"
-              aria-valuetext={`${pct()}%`}
+              aria-label="Cell volume"
+              aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
               class="relative z-10 w-full"
             />
           </div>
 
-          {/* Percentage label */}
-          <span
-            class={`w-8 text-right font-mono text-xs ${
+          {/* Percentage: cell% (→effective%) */}
+          <div
+            class={`flex flex-col items-end font-mono text-[10px] leading-tight ${
               isMuted() ? "text-vu-hot/50" : "text-text-secondary"
             }`}
           >
-            {pct()}
-          </span>
+            <span>{cellPct()}</span>
+            <Show when={cellPct() !== effectivePct()}>
+              <span class="text-text-muted">→{effectivePct()}</span>
+            </Show>
+          </div>
         </div>
       </Show>
     </div>
