@@ -12,6 +12,7 @@ use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use osg_core::OsgCore;
+use osg_core::commands::Command;
 
 #[allow(missing_debug_implementations)]
 struct AppState {
@@ -26,13 +27,16 @@ async fn main() -> Result<(), osg_core::CoreError> {
 
     tracing::info!("Open Sound Grid server starting");
 
-    let core = OsgCore::new()?;
+    let core = OsgCore::new().await?;
 
     let state = Arc::new(AppState { core });
 
     let app = Router::new()
         .route("/api/graph", get(get_graph))
+        .route("/api/session", get(get_session))
         .route("/ws/graph", get(ws_graph))
+        .route("/ws/session", get(ws_session))
+        .route("/ws/commands", get(ws_commands))
         .fallback_service(ServeDir::new("web/dist"))
         .layer(CorsLayer::permissive())
         .with_state(state);
@@ -49,13 +53,26 @@ async fn main() -> Result<(), osg_core::CoreError> {
     Ok(())
 }
 
-/// REST endpoint: returns current AudioGraph as JSON.
+// ---------------------------------------------------------------------------
+// REST endpoints
+// ---------------------------------------------------------------------------
+
+/// GET /api/graph — current AudioGraph as JSON (read model).
 async fn get_graph(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let graph = state.core.snapshot();
     axum::Json(graph)
 }
 
-/// WebSocket endpoint: sends AudioGraph snapshot on connect, then streams updates.
+/// GET /api/session — current MixerSession as JSON (write model).
+async fn get_session(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let session = state.core.reducer().state();
+    axum::Json((*session).clone())
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: graph (read model)
+// ---------------------------------------------------------------------------
+
 async fn ws_graph(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws_graph(socket, state))
 }
@@ -81,9 +98,73 @@ async fn handle_ws_graph(mut socket: ws::WebSocket, state: Arc<AppState>) {
                 }
             }
             Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                tracing::debug!("WebSocket client lagged by {n} messages, skipping");
+                tracing::debug!("WebSocket graph client lagged by {n} messages, skipping");
             }
             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: session (write model)
+// ---------------------------------------------------------------------------
+
+async fn ws_session(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_session(socket, state))
+}
+
+async fn handle_ws_session(mut socket: ws::WebSocket, state: Arc<AppState>) {
+    let mut rx = state.core.reducer().subscribe_state();
+
+    // Send initial session state
+    let session = state.core.reducer().state();
+    if let Ok(json) = serde_json::to_string(&*session)
+        && socket.send(ws::Message::Text(json.into())).await.is_err()
+    {
+        return;
+    }
+
+    // Stream session updates
+    loop {
+        if rx.changed().await.is_err() {
+            break;
+        }
+        let session = rx.borrow_and_update().clone();
+        if let Ok(json) = serde_json::to_string(&*session)
+            && socket.send(ws::Message::Text(json.into())).await.is_err()
+        {
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: commands (frontend → backend)
+// ---------------------------------------------------------------------------
+
+async fn ws_commands(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_commands(socket, state))
+}
+
+async fn handle_ws_commands(mut socket: ws::WebSocket, state: Arc<AppState>) {
+    while let Some(Ok(msg)) = socket.recv().await {
+        if let ws::Message::Text(text) = msg {
+            match serde_json::from_str::<Command>(&text) {
+                Ok(cmd) => {
+                    tracing::debug!("Command received: {cmd:?}");
+                    state.core.command(cmd.into_state_msg());
+                }
+                Err(err) => {
+                    tracing::warn!("Invalid command: {err}");
+                    let reply = format!(r#"{{"error":"{err}"}}"#);
+                    if socket.send(ws::Message::Text(reply.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
         }
     }
 }

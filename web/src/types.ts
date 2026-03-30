@@ -71,3 +71,90 @@ export interface AudioGraph {
   ports: Record<string, PwPort>;
   links: Record<string, PwLink>;
 }
+
+// ---------------------------------------------------------------------------
+// MixerSession (write model) — matches osg-core graph::types::MixerSession
+// ---------------------------------------------------------------------------
+
+export type VolumeLockMuteState =
+  | "muteMixed"
+  | "mutedLocked"
+  | "mutedUnlocked"
+  | "unmutedLocked"
+  | "unmutedUnlocked";
+
+export type LinkState =
+  | "partiallyConnected"
+  | "connectedUnlocked"
+  | "connectedLocked"
+  | "disconnectedLocked";
+
+export type EndpointDescriptor =
+  | { ephemeralNode: [number, PortKind] }
+  | { persistentNode: [string, PortKind] }
+  | { channel: string }
+  | { app: [string, PortKind] }
+  | { device: [string, PortKind] };
+
+export interface Endpoint {
+  descriptor: EndpointDescriptor;
+  isPlaceholder: boolean;
+  displayName: string;
+  customName: string | null;
+  iconName: string;
+  details: string[];
+  volume: number;
+  volumeMixed: boolean;
+  volumeLockedMuted: VolumeLockMuteState;
+}
+
+export interface MixerLink {
+  start: EndpointDescriptor;
+  end: EndpointDescriptor;
+  state: LinkState;
+}
+
+export interface Channel {
+  id: string;
+  kind: GroupNodeKind;
+}
+
+export interface App {
+  id: string;
+  kind: PortKind;
+  name: string;
+  binary: string;
+  iconName: string;
+  exceptions: EndpointDescriptor[];
+}
+
+export interface MixerSession {
+  activeSources: EndpointDescriptor[];
+  activeSinks: EndpointDescriptor[];
+  endpoints: Record<string, Endpoint>;
+  links: MixerLink[];
+  persistentNodes: Record<string, [NodeIdentifier, PortKind]>;
+  apps: Record<string, App>;
+  devices: Record<string, unknown>;
+  channels: Record<string, Channel>;
+}
+
+// ---------------------------------------------------------------------------
+// Commands (frontend → backend via /ws/commands)
+// ---------------------------------------------------------------------------
+
+export type Command =
+  | { type: "createChannel"; name: string; kind: GroupNodeKind }
+  | { type: "removeEndpoint"; endpoint: EndpointDescriptor }
+  | { type: "setVolume"; endpoint: EndpointDescriptor; volume: number }
+  | { type: "setMute"; endpoint: EndpointDescriptor; muted: boolean }
+  | { type: "setVolumeLocked"; endpoint: EndpointDescriptor; locked: boolean }
+  | { type: "renameEndpoint"; endpoint: EndpointDescriptor; name: string | null }
+  | { type: "link"; source: EndpointDescriptor; target: EndpointDescriptor }
+  | { type: "removeLink"; source: EndpointDescriptor; target: EndpointDescriptor }
+  | {
+      type: "setLinkLocked";
+      source: EndpointDescriptor;
+      target: EndpointDescriptor;
+      locked: boolean;
+    };
