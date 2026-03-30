@@ -39,14 +39,24 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .route("/ws/commands", get(ws_commands))
         .fallback_service(ServeDir::new("web/dist"))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:9100")
         .await
         .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("bind failed: {e}")))?;
     tracing::info!("Listening on http://127.0.0.1:9100");
 
+    // Graceful shutdown: save state on Ctrl+C
+    let shutdown_state = state;
     axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::error!("Failed to listen for ctrl_c: {err}");
+                return;
+            }
+            tracing::info!("Shutting down, saving state...");
+            shutdown_state.core.reducer().save_and_exit();
+        })
         .await
         .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("serve failed: {e}")))?;
 

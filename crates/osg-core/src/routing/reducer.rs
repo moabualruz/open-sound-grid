@@ -162,7 +162,31 @@ pub async fn run_reducer(
             }
         };
 
-        while let Some(message) = msg_rx.recv().await {
+        // Auto-save timer: saves 30s after last mutation (ADR-005: ConfigEvents debounced at 30s)
+        let save_interval = tokio::time::Duration::from_secs(30);
+        let mut save_deadline: Option<tokio::time::Instant> = None;
+
+        loop {
+            let message = if let Some(deadline) = save_deadline {
+                match tokio::time::timeout_at(deadline, msg_rx.recv()).await {
+                    Ok(Some(msg)) => msg,
+                    Ok(None) => break, // channel closed
+                    Err(_) => {
+                        // Timer fired — save now
+                        let state_snapshot = state_tx.borrow().as_ref().clone();
+                        let settings_snapshot = settings.read().await.clone();
+                        save(&state_snapshot, &settings_snapshot);
+                        save_deadline = None;
+                        continue;
+                    }
+                }
+            } else {
+                match msg_rx.recv().await {
+                    Some(msg) => msg,
+                    None => break,
+                }
+            };
+
             match message {
                 ReducerMsg::Update(msg) => {
                     let mut state = state_tx.borrow().as_ref().clone();
@@ -182,6 +206,9 @@ pub async fn run_reducer(
                         let _ = output_tx.send(out);
                     }
                     let _ = state_tx.send(Arc::new(state));
+
+                    // Reset auto-save timer on every mutation
+                    save_deadline = Some(tokio::time::Instant::now() + save_interval);
                 }
                 ReducerMsg::GraphUpdate(new_graph) => {
                     graph = new_graph;
