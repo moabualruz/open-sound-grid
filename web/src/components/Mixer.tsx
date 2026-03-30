@@ -295,6 +295,8 @@ export default function Mixer() {
                           sourceDescriptor={ch.desc}
                           sinkDescriptor={sinkDesc}
                           mixColor={getMixColor(sinkEp?.displayName ?? "")}
+                          peakLeft={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.left ?? 0}
+                          peakRight={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.right ?? 0}
                         />
                       )}
                     </For>
