@@ -3,10 +3,15 @@
 mod identifier;
 mod mainloop;
 mod object;
+pub mod peak;
 mod pod;
 mod store;
 
-use std::{collections::HashMap, sync::mpsc, thread};
+use std::{
+    collections::HashMap,
+    sync::{Arc, mpsc},
+    thread,
+};
 
 use thiserror::Error;
 use tracing::error;
@@ -91,10 +96,10 @@ impl PipewireHandle {
             mpsc::Receiver<ToPipewireMessage>,
         ),
         update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
+        peak_store: Arc<peak::PeakStore>,
     ) -> Result<Self, PwError> {
-        // TODO: Decide if we actually need a dedicated channel and message type to communicate
-        // from Pipewire to the main thread, or if the graph updates are enough
-        let (pipewire_thread_handle, pw_sender, _from_pw_receiver) = init_mainloop(update_fn)?;
+        let (pipewire_thread_handle, pw_sender, _from_pw_receiver) =
+            init_mainloop(update_fn, peak_store)?;
         let adapter_thread_handle = init_adapter(to_pw_channel.1, pw_sender);
         Ok(Self {
             pipewire_thread_handle: Some(pipewire_thread_handle),
@@ -164,6 +169,10 @@ pub enum ToPipewireMessage {
     /// Set the OS default audio sink via PipeWire metadata.
     /// (node_name, pipewire_node_id) — tries metadata first, falls back to wpctl.
     SetDefaultSink(String, u32),
+    /// Start monitoring peak levels for a node.
+    StartPeakMonitor(u32),
+    /// Stop monitoring peak levels for a node.
+    StopPeakMonitor(u32),
     Exit,
 }
 

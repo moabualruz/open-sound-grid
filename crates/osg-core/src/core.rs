@@ -4,13 +4,16 @@
 //! Exposes the AudioGraph read model, MixerSession write model,
 //! and a command API for mutations.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{self, Sender},
+};
 
 use tokio::sync::broadcast;
 use tracing::debug;
 
 use crate::graph::ReconcileSettings;
-use crate::pw::{AudioGraph, PipewireHandle, PwError};
+use crate::pw::{AudioGraph, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore};
 use crate::routing::{ReducerHandle, StateMsg, debounced_graph_sender, run_reducer};
 
 /// The public entry point for PipeWire orchestration.
@@ -23,6 +26,8 @@ pub struct OsgCore {
     graph: Arc<Mutex<AudioGraph>>,
     graph_tx: broadcast::Sender<AudioGraph>,
     reducer: ReducerHandle,
+    peak_store: Arc<PeakStore>,
+    pw_sender: Sender<ToPipewireMessage>,
 }
 
 impl OsgCore {
@@ -45,16 +50,22 @@ impl OsgCore {
 
         let pw_sender_clone = pw_sender.clone();
 
-        let pw_handle = PipewireHandle::init((pw_sender_clone, pw_receiver), move |new_graph| {
-            let snapshot = *new_graph.clone();
-            #[allow(clippy::unwrap_used)]
-            {
-                *graph_clone.lock().unwrap() = snapshot.clone();
-            }
-            let _ = tx_clone.send(snapshot);
-            // Feed graph update to reducer for reconciliation
-            debounced_send(new_graph);
-        })?;
+        let peak_store = Arc::new(PeakStore::new());
+
+        let pw_handle = PipewireHandle::init(
+            (pw_sender_clone, pw_receiver),
+            move |new_graph| {
+                let snapshot = *new_graph.clone();
+                #[allow(clippy::unwrap_used)]
+                {
+                    *graph_clone.lock().unwrap() = snapshot.clone();
+                }
+                let _ = tx_clone.send(snapshot);
+                // Feed graph update to reducer for reconciliation
+                debounced_send(new_graph);
+            },
+            peak_store.clone(),
+        )?;
 
         debug!("OsgCore initialized, PipeWire connected, reducer started");
 
@@ -63,6 +74,8 @@ impl OsgCore {
             graph,
             graph_tx,
             reducer,
+            peak_store,
+            pw_sender: pw_sender.clone(),
         })
     }
 
@@ -85,5 +98,24 @@ impl OsgCore {
     /// Send a command to mutate the MixerSession (write model).
     pub fn command(&self, msg: StateMsg) {
         self.reducer.emit(msg);
+    }
+
+    /// Get the shared peak level store for WebSocket broadcast.
+    pub fn peak_store(&self) -> &Arc<PeakStore> {
+        &self.peak_store
+    }
+
+    /// Start monitoring peak levels for a PipeWire node.
+    pub fn start_peak_monitor(&self, node_id: u32) {
+        let _ = self
+            .pw_sender
+            .send(ToPipewireMessage::StartPeakMonitor(node_id));
+    }
+
+    /// Stop monitoring peak levels for a PipeWire node.
+    pub fn stop_peak_monitor(&self, node_id: u32) {
+        let _ = self
+            .pw_sender
+            .send(ToPipewireMessage::StopPeakMonitor(node_id));
     }
 }

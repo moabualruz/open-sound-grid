@@ -1,10 +1,20 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
-use std::{cell::RefCell, rc::Rc, sync::mpsc, thread::JoinHandle};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::mpsc, thread::JoinHandle};
+
+use std::sync::Arc;
 
 use pipewire::{
-    context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, metadata::Metadata,
-    properties::properties, proxy::ProxyT, registry::RegistryRc, spa::param::ParamType,
+    context::ContextRc,
+    core::CoreRc,
+    keys::*,
+    main_loop::MainLoopRc,
+    metadata::Metadata,
+    properties::properties,
+    proxy::ProxyT,
+    registry::RegistryRc,
+    spa::param::ParamType,
+    stream::{StreamFlags, StreamRc},
     types::ObjectType,
 };
 use tracing::{debug, trace, warn};
@@ -465,6 +475,7 @@ fn init_metadata_listener(
 )]
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
+    peak_store: Arc<super::peak::PeakStore>,
 ) -> Result<
     (
         JoinHandle<()>,
@@ -521,9 +532,18 @@ pub(super) fn init_mainloop(
         let _remove_listener = master.registry_remove_listener();
         let _core_listeners = master.init_core_listeners();
 
+        // Peak monitor streams — kept alive as long as monitoring is active.
+        // Each entry holds the StreamRc + listener (dropping them stops the stream).
+        let peak_streams: Rc<
+            RefCell<HashMap<u32, (StreamRc, pipewire::stream::StreamListener<()>)>>,
+        > = Rc::new(RefCell::new(HashMap::new()));
+
         let _receiver = receiver.attach(mainloop.loop_(), {
             let mainloop = mainloop.clone();
             let store = store.clone();
+            let pw_core = pw_core.clone();
+            let peak_streams = peak_streams.clone();
+            let peak_store = peak_store.clone();
             move |message| match message {
                 ToPipewireMessage::Update => update_fn(Box::new(store.borrow().dump_graph())),
                 ToPipewireMessage::NodeVolume(id, volume) => {
@@ -581,6 +601,87 @@ pub(super) fn init_mainloop(
                         debug!("[PW] set default.configured.audio.sink: {node_name}");
                     } else {
                         warn!("[PW] no metadata proxy for SetDefaultSink");
+                    }
+                }
+                ToPipewireMessage::StartPeakMonitor(node_id) => {
+                    if peak_streams.borrow().contains_key(&node_id) {
+                        return; // already monitoring
+                    }
+                    let props = properties! {
+                        *NODE_NAME => format!("osg.peak.{node_id}"),
+                        *NODE_PASSIVE => "true",
+                        *MEDIA_TYPE => "Audio",
+                        *MEDIA_CATEGORY => "Capture",
+                        *MEDIA_ROLE => "DSP",
+                        "stream.monitor" => "true",
+                        "stream.capture.sink" => "true",
+                        "target.object" => node_id.to_string(),
+                        "node.rate" => "1/25",
+                        "node.latency" => "1/25",
+                        "resample.peaks" => "true",
+                    };
+                    match StreamRc::new(pw_core.clone(), "osg-peak-detect", props) {
+                        Ok(stream) => {
+                            let peak_data = peak_store.get_or_insert(node_id);
+                            let listener = stream
+                                .add_local_listener_with_user_data(())
+                                .process(move |stream, _| {
+                                    let Some(mut buffer) = stream.dequeue_buffer() else {
+                                        return;
+                                    };
+                                    let datas = buffer.datas_mut();
+                                    let mut peaks = [0.0_f32; 2];
+                                    for (i, peak) in peaks.iter_mut().enumerate() {
+                                        if let Some(d) = datas.get_mut(i)
+                                            && let Some(bytes) = d.data()
+                                            && bytes.len() >= 4
+                                        {
+                                            *peak = f32::from_le_bytes([
+                                                bytes[0], bytes[1], bytes[2], bytes[3],
+                                            ])
+                                            .abs()
+                                            .clamp(0.0, 1.0);
+                                        }
+                                    }
+                                    if peaks[1] == 0.0 && peaks[0] > 0.0 {
+                                        peaks[1] = peaks[0];
+                                    }
+                                    peak_data.store(peaks[0], peaks[1]);
+                                })
+                                .register();
+                            match listener {
+                                Ok(listener) => {
+                                    // Connect as F32LE stereo input
+                                    if let Err(e) = stream.connect(
+                                        pipewire::spa::utils::Direction::Input,
+                                        None,
+                                        StreamFlags::AUTOCONNECT
+                                            | StreamFlags::MAP_BUFFERS
+                                            | StreamFlags::RT_PROCESS,
+                                        &mut [],
+                                    ) {
+                                        warn!("[PW] peak stream connect failed for {node_id}: {e}");
+                                    } else {
+                                        debug!("[PW] peak monitor started for node {node_id}");
+                                        peak_streams
+                                            .borrow_mut()
+                                            .insert(node_id, (stream, listener));
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("[PW] peak listener register failed for {node_id}: {e}");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[PW] peak stream creation failed for {node_id}: {e}");
+                        }
+                    }
+                }
+                ToPipewireMessage::StopPeakMonitor(node_id) => {
+                    if peak_streams.borrow_mut().remove(&node_id).is_some() {
+                        peak_store.remove(node_id);
+                        debug!("[PW] peak monitor stopped for node {node_id}");
                     }
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),

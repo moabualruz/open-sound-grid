@@ -37,6 +37,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .route("/ws/graph", get(ws_graph))
         .route("/ws/session", get(ws_session))
         .route("/ws/commands", get(ws_commands))
+        .route("/ws/levels", get(ws_levels))
         .fallback_service(ServeDir::new("web/dist"))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
@@ -175,6 +176,45 @@ async fn handle_ws_commands(mut socket: ws::WebSocket, state: Arc<AppState>) {
                     }
                 }
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: peak levels (read-only, 25Hz broadcast)
+// ---------------------------------------------------------------------------
+
+async fn ws_levels(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_levels(socket, state))
+}
+
+async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
+    let peak_store = state.core.peak_store().clone();
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(40)); // 25 Hz
+
+    // Auto-start peak monitors for all group nodes (channels/mixes)
+    {
+        let graph = state.core.snapshot();
+        for (&_ulid, group_node) in &graph.group_nodes {
+            if let Some(pw_id) = group_node.id {
+                state.core.start_peak_monitor(pw_id);
+            }
+        }
+    }
+
+    loop {
+        interval.tick().await;
+        let levels = peak_store.snapshot();
+        if levels.is_empty() {
+            continue;
+        }
+        match serde_json::to_string(&levels) {
+            Ok(json) => {
+                if socket.send(ws::Message::Text(json.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(_) => break,
         }
     }
 }
