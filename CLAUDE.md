@@ -44,7 +44,7 @@ Phone/Browser → Web UI (SolidJS + Tailwind v4)
 
 ### Domain model (DDD)
 
-- **MixerSession** (aggregate root, write model): Endpoints, GroupNodes, Routes, Locks, Applications, Presets. Only mutated by user commands. Every `handle(command)` returns a new immutable snapshot + domain events. Published via `tokio::sync::watch`.
+- **MixerSession** (aggregate root, write model): Endpoints, Channels, Routes, Locks, Apps, Presets. Only mutated by user commands. Every `handle(command)` returns a new immutable snapshot + domain events. Published via `tokio::sync::watch`.
 - **AudioGraph** (read model): Projection of PipeWire reality. Only mutated by PipeWire registry events. Never written to by user actions.
 - **ReconciliationService** (domain service, stateless): Reads MixerSession + AudioGraph, emits corrective events when desired state diverges from PipeWire reality. No state of its own.
 - **Handlers** (infrastructure): Translate domain events into PipeWire API calls, disk writes, WebSocket messages. No business logic. One handler per command category.

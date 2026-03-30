@@ -1,24 +1,24 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 //
-// State mutation handlers: process a `StateMsg` against the `DesiredState`
+// State mutation handlers: process a `StateMsg` against the `MixerSession`
 // and emit PipeWire commands + optional output notifications.
 
 use itertools::Itertools;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::graph::{
-    Channel, ChannelId, DesiredState, Endpoint, EndpointDescriptor, Link, LinkState,
+    Channel, ChannelId, MixerSession, Endpoint, EndpointDescriptor, Link, LinkState,
     ReconcileSettings, average_volumes,
 };
-use crate::pw::{Graph, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::{StateMsg, StateOutputMsg};
 
-impl DesiredState {
+impl MixerSession {
     /// Process a single state-mutation message. Returns an optional output
     /// notification and a vec of PipeWire commands to send immediately.
     pub fn update(
         &mut self,
-        graph: &Graph,
+        graph: &AudioGraph,
         message: StateMsg,
         settings: &ReconcileSettings,
     ) -> (Option<StateOutputMsg>, Vec<ToPipewireMessage>) {
@@ -91,7 +91,7 @@ impl DesiredState {
 
                 StateMsg::AddApp(id, kind) => {
                     let Some(mut app) = self.apps.get(&id).cloned() else {
-                        error!("[State] cannot add app {id:?}: not in state");
+                        warn!("[State] cannot add app {id:?}: not in state");
                         break 'handler None;
                     };
 
@@ -132,7 +132,7 @@ impl DesiredState {
 
                 StateMsg::RemoveEndpoint(ep) => {
                     if self.endpoints.remove(&ep).is_none() {
-                        error!("[State] cannot remove endpoint {ep:?}: not found");
+                        warn!("[State] cannot remove endpoint {ep:?}: not found");
                         break 'handler None;
                     }
 
@@ -156,7 +156,7 @@ impl DesiredState {
                                 if let Some(app) = self.apps.get_mut(&id) {
                                     app.is_active = false;
                                 } else {
-                                    error!("[State] app {id:?} missing");
+                                    warn!("[State] app {id:?} missing");
                                 }
                             } else {
                                 self.apps.remove(&id);
@@ -266,7 +266,7 @@ impl DesiredState {
 
                 StateMsg::Link(source, sink) => {
                     if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
-                        error!("[State] cannot link {source:?} -> {sink:?}: wrong direction");
+                        warn!("[State] cannot link {source:?} -> {sink:?}: wrong direction");
                         break 'handler None;
                     }
 
@@ -319,7 +319,7 @@ impl DesiredState {
 
                 StateMsg::RemoveLink(source, sink) => {
                     if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
-                        error!("[State] cannot unlink {source:?} -> {sink:?}: wrong direction");
+                        warn!("[State] cannot unlink {source:?} -> {sink:?}: wrong direction");
                         break 'handler None;
                     }
 
@@ -328,7 +328,7 @@ impl DesiredState {
                         .iter()
                         .position(|l| l.start == source && l.end == sink)
                     else {
-                        error!("[State] link not found for removal");
+                        warn!("[State] link not found for removal");
                         break 'handler None;
                     };
 
@@ -355,7 +355,7 @@ impl DesiredState {
 
                 StateMsg::SetLinkLocked(source, sink, locked) => {
                     if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
-                        error!(
+                        warn!(
                             "[State] cannot set link lock {source:?} -> {sink:?}: wrong direction"
                         );
                         break 'handler None;
@@ -368,7 +368,7 @@ impl DesiredState {
 
                     match (pos.map(|i| (i, self.links[i].state)), locked) {
                         (Some((_, LinkState::PartiallyConnected)), true) => {
-                            error!("[State] cannot lock partially connected link");
+                            warn!("[State] cannot lock partially connected link");
                         }
                         (Some((i, LinkState::ConnectedUnlocked)), true) => {
                             self.links[i].state = LinkState::ConnectedLocked;

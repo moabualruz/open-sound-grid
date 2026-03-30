@@ -11,8 +11,8 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tracing::{error, warn};
 
 use crate::config::{PersistentSettings, PersistentState};
-use crate::graph::{DesiredState, ReconcileSettings};
-use crate::pw::{Graph, ToPipewireMessage};
+use crate::graph::{MixerSession, ReconcileSettings};
+use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
@@ -27,7 +27,7 @@ const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(16);
 #[derive(Clone)]
 pub struct ReducerHandle {
     msg_tx: mpsc::UnboundedSender<ReducerMsg>,
-    state_rx: watch::Receiver<Arc<DesiredState>>,
+    state_rx: watch::Receiver<Arc<MixerSession>>,
     output_tx: broadcast::Sender<StateOutputMsg>,
 }
 
@@ -38,12 +38,12 @@ impl ReducerHandle {
     }
 
     /// Get a snapshot of the current desired state.
-    pub fn state(&self) -> Arc<DesiredState> {
+    pub fn state(&self) -> Arc<MixerSession> {
         self.state_rx.borrow().clone()
     }
 
     /// Subscribe to state changes (watch channel).
-    pub fn subscribe_state(&self) -> watch::Receiver<Arc<DesiredState>> {
+    pub fn subscribe_state(&self) -> watch::Receiver<Arc<MixerSession>> {
         self.state_rx.clone()
     }
 
@@ -79,8 +79,8 @@ impl ReducerHandle {
 /// by `GRAPH_UPDATE_DEBOUNCE` and then sends a `ReducerMsg::GraphUpdate`.
 pub fn debounced_graph_sender(
     msg_tx: mpsc::UnboundedSender<ReducerMsg>,
-) -> impl Fn(Box<Graph>) + Send + 'static {
-    let pending: Arc<Mutex<Option<Box<Graph>>>> = Arc::new(Mutex::new(None));
+) -> impl Fn(Box<AudioGraph>) + Send + 'static {
+    let pending: Arc<Mutex<Option<Box<AudioGraph>>>> = Arc::new(Mutex::new(None));
 
     move |new_graph| {
         let pending = pending.clone();
@@ -125,7 +125,7 @@ pub async fn run_reducer(
         Ok(ps) => ps.into_state(),
         Err(err) => {
             warn!("[Reducer] failed to load persistent state: {err:#}");
-            DesiredState::default()
+            MixerSession::default()
         }
     };
 
@@ -143,10 +143,10 @@ pub async fn run_reducer(
     // Spawn the reducer loop on a blocking-friendly task.
     let settings_clone = settings.clone();
     tokio::spawn(async move {
-        let mut graph: Box<Graph> = Box::default();
+        let mut graph: Box<AudioGraph> = Box::default();
         let settings = settings_clone;
 
-        let save = |state: &DesiredState, s: &ReconcileSettings| {
+        let save = |state: &MixerSession, s: &ReconcileSettings| {
             let ps = PersistentState::from_state(state.clone());
             if let Err(err) = ps.save() {
                 warn!("[Reducer] save state error: {err:#}");
@@ -210,7 +210,7 @@ pub async fn run_reducer(
                     clear_settings,
                 } => {
                     if clear_state {
-                        let _ = state_tx.send(Arc::new(DesiredState::default()));
+                        let _ = state_tx.send(Arc::new(MixerSession::default()));
                     }
                     if clear_settings {
                         *settings.write().await = ReconcileSettings::default();

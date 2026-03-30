@@ -16,7 +16,7 @@ use pipewire::{
 };
 
 use super::{
-    Graph, PwError,
+    AudioGraph, PwError,
     object::{
         Client, Device, EndpointId, GroupNode, Link, Node, ObjectConvertError, Port, PortKind,
     },
@@ -398,8 +398,8 @@ impl Store {
     }
 
     #[rustfmt::skip] // Rustfmt puts each call on its own line which is really hard to read
-    pub fn dump_graph(&self) -> super::Graph {
-        Graph {
+    pub fn dump_graph(&self) -> super::AudioGraph {
+        AudioGraph {
             group_nodes: self.group_nodes.iter().map(|(id, group_node)| (*id, group_node.without_proxy())).collect(),
             clients: self.clients.iter().map(|(id, client)| (*id, client.without_proxy())).collect(),
             devices: self.devices.iter().map(|(id, device)| (*id, device.without_proxy())).collect(),

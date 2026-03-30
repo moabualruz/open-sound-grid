@@ -89,7 +89,7 @@ impl PipewireHandle {
             mpsc::Sender<ToPipewireMessage>,
             mpsc::Receiver<ToPipewireMessage>,
         ),
-        update_fn: impl Fn(Box<Graph>) + Send + 'static,
+        update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
     ) -> Result<Self, PwError> {
         // TODO: Decide if we actually need a dedicated channel and message type to communicate
         // from Pipewire to the main thread, or if the graph updates are enough
@@ -126,8 +126,9 @@ pub type Node = object::Node<(), ()>;
 pub type Port = object::Port<()>;
 pub type Link = object::Link<()>;
 
+/// Read-only projection of PipeWire's current graph state. DDD read model.
 #[derive(Debug, Clone, Default)]
-pub struct Graph {
+pub struct AudioGraph {
     pub group_nodes: HashMap<Ulid, GroupNode>,
     pub clients: HashMap<u32, Client>,
     pub devices: HashMap<u32, Device>,

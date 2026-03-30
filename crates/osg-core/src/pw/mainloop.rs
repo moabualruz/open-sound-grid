@@ -10,7 +10,7 @@ use tracing::{debug, error, trace, warn};
 use ulid::Ulid;
 
 use super::{
-    FromPipewireMessage, Graph, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
+    AudioGraph, FromPipewireMessage, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
     ToPipewireMessage, object::Port, store::Store,
 };
 
@@ -386,7 +386,7 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
 
 #[allow(clippy::type_complexity)]
 pub(super) fn init_mainloop(
-    update_fn: impl Fn(Box<Graph>) + Send + 'static,
+    update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
 ) -> Result<
     (
         JoinHandle<()>,

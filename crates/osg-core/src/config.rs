@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 
-use crate::graph::{DesiredState, ReconcileSettings};
+use crate::graph::{MixerSession, ReconcileSettings};
 
 const APP_ID: &str = "open-sound-grid";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -60,12 +60,12 @@ fn config_dir() -> Option<PathBuf> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentState {
     version: String,
-    state: DesiredState,
+    state: MixerSession,
 }
 
 impl PersistentState {
     /// Build a saveable snapshot, stripping transient data.
-    pub fn from_state(mut state: DesiredState) -> Self {
+    pub fn from_state(mut state: MixerSession) -> Self {
         // Only persist locked links.
         state.links.retain(|link| link.state.is_locked());
         // Only persist active applications.
@@ -77,7 +77,7 @@ impl PersistentState {
         }
     }
 
-    pub fn into_state(self) -> DesiredState {
+    pub fn into_state(self) -> MixerSession {
         self.state
     }
 

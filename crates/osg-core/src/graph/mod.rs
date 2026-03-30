@@ -8,7 +8,7 @@ pub mod types;
 
 // Re-export the most commonly used items at module level.
 pub use types::{
-    App, AppId, Channel, ChannelId, DesiredState, Device, DeviceId, Endpoint, EndpointDescriptor,
-    Link, LinkState, PersistentNodeId, ReconcileSettings, VolumeLockMuteState, aggregate_bools,
-    average_volumes, volumes_mixed,
+    App, AppId, Channel, ChannelId, ChannelKind, Device, DeviceId, Endpoint, EndpointDescriptor,
+    Link, LinkState, MixerSession, PersistentNodeId, ReconcileSettings, VolumeLockMuteState,
+    aggregate_bools, average_volumes, volumes_mixed,
 };

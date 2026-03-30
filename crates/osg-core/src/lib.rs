@@ -1,7 +1,9 @@
 pub mod config;
+pub mod events;
 pub mod graph;
 pub mod pw;
 pub mod routing;
+pub mod traits;
 
 use thiserror::Error;
 

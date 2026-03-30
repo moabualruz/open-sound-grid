@@ -10,7 +10,10 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::pw::{GroupNodeKind, NodeIdentifier, PortKind};
+use crate::pw::{NodeIdentifier, PortKind};
+
+/// The kind of virtual audio bus. Domain alias for pw::ChannelKind.
+pub type ChannelKind = crate::pw::GroupNodeKind;
 
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -334,7 +337,7 @@ impl VolumeLockMuteState {
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
     pub id: ChannelId,
-    pub kind: GroupNodeKind,
+    pub kind: ChannelKind,
     /// PipeWire ID once the node is created; `None` while pending.
     #[serde(skip)]
     pub pipewire_id: Option<u32>,
@@ -399,12 +402,14 @@ impl App {
 pub struct Device;
 
 // ---------------------------------------------------------------------------
-// DesiredState — the full user-desired graph
+// MixerSession — the full user-desired graph
 // ---------------------------------------------------------------------------
 
+/// The user's desired audio state. Aggregate root (DDD write model).
+/// PipeWire: no direct equivalent — this is our domain model.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesiredState {
+pub struct MixerSession {
     pub active_sources: Vec<EndpointDescriptor>,
     pub active_sinks: Vec<EndpointDescriptor>,
     pub endpoints: HashMap<EndpointDescriptor, Endpoint>,

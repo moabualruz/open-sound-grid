@@ -2,8 +2,8 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{AppId, ChannelId, EndpointDescriptor};
-use crate::pw::{GroupNodeKind, PortKind};
+use crate::graph::{AppId, ChannelId, ChannelKind, EndpointDescriptor};
+use crate::pw::PortKind;
 
 // ---------------------------------------------------------------------------
 // Inbound: UI / API -> Reducer
@@ -14,14 +14,14 @@ use crate::pw::{GroupNodeKind, PortKind};
 pub enum StateMsg {
     AddEphemeralNode(u32, PortKind),
     AddApp(AppId, PortKind),
-    AddChannel(String, GroupNodeKind),
+    AddChannel(String, ChannelKind),
     RemoveEndpoint(EndpointDescriptor),
     SetVolume(EndpointDescriptor, f32),
     SetMute(EndpointDescriptor, bool),
     SetVolumeLocked(EndpointDescriptor, bool),
     /// `None` resets to the default display name.
     RenameEndpoint(EndpointDescriptor, Option<String>),
-    ChangeChannelKind(ChannelId, GroupNodeKind),
+    ChangeChannelKind(ChannelId, ChannelKind),
     Link(EndpointDescriptor, EndpointDescriptor),
     RemoveLink(EndpointDescriptor, EndpointDescriptor),
     SetLinkLocked(EndpointDescriptor, EndpointDescriptor, bool),
@@ -42,13 +42,13 @@ pub enum StateOutputMsg {
 // Internal: Reducer thread messages
 // ---------------------------------------------------------------------------
 
-use crate::pw::Graph;
+use crate::pw::AudioGraph;
 
 /// Messages consumed by the reducer's internal event loop.
 #[derive(Debug)]
 pub enum ReducerMsg {
     Update(StateMsg),
-    GraphUpdate(Box<Graph>),
+    GraphUpdate(Box<AudioGraph>),
     SettingsChanged,
     Save {
         clear_state: bool,

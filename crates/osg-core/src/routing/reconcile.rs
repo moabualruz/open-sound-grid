@@ -1,7 +1,7 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 //
-// The correction loop: diff the desired state (`DesiredState`) against the
-// PipeWire reality (`Graph`) and emit `ToPipewireMessage` commands to bring
+// The correction loop: diff the desired state (`MixerSession`) against the
+// PipeWire reality (`AudioGraph`) and emit `ToPipewireMessage` commands to bring
 // reality in line with intent.
 //
 // Key concepts:
@@ -13,19 +13,38 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, DesiredState, EndpointDescriptor, Link, LinkState, PersistentNodeId,
+    App, MixerSession, EndpointDescriptor, Link, LinkState, PersistentNodeId,
     ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
-use crate::pw::{Graph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
+
+// ---------------------------------------------------------------------------
+// ReconciliationService — stateless domain service
+// ---------------------------------------------------------------------------
+
+/// Stateless domain service. Reads MixerSession + AudioGraph, emits corrective commands.
+/// PipeWire: no equivalent — this is our domain reconciliation logic.
+pub struct ReconciliationService;
+
+impl ReconciliationService {
+    /// Compare desired state against PipeWire reality and produce corrective commands.
+    pub fn reconcile(
+        state: &mut MixerSession,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+    ) -> Vec<ToPipewireMessage> {
+        state.diff(graph, settings)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Top-level diff entry point
 // ---------------------------------------------------------------------------
 
-impl DesiredState {
+impl MixerSession {
     /// Run the full reconciliation pass. Returns PipeWire commands to execute.
-    pub fn diff(&mut self, graph: &Graph, settings: &ReconcileSettings) -> Vec<ToPipewireMessage> {
+    pub fn diff(&mut self, graph: &AudioGraph, settings: &ReconcileSettings) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.diff_channels(&endpoint_nodes);
         messages.extend(self.diff_properties(&endpoint_nodes));
@@ -42,7 +61,7 @@ impl DesiredState {
     /// become candidates. Apps are discovered/updated.
     pub fn diff_nodes<'a>(
         &mut self,
-        graph: &'a Graph,
+        graph: &'a AudioGraph,
         settings: &ReconcileSettings,
     ) -> HashMap<EndpointDescriptor, Vec<&'a PwNode>> {
         let mut remaining_nodes: HashSet<(u32, PortKind)> = graph
@@ -235,7 +254,7 @@ impl DesiredState {
     /// Reconcile the link state between desired and actual PipeWire graphs.
     pub fn diff_links(
         &mut self,
-        graph: &Graph,
+        graph: &AudioGraph,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
     ) -> Vec<ToPipewireMessage> {
         let (node_links, mut remaining_endpoint_links) =
@@ -354,7 +373,7 @@ impl DesiredState {
     pub fn resolve_endpoint<'g>(
         &self,
         endpoint: EndpointDescriptor,
-        graph: &'g Graph,
+        graph: &'g AudioGraph,
         settings: &ReconcileSettings,
     ) -> Option<Vec<&'g PwNode>> {
         match endpoint {
@@ -422,7 +441,7 @@ impl DesiredState {
     #[allow(clippy::type_complexity)]
     fn find_relevant_links<'a>(
         &self,
-        graph: &'a Graph,
+        graph: &'a AudioGraph,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&'a PwNode>>,
     ) -> (
         HashMap<(u32, u32), Vec<&'a PwLink>>,
@@ -460,7 +479,7 @@ impl DesiredState {
     /// Generate commands to remove PW links between two endpoints.
     pub fn remove_pipewire_node_links(
         &self,
-        graph: &Graph,
+        graph: &AudioGraph,
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         settings: &ReconcileSettings,
@@ -485,7 +504,7 @@ impl DesiredState {
     }
 
     /// Discover new apps from the PipeWire graph.
-    fn discover_apps(&mut self, graph: &Graph) {
+    fn discover_apps(&mut self, graph: &AudioGraph) {
         let mut discovered = HashMap::<(String, String, PortKind), String>::new();
         for node in graph.nodes.values() {
             if let (Some(app_name), Some(binary)) = (
