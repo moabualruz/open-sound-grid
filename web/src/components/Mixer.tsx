@@ -196,7 +196,7 @@ export default function Mixer() {
                 {(mix, _idx, dragHandle) => {
                   const mixKey = descKey(mix.desc);
                   return (
-                    <div class="flex min-w-[10rem] flex-1 flex-col">
+                    <div class="flex flex-col">
                       <MixHeader
                         descriptor={mix.desc}
                         endpoint={mix.ep}

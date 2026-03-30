@@ -77,7 +77,7 @@ export default function DragReorder<T>(props: DragReorderProps<T>): JSX.Element 
           <div
             onDragOver={(e) => handleDragOver(e, index())}
             onDrop={() => handleDrop(index())}
-            class={`transition-opacity duration-100 ${isDragging() ? "opacity-30" : ""}`}
+            class={`transition-opacity duration-100 ${isDragging() ? "opacity-30" : ""} ${isHorizontal() ? "min-w-[10rem] flex-1" : ""}`}
             style={{
               [isHorizontal() ? "border-left" : "border-top"]: isOver()
                 ? "2px solid var(--color-accent)"

@@ -61,7 +61,7 @@ Each command category has its own typed channel with independent backpressure an
 | LinkCommands | Medium | None | LinkHandler → PW `create_object`/`destroy` |
 | NodeCommands | Low | None | NodeHandler → PW adapter factory |
 | MetadataCommands | Low | None | MetadataHandler → PW metadata API |
-| ConfigEvents | Low | 30s | ConfigHandler → TOML disk |
+| ConfigEvents | Low | 3s | ConfigHandler → TOML disk |
 | WebSocketBroadcast | All events | None | Subscribes to all channels → broadcasts to UI |
 
 User events and correction events use the same types and flow through the same handlers. The handler does not know or care about the origin.

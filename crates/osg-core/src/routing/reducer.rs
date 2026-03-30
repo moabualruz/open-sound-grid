@@ -162,8 +162,8 @@ pub async fn run_reducer(
             }
         };
 
-        // Auto-save timer: saves 30s after last mutation (ADR-005: ConfigEvents debounced at 30s)
-        let save_interval = tokio::time::Duration::from_secs(30);
+        // Auto-save timer: saves 3s after last mutation
+        let save_interval = tokio::time::Duration::from_secs(3);
         let mut save_deadline: Option<tokio::time::Instant> = None;
 
         loop {
