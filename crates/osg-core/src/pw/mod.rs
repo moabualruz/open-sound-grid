@@ -162,7 +162,8 @@ pub enum ToPipewireMessage {
     /// Domain: RemoveChannel. Removes a virtual audio bus (Channel) from PipeWire.
     RemoveGroupNode(Ulid),
     /// Set the OS default audio sink via PipeWire metadata.
-    SetDefaultSink(String),
+    /// (node_name, pipewire_node_id) — tries metadata first, falls back to wpctl.
+    SetDefaultSink(String, u32),
     Exit,
 }
 

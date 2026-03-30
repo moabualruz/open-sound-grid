@@ -15,7 +15,7 @@ import {
   Volume2,
   PenLine,
 } from "lucide-solid";
-import type { App, PwNode, PwDevice } from "../types";
+import type { App, PwNode, PwDevice, AudioGraph } from "../types";
 
 const CHANNEL_TEMPLATES = [
   { name: "Music", icon: Music, kind: "duplex" as const },
@@ -27,8 +27,9 @@ const CHANNEL_TEMPLATES = [
   { name: "Aux 1", icon: Volume2, kind: "duplex" as const },
 ];
 
-function nodeHasSourcePorts(node: PwNode): boolean {
-  return node.ports.some(([, kind]) => kind === "source");
+function nodeHasInputPorts(node: PwNode): boolean {
+  // Source ports that are NOT monitor ports — excludes output device monitors
+  return node.ports.some(([, kind, isMonitor]) => kind === "source" && !isMonitor);
 }
 
 function isOsgNode(node: PwNode): boolean {
@@ -46,11 +47,12 @@ function isInternalNode(node: PwNode): boolean {
   );
 }
 
+/** Internal EasyEffects DSP nodes (spectrum, level meters, per-effect filters). */
 function isEasyEffectsInternal(node: PwNode): boolean {
-  const name = node.identifier.nodeName ?? "";
-  return name.startsWith("ee_") || name === "easyeffects_sink";
+  return (node.identifier.nodeName ?? "").startsWith("ee_");
 }
 
+/** EasyEffects processed mic source — the only EasyEffects node that's an input. */
 function isEasyEffectsSource(node: PwNode): boolean {
   return (node.identifier.nodeName ?? "") === "easyeffects_source";
 }
@@ -63,10 +65,19 @@ function deviceNodeIds(devices: Record<string, PwDevice>): Set<number> {
   return ids;
 }
 
-function inputNodeName(node: PwNode, defaultSourceName: string | null): string {
-  if (isEasyEffectsSource(node) && defaultSourceName) {
-    return `${defaultSourceName} (EasyEffects)`;
+/** Resolve a PW node name (ALSA string) to a human-readable description. */
+function resolveNodeDisplayName(nodeName: string, graph: AudioGraph): string {
+  const node = (Object.values(graph.nodes) as PwNode[]).find(
+    (n) => n.identifier.nodeName === nodeName,
+  );
+  return node?.identifier.nodeDescription ?? node?.identifier.nodeNick ?? nodeName;
+}
+
+function inputNodeName(node: PwNode, graph: AudioGraph): string {
+  if (isEasyEffectsSource(node) && graph.defaultSourceName) {
+    return `EE - ${resolveNodeDisplayName(graph.defaultSourceName, graph)}`;
   }
+  if (isEasyEffectsSource(node)) return "EE - Mic";
   return node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
 }
 
@@ -82,25 +93,29 @@ export default function ChannelCreator(): JSX.Element {
     return (Object.values(graphState.graph.nodes) as PwNode[])
       .filter((n) => {
         if (isOsgNode(n) || isInternalNode(n) || isEasyEffectsInternal(n)) return false;
-        if (!nodeHasSourcePorts(n)) return false;
-        // Include: hardware device inputs OR EasyEffects processed source
-        return devNodes.has(n.id) || isEasyEffectsSource(n);
+        // EasyEffects source (processed mic) is always included (its ports are monitor-flagged)
+        if (isEasyEffectsSource(n)) return true;
+        if (!nodeHasInputPorts(n)) return false;
+        // Include: hardware device inputs
+        return devNodes.has(n.id);
       })
-      .filter((n) => inputNodeName(n, graphState.graph.defaultSourceName).toLowerCase().includes(q))
+      .filter((n) => {
+        const name = inputNodeName(n, graphState.graph);
+        return name.toLowerCase().includes(q) && !existingChannelNames().has(name);
+      })
       .sort((a, b) =>
-        inputNodeName(a, graphState.graph.defaultSourceName).localeCompare(
-          inputNodeName(b, graphState.graph.defaultSourceName),
-        ),
+        inputNodeName(a, graphState.graph).localeCompare(inputNodeName(b, graphState.graph)),
       );
   };
 
   const runningApps = () => {
     const q = search().toLowerCase();
+    const existing = existingChannelNames();
     return (Object.values(state.session.apps) as App[])
       .filter((app) => {
         const display = app.name || app.binary;
         if (!display || display.includes("(deleted)")) return false;
-        return display.toLowerCase().includes(q);
+        return display.toLowerCase().includes(q) && !existing.has(display);
       })
       .sort((a, b) => (a.name || a.binary).localeCompare(b.name || b.binary));
   };
@@ -108,6 +123,7 @@ export default function ChannelCreator(): JSX.Element {
   const existingChannelNames = () => {
     const names = new Set<string>();
     for (const [, ep] of state.session.endpoints) {
+      if (!ep.visible) continue;
       names.add(ep.displayName);
       if (ep.customName) names.add(ep.customName);
     }
@@ -178,14 +194,22 @@ export default function ChannelCreator(): JSX.Element {
                 </div>
                 <For each={inputDevices()}>
                   {(node) => {
-                    const name = inputNodeName(node, graphState.graph.defaultSourceName);
+                    const name = inputNodeName(node, graphState.graph);
+                    const isEE = isEasyEffectsSource(node);
                     return (
                       <button
                         onClick={() => create(name, "source")}
                         class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
                       >
                         <Mic size={16} class="shrink-0 text-text-muted" />
-                        <span class="flex-1 truncate text-xs text-text-secondary">{name}</span>
+                        <span class="flex flex-1 items-center gap-1.5 truncate text-xs text-text-secondary">
+                          <Show when={isEE}>
+                            <span class="shrink-0 rounded bg-accent/20 px-1 py-0.5 text-[10px] font-bold text-accent">
+                              EE
+                            </span>
+                          </Show>
+                          {isEE ? name.replace("EE - ", "") : name}
+                        </span>
                         <span class="rounded-full bg-vu-safe/15 px-1.5 py-0.5 text-[10px] text-vu-safe">
                           input
                         </span>

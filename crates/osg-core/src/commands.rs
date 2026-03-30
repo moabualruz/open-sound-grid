@@ -71,6 +71,7 @@ pub enum Command {
     /// Assign an output device to a mix. `None` clears the assignment.
     SetMixOutput {
         channel: ChannelId,
+        #[serde(rename = "outputNodeId")]
         output_node_id: Option<u32>,
     },
 
@@ -87,8 +88,11 @@ pub enum Command {
         volume: f32,
     },
 
-    /// Set the display order for endpoints.
-    SetDisplayOrder { order: Vec<EndpointDescriptor> },
+    /// Set the display order for source channels (rows).
+    SetChannelOrder { order: Vec<EndpointDescriptor> },
+
+    /// Set the display order for sink mixes (columns).
+    SetMixOrder { order: Vec<EndpointDescriptor> },
 }
 
 impl Command {
@@ -127,7 +131,8 @@ impl Command {
             Self::SetEndpointVisible { endpoint, visible } => {
                 StateMsg::SetEndpointVisible(endpoint, visible)
             }
-            Self::SetDisplayOrder { order } => StateMsg::SetDisplayOrder(order),
+            Self::SetChannelOrder { order } => StateMsg::SetChannelOrder(order),
+            Self::SetMixOrder { order } => StateMsg::SetMixOrder(order),
         }
     }
 }

@@ -83,15 +83,24 @@ export default function Mixer() {
   const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
 
   // Local order — instant UI, persisted to backend on change
-  const [localOrder, setLocalOrder] = createSignal<EndpointDescriptor[]>([]);
-  let orderInitialized = false;
+  const [localChannelOrder, setLocalChannelOrder] = createSignal<EndpointDescriptor[]>([]);
+  const [localMixOrder, setLocalMixOrder] = createSignal<EndpointDescriptor[]>([]);
+  let channelOrderInitialized = false;
+  let mixOrderInitialized = false;
 
   // Sync from backend ONCE on initial load only
   createEffect(() => {
-    const backendOrder = state.session.displayOrder;
-    if (!orderInitialized && backendOrder.length > 0) {
-      orderInitialized = true;
-      setLocalOrder(backendOrder);
+    const backendOrder = state.session.channelOrder;
+    if (!channelOrderInitialized && backendOrder.length > 0) {
+      channelOrderInitialized = true;
+      setLocalChannelOrder(backendOrder);
+    }
+  });
+  createEffect(() => {
+    const backendOrder = state.session.mixOrder;
+    if (!mixOrderInitialized && backendOrder.length > 0) {
+      mixOrderInitialized = true;
+      setLocalMixOrder(backendOrder);
     }
   });
 
@@ -111,24 +120,31 @@ export default function Mixer() {
     return ordered;
   }
 
-  const channels = createMemo(() => applyOrder(rawChannels(), localOrder()));
+  const channels = createMemo(() => applyOrder(rawChannels(), localChannelOrder()));
   const mixes = createMemo(() =>
     applyOrder(
       rawMixes().filter((m): m is { desc: EndpointDescriptor; ep: Endpoint } => m.ep != null),
-      localOrder(),
+      localMixOrder(),
     ),
   );
 
-  function persistOrder(reordered: EndpointEntry[]) {
+  function persistChannelOrder(reordered: EndpointEntry[]) {
     const order = reordered.map((item) => item.desc);
-    setLocalOrder(order);
-    send({ type: "setDisplayOrder", order });
+    setLocalChannelOrder(order);
+    send({ type: "setChannelOrder", order });
+  }
+
+  function persistMixOrder(reordered: EndpointEntry[]) {
+    const order = reordered.map((item) => item.desc);
+    setLocalMixOrder(order);
+    send({ type: "setMixOrder", order });
   }
 
   // TODO(backend): persist output device assignments to settings.toml
   const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
 
-  // Auto-assign OS default output device to Monitor mix
+  // Auto-assign OS default output device to Monitor mix (initial only)
+  const userOverrides = new Set<string>();
   createEffect(() => {
     const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
     if (allDevs.length === 0) return;
@@ -136,10 +152,13 @@ export default function Mixer() {
     if (!monitorMix) return;
     const monitorKey = JSON.stringify(monitorMix.desc);
 
+    // Don't override if user explicitly chose a device for this mix
+    if (userOverrides.has(monitorKey)) return;
+
     // Use PipeWire's default.audio.sink to find the right device
     const defaultName = graphState.graph.defaultSinkName;
     if (defaultName) {
-      const defaultDev = allDevs.find((d) => d.pwNodeName === defaultName);
+      const defaultDev = allDevs.find((d) => d.deviceId === defaultName);
       if (defaultDev && mixOutputs[monitorKey] !== defaultDev.deviceId) {
         setMixOutputs(monitorKey, defaultDev.deviceId);
         return;
@@ -153,6 +172,9 @@ export default function Mixer() {
   });
 
   function setMixOutput(mixKey: string, deviceId: string | null) {
+    // Track that the user explicitly chose a device for this mix
+    userOverrides.add(mixKey);
+
     // If assigning a device that another mix uses, clear it from that mix
     if (deviceId) {
       for (const [key, val] of Object.entries(mixOutputs)) {
@@ -162,6 +184,14 @@ export default function Mixer() {
       }
     }
     setMixOutputs(mixKey, deviceId);
+
+    // Send to backend: look up the PW node ID from the output device list
+    const desc: EndpointDescriptor = JSON.parse(mixKey);
+    if ("channel" in desc) {
+      const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
+      const dev = deviceId ? allDevs.find((d) => d.deviceId === deviceId) : null;
+      send({ type: "setMixOutput", channel: desc.channel, outputNodeId: dev?.pwNodeId ?? null });
+    }
   }
 
   const usedDeviceIds = () => {
@@ -203,7 +233,7 @@ export default function Mixer() {
               <DragReorder
                 items={mixes()}
                 keyFn={(m) => descKey(m.desc)}
-                onReorder={persistOrder}
+                onReorder={persistMixOrder}
                 direction="horizontal"
               >
                 {(mix, _idx, dragHandle) => {
@@ -237,7 +267,7 @@ export default function Mixer() {
               <DragReorder
                 items={channels()}
                 keyFn={(ch) => descKey(ch.desc)}
-                onReorder={persistOrder}
+                onReorder={persistChannelOrder}
               >
                 {(ch, _idx, dragHandle) => (
                   <div class="flex items-stretch gap-2">

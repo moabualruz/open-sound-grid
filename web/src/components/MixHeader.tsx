@@ -8,11 +8,12 @@ import type { EndpointDescriptor, Endpoint, PwDevice, PwNode } from "../types";
 const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
 
 export interface OutputDevice {
+  /** Stable ALSA node name (e.g. "alsa_output.usb-..."). Falls back to "pw:<nodeId>" for non-ALSA nodes. */
   deviceId: string;
   deviceName: string;
   nodeName: string;
-  /** PipeWire node name (ALSA identifier) — used for matching default sink */
-  pwNodeName: string | null;
+  /** PipeWire numeric node ID — used for backend SetMixOutput command. */
+  pwNodeId: number;
 }
 
 interface MixHeaderProps {
@@ -47,16 +48,16 @@ export function getOutputDevices(
   nodes: Record<string, PwNode>,
 ): OutputDevice[] {
   const result: OutputDevice[] = [];
-  for (const [id, dev] of Object.entries(devices) as [string, PwDevice][]) {
+  for (const [_id, dev] of Object.entries(devices) as [string, PwDevice][]) {
     const devNodes = dev.nodes.map((nid) => nodes[String(nid)]).filter(Boolean) as PwNode[];
     for (const node of devNodes) {
       if (node.ports.some(([, kind]) => kind === "sink")) {
         result.push({
-          deviceId: `${id}:${node.id}`,
+          deviceId: node.identifier.nodeName ?? `pw:${node.id}`,
           deviceName: dev.name,
           nodeName:
             node.identifier.nodeDescription ?? node.identifier.nodeName ?? `Node ${node.id}`,
-          pwNodeName: node.identifier.nodeName,
+          pwNodeId: node.id,
         });
       }
     }

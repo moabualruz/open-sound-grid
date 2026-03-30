@@ -214,6 +214,7 @@ pub async fn run_reducer(
                     graph = new_graph;
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
+                    state.rename_easyeffects_channels(&graph);
                     let pw_messages = state.diff(&graph, &current_settings);
 
                     for m in pw_messages {

@@ -444,9 +444,12 @@ pub struct MixerSession {
     pub apps: HashMap<AppId, App>,
     pub devices: HashMap<DeviceId, Device>,
     pub channels: IndexMap<ChannelId, Channel>,
-    /// User-defined display order for endpoints (channel/mix ordering).
+    /// User-defined display order for source channels (rows).
     #[serde(default)]
-    pub display_order: Vec<EndpointDescriptor>,
+    pub channel_order: Vec<EndpointDescriptor>,
+    /// User-defined display order for sink mixes (columns).
+    #[serde(default)]
+    pub mix_order: Vec<EndpointDescriptor>,
     /// PipeWire node ID of the OS default audio sink.
     /// Updated from PipeWire metadata `default.audio.sink`.
     #[serde(skip)]

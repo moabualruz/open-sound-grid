@@ -566,18 +566,21 @@ pub(super) fn init_mainloop(
                         warn!("Error removing group node: {err:?}");
                     }
                 }
-                ToPipewireMessage::SetDefaultSink(node_name) => {
-                    let value = format!(r#"{{"name":"{node_name}"}}"#);
+                ToPipewireMessage::SetDefaultSink(node_name, _node_id) => {
+                    // Write to default.configured.audio.sink — the user preference key.
+                    // WirePlumber watches this, applies it to default.audio.sink,
+                    // and persists the choice to disk. This is what wpctl set-default does.
                     if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                        let value = format!(r#"{{"name":"{node_name}"}}"#);
                         metadata.set_property(
                             0,
-                            "default.audio.sink",
+                            "default.configured.audio.sink",
                             Some("Spa:String:JSON"),
                             Some(&value),
                         );
-                        debug!("[PW] set default.audio.sink to {value}");
+                        debug!("[PW] set default.configured.audio.sink: {node_name}");
                     } else {
-                        warn!("[PW] no metadata proxy available for SetDefaultSink");
+                        warn!("[PW] no metadata proxy for SetDefaultSink");
                     }
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),

@@ -142,7 +142,8 @@ export interface MixerSession {
   apps: Record<string, App>;
   devices: Record<string, unknown>;
   channels: Record<string, Channel>;
-  displayOrder: EndpointDescriptor[];
+  channelOrder: EndpointDescriptor[];
+  mixOrder: EndpointDescriptor[];
   defaultOutputNodeId: number | null;
 }
 
@@ -174,4 +175,5 @@ export type Command =
     }
   | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
   | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }
-  | { type: "setDisplayOrder"; order: EndpointDescriptor[] };
+  | { type: "setChannelOrder"; order: EndpointDescriptor[] }
+  | { type: "setMixOrder"; order: EndpointDescriptor[] };
