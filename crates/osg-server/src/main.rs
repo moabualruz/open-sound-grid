@@ -192,12 +192,22 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
     let peak_store = state.core.peak_store().clone();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(40)); // 25 Hz
 
-    // Auto-start peak monitors for all group nodes (channels/mixes)
+    // Auto-start peak monitors for all audio nodes (channels, mixes, and app streams)
     {
         let graph = state.core.snapshot();
-        for (&_ulid, group_node) in &graph.group_nodes {
+        // Monitor OSG group nodes (channels/mixes)
+        for group_node in graph.group_nodes.values() {
             if let Some(pw_id) = group_node.id {
                 state.core.start_peak_monitor(pw_id);
+            }
+        }
+        // Monitor all nodes with audio ports (app streams, hardware)
+        for (&node_id, node) in &graph.nodes {
+            let has_audio = node.ports.iter().any(|(_, kind, _)| {
+                *kind == osg_core::pw::PortKind::Source || *kind == osg_core::pw::PortKind::Sink
+            });
+            if has_audio {
+                state.core.start_peak_monitor(node_id);
             }
         }
     }

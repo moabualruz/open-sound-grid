@@ -56,12 +56,13 @@ export default function Mixer() {
   const levels = useLevels();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
-  /** Resolve a channel descriptor to its PW node ID via groupNodes. */
-  function getPwNodeId(desc: EndpointDescriptor): number | null {
-    if (!("channel" in desc)) return null;
-    const ulid = desc.channel;
-    const group = graphState.graph.groupNodes[ulid] as PwGroupNode | undefined;
-    return group?.id ?? null;
+  /** Get peak values for a channel by looking up its group node in the peak store. */
+  function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
+    if (!("channel" in desc)) return { left: 0, right: 0 };
+    const group = graphState.graph.groupNodes[desc.channel] as PwGroupNode | undefined;
+    if (!group?.id) return { left: 0, right: 0 };
+    const p = levels.peaks[String(group.id)];
+    return p ?? { left: 0, right: 0 };
   }
 
   function channelKind(desc: EndpointDescriptor): string | undefined {
@@ -176,7 +177,21 @@ export default function Mixer() {
       if (!mixOutputs[monitorKey]) {
         const defaultName = graphState.graph.defaultSinkName;
         const defaultDev = defaultName ? allDevs.find((d) => d.deviceId === defaultName) : null;
-        setMixOutputs(monitorKey, defaultDev?.deviceId ?? allDevs[0].deviceId);
+        const autoDeviceId = defaultDev?.deviceId ?? allDevs[0]?.deviceId;
+        if (autoDeviceId) {
+          setMixOutputs(monitorKey, autoDeviceId);
+          // Send to backend so PW links are created
+          if ("channel" in monitorMix.desc) {
+            const dev = allDevs.find((d) => d.deviceId === autoDeviceId);
+            if (dev) {
+              send({
+                type: "setMixOutput",
+                channel: monitorMix.desc.channel,
+                outputNodeId: dev.pwNodeId ?? null,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -283,9 +298,13 @@ export default function Mixer() {
                     <ChannelLabel
                       descriptor={ch.desc}
                       endpoint={ch.ep}
+                      channel={
+                        "channel" in ch.desc ? state.session.channels[ch.desc.channel] : undefined
+                      }
+                      apps={Object.values(state.session.apps)}
                       dragHandle={dragHandle}
-                      peakLeft={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.left ?? 0}
-                      peakRight={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.right ?? 0}
+                      peakLeft={getPeaks(ch.desc).left}
+                      peakRight={getPeaks(ch.desc).right}
                     />
                     <For each={mixes()}>
                       {({ desc: sinkDesc, ep: sinkEp }) => (
@@ -295,8 +314,8 @@ export default function Mixer() {
                           sourceDescriptor={ch.desc}
                           sinkDescriptor={sinkDesc}
                           mixColor={getMixColor(sinkEp?.displayName ?? "")}
-                          peakLeft={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.left ?? 0}
-                          peakRight={levels.peaks[String(getPwNodeId(ch.desc) ?? "")]?.right ?? 0}
+                          peakLeft={getPeaks(ch.desc).left}
+                          peakRight={getPeaks(ch.desc).right}
                         />
                       )}
                     </For>

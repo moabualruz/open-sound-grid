@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, EndpointDescriptor, Link, LinkState, MixerSession, PersistentNodeId, ReconcileSettings,
-    VolumeLockMuteState, average_volumes, volumes_mixed,
+    App, ChannelKind, EndpointDescriptor, Link, LinkState, MixerSession, PersistentNodeId,
+    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -52,6 +52,9 @@ impl MixerSession {
     ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.diff_channels(&endpoint_nodes);
+        messages.extend(self.diff_cells(graph));
+        messages.extend(Self::diff_cell_links(graph));
+        messages.extend(self.diff_app_routing(graph));
         messages.extend(self.diff_properties(&endpoint_nodes));
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages
@@ -150,6 +153,8 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
+                    // Start peak monitoring for newly resolved channel nodes
+                    messages.push(ToPipewireMessage::StartPeakMonitor(node.id));
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");
@@ -165,6 +170,169 @@ impl MixerSession {
                         channel.kind,
                     ));
                 }
+            }
+        }
+        messages
+    }
+
+    // -----------------------------------------------------------------------
+    // diff_cells — ensure every row×mix pair has a cell node
+    // -----------------------------------------------------------------------
+
+    /// For every (source channel × sink mix) pair, ensure a cell node exists.
+    /// Cell nodes are created upfront and always linked. Volume 0 = muted.
+    fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        let rows: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind != ChannelKind::Sink && ch.pipewire_id.is_some())
+            .collect();
+        let mixes: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
+            .collect();
+
+        for (row_id, row_ch) in &rows {
+            let Some(row_pw) = row_ch.pipewire_id else {
+                continue;
+            };
+            for (mix_id, mix_ch) in &mixes {
+                let Some(mix_pw) = mix_ch.pipewire_id else {
+                    continue;
+                };
+                let cell_name = format!("osg.cell.{row_pw}.{mix_pw}");
+                // Check if cell already exists in graph
+                if !self.created_cells.contains(&cell_name) {
+                    self.created_cells.insert(cell_name.clone());
+                    let row_name = self
+                        .endpoints
+                        .get(&EndpointDescriptor::Channel(**row_id))
+                        .map(|e| e.display_name.as_str())
+                        .unwrap_or("?");
+                    let mix_name = self
+                        .endpoints
+                        .get(&EndpointDescriptor::Channel(**mix_id))
+                        .map(|e| e.display_name.as_str())
+                        .unwrap_or("?");
+                    messages.push(ToPipewireMessage::CreateCellNode {
+                        name: format!("{row_name}→{mix_name}"),
+                        channel_node_id: row_pw,
+                        mix_node_id: mix_pw,
+                    });
+                }
+            }
+        }
+        messages
+    }
+
+    // -----------------------------------------------------------------------
+    // diff_app_routing — redirect assigned app streams via target.object
+    // -----------------------------------------------------------------------
+
+    /// For each channel with assigned apps, find matching PW stream nodes
+    /// and create direct links if not already routed to the channel.
+    /// This handles streams that appear after the assignment.
+    fn diff_app_routing(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        for (_channel_id, channel) in &self.channels {
+            let Some(target_id) = channel.pipewire_id else {
+                continue;
+            };
+            if channel.assigned_apps.is_empty() {
+                continue;
+            }
+
+            for assignment in &channel.assigned_apps {
+                for node in graph.nodes.values() {
+                    if node.identifier.application_name.as_deref()
+                        == Some(&assignment.application_name)
+                        && node.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
+                        && node.has_port_kind(PortKind::Source)
+                    {
+                        // Check if already linked to our channel — skip if so
+                        let already_routed = graph
+                            .links
+                            .values()
+                            .any(|link| link.start_node == node.id && link.end_node == target_id);
+                        if !already_routed {
+                            messages.push(ToPipewireMessage::RedirectStream {
+                                stream_node_id: node.id,
+                                target_node_id: target_id,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        messages
+    }
+
+    // -----------------------------------------------------------------------
+    // diff_cell_links — ensure channel → cell → mix links exist
+    // -----------------------------------------------------------------------
+
+    /// For each cell node (detected by `osg.cell.{channel_id}.{mix_id}` naming),
+    /// ensure PW links exist: channel → cell → mix.
+    fn diff_cell_links(graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        // Debug: count osg.cell nodes in graph
+        let osg_cells: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|(_, n)| {
+                n.identifier
+                    .node_name()
+                    .is_some_and(|name| name.starts_with("osg.cell."))
+            })
+            .map(|(id, n)| (*id, n.identifier.node_name().unwrap_or("?").to_string()))
+            .collect();
+        if !osg_cells.is_empty() {
+            tracing::debug!(
+                "[Reconcile] diff_cell_links sees {} cells: {osg_cells:?}",
+                osg_cells.len()
+            );
+        }
+        for (&cell_pw_id, cell_node) in &graph.nodes {
+            let Some(name) = cell_node.identifier.node_name() else {
+                continue;
+            };
+            let Some(rest) = name.strip_prefix("osg.cell.") else {
+                continue;
+            };
+            let Some((ch_str, mix_str)) = rest.split_once('.') else {
+                continue;
+            };
+            let (Ok(channel_id), Ok(mix_id)) = (ch_str.parse::<u32>(), mix_str.parse::<u32>())
+            else {
+                continue;
+            };
+            // Skip if cell has no ports yet
+            if cell_node.ports.is_empty() {
+                continue;
+            }
+            // channel → cell
+            let has_ch_to_cell = graph
+                .links
+                .values()
+                .any(|l| l.start_node == channel_id && l.end_node == cell_pw_id);
+            if !has_ch_to_cell && graph.nodes.contains_key(&channel_id) {
+                messages.push(ToPipewireMessage::CreateNodeLinks {
+                    start_id: channel_id,
+                    end_id: cell_pw_id,
+                });
+            }
+            // cell → mix
+            let has_cell_to_mix = graph
+                .links
+                .values()
+                .any(|l| l.start_node == cell_pw_id && l.end_node == mix_id);
+            if !has_cell_to_mix && graph.nodes.contains_key(&mix_id) {
+                messages.push(ToPipewireMessage::CreateNodeLinks {
+                    start_id: cell_pw_id,
+                    end_id: mix_id,
+                });
             }
         }
         messages
@@ -356,6 +524,7 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
+                    cell_node_id: None,
                     pending: false,
                 }),
                 None => self.links.push(Link {
@@ -365,6 +534,7 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
+                    cell_node_id: None,
                     pending: false,
                 }),
                 Some(false) => {}

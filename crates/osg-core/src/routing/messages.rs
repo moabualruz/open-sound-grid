@@ -2,7 +2,7 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{AppId, ChannelId, ChannelKind, EndpointDescriptor};
+use crate::graph::{AppAssignment, AppId, ChannelId, ChannelKind, EndpointDescriptor};
 use crate::pw::PortKind;
 
 // ---------------------------------------------------------------------------
@@ -40,6 +40,10 @@ pub enum StateMsg {
     SetLinkVolume(EndpointDescriptor, EndpointDescriptor, f32),
     /// Set per-route stereo cell volume (independent L/R).
     SetLinkStereoVolume(EndpointDescriptor, EndpointDescriptor, f32, f32),
+    /// Assign an app to a channel — redirect its PW streams via target.object metadata.
+    AssignApp(ChannelId, AppAssignment),
+    /// Unassign an app from a channel — clear target.object, return to default sink.
+    UnassignApp(ChannelId, AppAssignment),
 }
 
 // ---------------------------------------------------------------------------

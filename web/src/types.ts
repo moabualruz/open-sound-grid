@@ -122,10 +122,16 @@ export interface MixerLink {
   cellVolumeRight: number;
 }
 
+export interface AppAssignment {
+  applicationName: string;
+  binaryName: string;
+}
+
 export interface Channel {
   id: string;
   kind: GroupNodeKind;
   outputNodeId: number | null;
+  assignedApps: AppAssignment[];
 }
 
 export interface App {
@@ -187,4 +193,6 @@ export type Command =
   | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
   | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }
   | { type: "setChannelOrder"; order: EndpointDescriptor[] }
-  | { type: "setMixOrder"; order: EndpointDescriptor[] };
+  | { type: "setMixOrder"; order: EndpointDescriptor[] }
+  | { type: "assignApp"; channel: string; applicationName: string; binaryName: string }
+  | { type: "unassignApp"; channel: string; applicationName: string; binaryName: string };

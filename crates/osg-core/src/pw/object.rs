@@ -367,8 +367,9 @@ impl Node {
                     .map(EndpointId::Client)
                     .map_err(|_| object.invalid_value(*CLIENT_ID, "integer", id))?
             } else {
-                // TODO: Better error message, maybe listing both device and client field names
-                return Err(object.missing_field(*CLIENT_ID));
+                // Lingering nodes (object.linger=true) may lose their client.id.
+                // Treat them as clientless — they're OSG-created cell/group nodes.
+                EndpointId::Client(0)
             },
             ports: Vec::new(),
             channel_volumes: Vec::new(),

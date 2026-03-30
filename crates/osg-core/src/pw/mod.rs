@@ -1,5 +1,6 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
+mod cell;
 mod identifier;
 mod mainloop;
 mod object;
@@ -147,6 +148,9 @@ pub struct AudioGraph {
     pub default_sink_name: Option<String>,
     /// The PipeWire node name of the OS default audio source/mic (from metadata).
     pub default_source_name: Option<String>,
+    /// Map (channel_node_id, mix_node_id) → cell PW node ID for per-route volume.
+    #[serde(skip)]
+    pub cell_node_ids: HashMap<(u32, u32), u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -169,6 +173,29 @@ pub enum ToPipewireMessage {
     /// Set the OS default audio sink via PipeWire metadata.
     /// (node_name, pipewire_node_id) — tries metadata first, falls back to wpctl.
     SetDefaultSink(String, u32),
+    /// Create a per-cell volume node (null-audio-sink) for matrix routing.
+    /// Route: channel → cell_node (volume) → mix.
+    CreateCellNode {
+        name: String,
+        channel_node_id: u32,
+        mix_node_id: u32,
+    },
+    /// Remove a per-cell volume node and its links.
+    RemoveCellNode {
+        cell_node_id: u32,
+    },
+    /// Redirect an app stream to a channel's virtual sink via direct PW links.
+    /// Disconnects the stream from its current target and links to the channel node.
+    RedirectStream {
+        stream_node_id: u32,
+        target_node_id: u32,
+    },
+    /// Remove links between a stream and a channel node. WirePlumber will
+    /// auto-link the stream back to the default sink.
+    ClearRedirect {
+        stream_node_id: u32,
+        target_node_id: u32,
+    },
     /// Start monitoring peak levels for a node.
     StartPeakMonitor(u32),
     /// Stop monitoring peak levels for a node.

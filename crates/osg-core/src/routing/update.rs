@@ -84,6 +84,7 @@ impl MixerSession {
                             id,
                             kind,
                             output_node_id: None,
+                            assigned_apps: Vec::new(),
                             pipewire_id: None,
                             pending: true,
                         },
@@ -93,6 +94,7 @@ impl MixerSession {
                         Endpoint::new(descriptor).with_display_name(name.clone()),
                     );
                     pw_messages.push(ToPipewireMessage::CreateGroupNode(name, id.inner(), kind));
+                    // Cell nodes are created by diff_cells() once the PW ID is known.
                     Some(StateOutputMsg::EndpointAdded(descriptor))
                 }
 
@@ -153,6 +155,26 @@ impl MixerSession {
                     match ep {
                         EndpointDescriptor::EphemeralNode(..) => {}
                         EndpointDescriptor::Channel(id) => {
+                            // Clear redirects for all apps assigned to this channel
+                            if let Some(ch) = self.channels.get(&id)
+                                && let Some(target_id) = ch.pipewire_id
+                            {
+                                for assignment in &ch.assigned_apps {
+                                    for node in graph.nodes.values() {
+                                        if node.identifier.application_name.as_deref()
+                                            == Some(&assignment.application_name)
+                                            && node.identifier.binary_name.as_deref()
+                                                == Some(&assignment.binary_name)
+                                            && node.has_port_kind(PortKind::Source)
+                                        {
+                                            pw_messages.push(ToPipewireMessage::ClearRedirect {
+                                                stream_node_id: node.id,
+                                                target_node_id: target_id,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                             if self.channels.shift_remove(&id).is_none() {
                                 warn!("[State] channel {id:?} was not in state");
                             }
@@ -316,12 +338,25 @@ impl MixerSession {
                         .resolve_endpoint(sink, graph, settings)
                         .unwrap_or_default();
 
+                    // Create cell nodes (one per source×sink pair) for per-route volume control.
+                    // Route: channel → cell_node (volume) → mix
                     let mut msgs = Vec::new();
+                    let source_name = self
+                        .endpoints
+                        .get(&source)
+                        .map(|e| e.display_name.clone())
+                        .unwrap_or_default();
+                    let sink_name = self
+                        .endpoints
+                        .get(&sink)
+                        .map(|e| e.display_name.clone())
+                        .unwrap_or_default();
                     for s in &source_nodes {
                         for k in &sink_nodes {
-                            msgs.push(ToPipewireMessage::CreateNodeLinks {
-                                start_id: s.id,
-                                end_id: k.id,
+                            msgs.push(ToPipewireMessage::CreateCellNode {
+                                name: format!("{source_name}→{sink_name}"),
+                                channel_node_id: s.id,
+                                mix_node_id: k.id,
                             });
                         }
                     }
@@ -351,6 +386,7 @@ impl MixerSession {
                             cell_volume: 1.0,
                             cell_volume_left: 1.0,
                             cell_volume_right: 1.0,
+                            cell_node_id: None,
                             pending: !msgs.is_empty(),
                         });
                     }
@@ -363,6 +399,13 @@ impl MixerSession {
                     if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
                         warn!("[State] cannot unlink {source:?} -> {sink:?}: wrong direction");
                         break 'handler None;
+                    }
+
+                    // Destroy cell nodes for this route
+                    for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+                        pw_messages.push(ToPipewireMessage::RemoveCellNode {
+                            cell_node_id: cell_id,
+                        });
                     }
 
                     let Some(pos) = self
@@ -423,6 +466,7 @@ impl MixerSession {
                                 cell_volume: 1.0,
                                 cell_volume_left: 1.0,
                                 cell_volume_right: 1.0,
+                                cell_node_id: None,
                                 pending: false,
                             });
                         }
@@ -486,6 +530,10 @@ impl MixerSession {
                         link.cell_volume_left = v;
                         link.cell_volume_right = v;
                     }
+                    let v = volume.clamp(0.0, 1.0);
+                    for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+                        pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![v, v]));
+                    }
                     None
                 }
 
@@ -495,9 +543,16 @@ impl MixerSession {
                         .iter_mut()
                         .find(|l| l.start == source && l.end == sink)
                     {
-                        link.cell_volume_left = left.clamp(0.0, 1.0);
-                        link.cell_volume_right = right.clamp(0.0, 1.0);
-                        link.cell_volume = (left + right) / 2.0;
+                        let l = left.clamp(0.0, 1.0);
+                        let r = right.clamp(0.0, 1.0);
+                        link.cell_volume_left = l;
+                        link.cell_volume_right = r;
+                        link.cell_volume = (l + r) / 2.0;
+                    }
+                    let l = left.clamp(0.0, 1.0);
+                    let r = right.clamp(0.0, 1.0);
+                    for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+                        pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![l, r]));
                     }
                     None
                 }
@@ -574,6 +629,75 @@ impl MixerSession {
                     None
                 }
 
+                StateMsg::AssignApp(channel_id, assignment) => {
+                    let Some(ch) = self.channels.get_mut(&channel_id) else {
+                        warn!("[State] cannot assign app: channel {channel_id:?} not found");
+                        break 'handler None;
+                    };
+
+                    // Don't add duplicates
+                    if ch.assigned_apps.contains(&assignment) {
+                        break 'handler None;
+                    }
+
+                    let target_node_id = ch.pipewire_id;
+                    ch.assigned_apps.push(assignment.clone());
+
+                    // Find all matching PW stream nodes and redirect them
+                    if let Some(target_id) = target_node_id {
+                        for node in graph.nodes.values() {
+                            if node.identifier.application_name.as_deref()
+                                == Some(&assignment.application_name)
+                                && node.identifier.binary_name.as_deref()
+                                    == Some(&assignment.binary_name)
+                                && node.has_port_kind(PortKind::Source)
+                            {
+                                pw_messages.push(ToPipewireMessage::RedirectStream {
+                                    stream_node_id: node.id,
+                                    target_node_id: target_id,
+                                });
+                                debug!(
+                                    "[State] redirect {} (node {}) -> node {target_id}",
+                                    assignment.application_name, node.id
+                                );
+                            }
+                        }
+                    }
+                    None
+                }
+
+                StateMsg::UnassignApp(channel_id, assignment) => {
+                    let Some(ch) = self.channels.get_mut(&channel_id) else {
+                        warn!("[State] cannot unassign app: channel {channel_id:?} not found");
+                        break 'handler None;
+                    };
+
+                    let target_node_id = ch.pipewire_id;
+                    ch.assigned_apps.retain(|a| a != &assignment);
+
+                    // Clear redirect on all matching PW stream nodes
+                    if let Some(target_id) = target_node_id {
+                        for node in graph.nodes.values() {
+                            if node.identifier.application_name.as_deref()
+                                == Some(&assignment.application_name)
+                                && node.identifier.binary_name.as_deref()
+                                    == Some(&assignment.binary_name)
+                                && node.has_port_kind(PortKind::Source)
+                            {
+                                pw_messages.push(ToPipewireMessage::ClearRedirect {
+                                    stream_node_id: node.id,
+                                    target_node_id: target_id,
+                                });
+                                debug!(
+                                    "[State] cleared redirect for {} (node {})",
+                                    assignment.application_name, node.id
+                                );
+                            }
+                        }
+                    }
+                    None
+                }
+
                 StateMsg::SetDefaultOutputNode(node_id) => {
                     self.default_output_node_id = node_id;
                     None
@@ -623,5 +747,38 @@ impl MixerSession {
                 ep.display_name = new_name.clone();
             }
         }
+    }
+}
+
+impl MixerSession {
+    /// Find PipeWire cell node IDs for a route by scanning for `osg.cell.{ch}.{mix}` names.
+    #[allow(clippy::too_many_arguments)]
+    fn find_cell_node_ids(
+        &self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+    ) -> Vec<u32> {
+        let source_nodes = self
+            .resolve_endpoint(source, graph, settings)
+            .unwrap_or_default();
+        let sink_nodes = self
+            .resolve_endpoint(sink, graph, settings)
+            .unwrap_or_default();
+        let mut ids = Vec::new();
+        for s in &source_nodes {
+            for k in &sink_nodes {
+                let cell_name = format!("osg.cell.{}.{}", s.id, k.id);
+                if let Some((&cell_id, _)) = graph
+                    .nodes
+                    .iter()
+                    .find(|(_, n)| n.identifier.node_name() == Some(&cell_name))
+                {
+                    ids.push(cell_id);
+                }
+            }
+        }
+        ids
     }
 }

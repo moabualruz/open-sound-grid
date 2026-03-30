@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{ChannelId, ChannelKind, EndpointDescriptor};
+use crate::graph::{AppAssignment, ChannelId, ChannelKind, EndpointDescriptor};
 use crate::routing::StateMsg;
 
 /// A command received from the frontend over WebSocket.
@@ -101,10 +101,29 @@ pub enum Command {
 
     /// Set the display order for sink mixes (columns).
     SetMixOrder { order: Vec<EndpointDescriptor> },
+
+    /// Assign an app to a channel. Redirects the app's PW streams to the channel's virtual sink.
+    AssignApp {
+        channel: ChannelId,
+        #[serde(rename = "applicationName")]
+        application_name: String,
+        #[serde(rename = "binaryName")]
+        binary_name: String,
+    },
+
+    /// Unassign an app from a channel. Returns the app's streams to the default sink.
+    UnassignApp {
+        channel: ChannelId,
+        #[serde(rename = "applicationName")]
+        application_name: String,
+        #[serde(rename = "binaryName")]
+        binary_name: String,
+    },
 }
 
 impl Command {
     /// Convert a wire-format command to an internal StateMsg.
+    #[allow(clippy::too_many_lines)]
     pub fn into_state_msg(self) -> StateMsg {
         match self {
             Self::CreateChannel { name, kind } => StateMsg::AddChannel(name, kind),
@@ -147,6 +166,28 @@ impl Command {
             }
             Self::SetChannelOrder { order } => StateMsg::SetChannelOrder(order),
             Self::SetMixOrder { order } => StateMsg::SetMixOrder(order),
+            Self::AssignApp {
+                channel,
+                application_name,
+                binary_name,
+            } => StateMsg::AssignApp(
+                channel,
+                AppAssignment {
+                    application_name,
+                    binary_name,
+                },
+            ),
+            Self::UnassignApp {
+                channel,
+                application_name,
+                binary_name,
+            } => StateMsg::UnassignApp(
+                channel,
+                AppAssignment {
+                    application_name,
+                    binary_name,
+                },
+            ),
         }
     }
 }

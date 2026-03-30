@@ -239,7 +239,6 @@ pub struct Link {
     pub end: EndpointDescriptor,
     pub state: LinkState,
     /// Per-route volume ratio (0.0–1.0). Independent of channel master volume.
-    /// Effective volume to PipeWire = master × cell_volume.
     #[serde(default = "default_one")]
     pub cell_volume: f32,
     /// Per-route left channel volume (0.0–1.0). Equals `cell_volume` when mono.
@@ -248,6 +247,11 @@ pub struct Link {
     /// Per-route right channel volume (0.0–1.0). Equals `cell_volume` when mono.
     #[serde(default = "default_one")]
     pub cell_volume_right: f32,
+    /// PipeWire node ID of the cell's volume-control node (null-audio-sink).
+    /// Each cell gets its own PW node so volume can be controlled per-route.
+    /// Route: channel → cell_node (volume here) → mix
+    #[serde(skip)]
+    pub cell_node_id: Option<u32>,
     /// Transient: a link command is in-flight to PipeWire.
     #[serde(skip)]
     pub pending: bool,
@@ -359,6 +363,19 @@ impl VolumeLockMuteState {
 }
 
 // ---------------------------------------------------------------------------
+// AppAssignment — persistent app-to-channel binding
+// ---------------------------------------------------------------------------
+
+/// Identifies an application for routing. Matched against PipeWire node properties
+/// `application.name` and `application.process.binary`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppAssignment {
+    pub application_name: String,
+    pub binary_name: String,
+}
+
+// ---------------------------------------------------------------------------
 // Channel — user-created virtual audio bus
 // ---------------------------------------------------------------------------
 
@@ -371,6 +388,10 @@ pub struct Channel {
     /// For sink channels (mixes): the assigned output device node ID.
     /// `None` means no output assigned. Monitor uses OS default.
     pub output_node_id: Option<u32>,
+    /// Apps assigned to this channel. Their PW streams are redirected here
+    /// via `target.object` metadata. Persisted to state.toml.
+    #[serde(default)]
+    pub assigned_apps: Vec<AppAssignment>,
     /// PipeWire ID once the node is created; `None` while pending.
     #[serde(skip)]
     pub pipewire_id: Option<u32>,
@@ -468,6 +489,10 @@ pub struct MixerSession {
     /// Updated from PipeWire metadata `default.audio.sink`.
     #[serde(skip)]
     pub default_output_node_id: Option<u32>,
+    /// Tracks which cell nodes have been created (by "osg.cell.{ch_pw_id}.{mix_pw_id}" name).
+    /// Prevents duplicate creation in the reconciliation loop.
+    #[serde(skip)]
+    pub created_cells: std::collections::HashSet<String>,
 }
 
 // ---------------------------------------------------------------------------

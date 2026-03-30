@@ -114,7 +114,7 @@ impl Master {
                                 _ => {}
                             }
                         }
-                        Err(err) => trace!("Skipping non-audio object: {err:?}"),
+                        Err(err) => debug!("Skipping object {}: {err:?}", global.id),
                     }
                 }
             })
@@ -330,12 +330,12 @@ pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)>
             .map(|end_port| (start[0].id, end_port.id))
             .collect();
     }
-    start
+    let pairs: Vec<(u32, u32)> = start
         .iter()
         .enumerate()
         .filter_map(|(index, start_port)| {
             let start_port_id: u32 = start_port.id;
-            // assume the channel will be at the same index and otherwise search
+            // Try matching by channel name first, then fall back to positional
             let end_port_id: Option<u32> = end
                 .get(index)
                 .and_then(|port| (port.channel == start_port.channel).then_some(port.id))
@@ -351,7 +351,18 @@ pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)>
             }
             Some((start_port_id, end_port_id?))
         })
-        .collect()
+        .collect();
+
+    // Fall back to positional mapping when channel names don't match
+    // (e.g. FL/FR vs AUX0/AUX1 on pro audio hardware)
+    if pairs.is_empty() && !start.is_empty() && !end.is_empty() {
+        return start
+            .iter()
+            .zip(end.iter())
+            .map(|(s, e)| (s.id, e.id))
+            .collect();
+    }
+    pairs
 }
 
 pub fn init_node_listeners(
@@ -601,6 +612,78 @@ pub(super) fn init_mainloop(
                         debug!("[PW] set default.configured.audio.sink: {node_name}");
                     } else {
                         warn!("[PW] no metadata proxy for SetDefaultSink");
+                    }
+                }
+                ToPipewireMessage::CreateCellNode {
+                    name,
+                    channel_node_id,
+                    mix_node_id,
+                } => {
+                    if let Err(err) = super::cell::create_cell_node(
+                        &master.pw_core,
+                        &master.store,
+                        super::cell::CellNodeArgs {
+                            name,
+                            channel_node_id,
+                            mix_node_id,
+                        },
+                    ) {
+                        warn!("[PW] failed to create cell node: {err:?}");
+                    }
+                }
+                ToPipewireMessage::RemoveCellNode { cell_node_id } => {
+                    super::cell::remove_all_source_links(
+                        &master.store,
+                        &master.registry,
+                        cell_node_id,
+                    );
+                    super::cell::remove_all_sink_links(
+                        &master.store,
+                        &master.registry,
+                        cell_node_id,
+                    );
+                    master.registry.destroy_global(cell_node_id);
+                    debug!("[PW] removed cell node {cell_node_id}");
+                }
+                ToPipewireMessage::RedirectStream {
+                    stream_node_id,
+                    target_node_id,
+                } => {
+                    // First disconnect the stream from wherever it's currently linked
+                    super::cell::remove_all_source_links(
+                        &master.store,
+                        &master.registry,
+                        stream_node_id,
+                    );
+                    // Then create links to the target channel node
+                    if let Err(err) =
+                        master.create_node_links(stream_node_id, target_node_id)
+                    {
+                        warn!(
+                            "[PW] failed to create links {stream_node_id} -> {target_node_id}: {err:?}"
+                        );
+                    } else {
+                        debug!(
+                            "[PW] redirect stream {stream_node_id} -> node {target_node_id}"
+                        );
+                    }
+                }
+                ToPipewireMessage::ClearRedirect {
+                    stream_node_id,
+                    target_node_id,
+                } => {
+                    // Remove links between stream and channel. WirePlumber will
+                    // auto-link the stream back to the default sink.
+                    if let Err(err) =
+                        master.remove_node_links(stream_node_id, target_node_id)
+                    {
+                        debug!(
+                            "[PW] no links to clear for {stream_node_id} -> {target_node_id}: {err:?}"
+                        );
+                    } else {
+                        debug!(
+                            "[PW] cleared redirect {stream_node_id} -> {target_node_id}"
+                        );
                     }
                 }
                 ToPipewireMessage::StartPeakMonitor(node_id) => {

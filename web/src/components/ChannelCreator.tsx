@@ -10,12 +10,11 @@ import {
   Bell,
   Gamepad2,
   MessageCircle,
-  Speaker,
   Zap,
   Volume2,
   PenLine,
 } from "lucide-solid";
-import type { App, PwNode, PwDevice, AudioGraph } from "../types";
+import type { PwNode, PwDevice, AudioGraph } from "../types";
 
 const CHANNEL_TEMPLATES = [
   { name: "Music", icon: Music, kind: "duplex" as const },
@@ -108,17 +107,6 @@ export default function ChannelCreator(): JSX.Element {
       );
   };
 
-  const runningApps = () => {
-    const q = search().toLowerCase();
-    return (Object.values(state.session.apps) as App[])
-      .filter((app) => {
-        const display = app.name || app.binary;
-        if (!display || display.includes("(deleted)")) return false;
-        return display.toLowerCase().includes(q);
-      })
-      .sort((a, b) => (a.name || a.binary).localeCompare(b.name || b.binary));
-  };
-
   /** Display names of visible channels — for filtering presets only. */
   const existingChannelNames = () => {
     const names = new Set<string>();
@@ -170,8 +158,7 @@ export default function ChannelCreator(): JSX.Element {
     setSearch("");
   }
 
-  const hasResults = () =>
-    inputDevices().length > 0 || runningApps().length > 0 || availableTemplates().length > 0;
+  const hasResults = () => inputDevices().length > 0 || availableTemplates().length > 0;
 
   return (
     <div class="relative">
@@ -230,32 +217,6 @@ export default function ChannelCreator(): JSX.Element {
                         </span>
                         <span class="rounded-full bg-vu-safe/15 px-1.5 py-0.5 text-[10px] text-vu-safe">
                           input
-                        </span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            </Show>
-
-            {/* Running Apps (backend-detected audio apps) */}
-            <Show when={runningApps().length > 0}>
-              <div class="px-2 pt-2">
-                <div class="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-                  Running Apps
-                </div>
-                <For each={runningApps()}>
-                  {(app) => {
-                    const display = app.name || app.binary;
-                    return (
-                      <button
-                        onClick={() => create(display, "duplex")}
-                        class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
-                      >
-                        <Speaker size={16} class="shrink-0 text-text-muted" />
-                        <span class="flex-1 truncate text-xs text-text-secondary">{display}</span>
-                        <span class="rounded-full bg-accent-secondary/15 px-1.5 py-0.5 text-[10px] text-accent-secondary">
-                          live
                         </span>
                       </button>
                     );

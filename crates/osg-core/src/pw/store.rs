@@ -23,6 +23,24 @@ use super::{
     pod::{DeviceActiveRoute, NodeProps, build_node_mute_pod, build_node_volume_pod},
 };
 
+/// Wrapper to hold cell node proxies alive without requiring Debug.
+pub(super) struct CellProxies(Vec<(pipewire::node::Node, pipewire::proxy::ProxyListener)>);
+
+impl CellProxies {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub(super) fn push(&mut self, item: (pipewire::node::Node, pipewire::proxy::ProxyListener)) {
+        self.0.push(item);
+    }
+}
+
+impl std::fmt::Debug for CellProxies {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CellProxies({})", self.0.len())
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Store {
     pub(super) osg_client_id: Option<u32>,
@@ -39,6 +57,11 @@ pub(super) struct Store {
     pub(super) default_sink_name: Option<String>,
     /// PipeWire node name of the OS default audio source (mic).
     pub(super) default_source_name: Option<String>,
+    /// Keep cell node proxies alive — dropping them destroys the PW objects.
+    /// Not Debug because ProxyListener doesn't implement it.
+    pub(super) cell_proxies: CellProxies,
+    /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
+    pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
 }
 
 impl Store {
@@ -53,6 +76,8 @@ impl Store {
             links: HashMap::new(),
             default_sink_name: None,
             default_source_name: None,
+            cell_proxies: CellProxies::new(),
+            cell_node_ids: HashMap::new(),
         }
     }
 
@@ -207,6 +232,11 @@ impl Store {
         }
 
         // Add the node
+        tracing::debug!(
+            "[Store] add_node id={} name={:?}",
+            node.id,
+            node.identifier.node_name()
+        );
         self.nodes.insert(node.id, node);
         Ok(())
     }
@@ -416,6 +446,7 @@ impl Store {
             links: self.links.iter().map(|(id, link)| (*id, link.without_proxy())).collect(),
             default_sink_name: self.default_sink_name.clone(),
             default_source_name: self.default_source_name.clone(),
+            cell_node_ids: self.cell_node_ids.clone(),
         }
     }
 }
