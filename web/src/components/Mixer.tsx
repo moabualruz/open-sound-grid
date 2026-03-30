@@ -81,17 +81,14 @@ export default function Mixer() {
     return sinkChannels();
   };
 
-  // TODO(backend): persist channel/mix order to settings.toml
-  const [channelOrder, setChannelOrder] = createSignal<string[]>([]);
-  const [mixOrder, setMixOrder] = createSignal<string[]>([]);
-
   const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
 
-  function applyOrder(items: EndpointEntry[], order: string[]): EndpointEntry[] {
+  function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): EndpointEntry[] {
     if (order.length === 0) return items;
+    const orderKeys = order.map(descKey);
     const byKey = new Map(items.map((item) => [descKey(item.desc), item]));
     const ordered: EndpointEntry[] = [];
-    for (const key of order) {
+    for (const key of orderKeys) {
       const item = byKey.get(key);
       if (item) {
         ordered.push(item);
@@ -102,13 +99,17 @@ export default function Mixer() {
     return ordered;
   }
 
-  const channels = createMemo(() => applyOrder(rawChannels(), channelOrder()));
+  const channels = createMemo(() => applyOrder(rawChannels(), state.session.displayOrder));
   const mixes = createMemo(() =>
     applyOrder(
       rawMixes().filter((m): m is { desc: EndpointDescriptor; ep: Endpoint } => m.ep != null),
-      mixOrder(),
+      state.session.displayOrder,
     ),
   );
+
+  function persistOrder(reordered: EndpointEntry[]) {
+    send({ type: "setDisplayOrder", order: reordered.map((item) => item.desc) });
+  }
 
   // TODO(backend): persist output device assignments to settings.toml
   const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
@@ -190,7 +191,7 @@ export default function Mixer() {
               <DragReorder
                 items={mixes()}
                 keyFn={(m) => descKey(m.desc)}
-                onReorder={(reordered) => setMixOrder(reordered.map((m) => descKey(m.desc)))}
+                onReorder={persistOrder}
                 direction="horizontal"
               >
                 {(mix, _idx, dragHandle) => {
@@ -224,7 +225,7 @@ export default function Mixer() {
               <DragReorder
                 items={channels()}
                 keyFn={(ch) => descKey(ch.desc)}
-                onReorder={(reordered) => setChannelOrder(reordered.map((ch) => descKey(ch.desc)))}
+                onReorder={persistOrder}
               >
                 {(ch, _idx, dragHandle) => (
                   <div class="flex items-stretch gap-2">
