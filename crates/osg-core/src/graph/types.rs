@@ -465,9 +465,8 @@ pub fn average_volumes<'a>(volumes: impl IntoIterator<Item = &'a f32>) -> f32 {
 /// True when not all channel volumes are the same.
 pub fn volumes_mixed<'a>(volumes: impl IntoIterator<Item = &'a f32>) -> bool {
     let mut iterator = volumes.into_iter();
-    let first = match iterator.next() {
-        Some(first) => first,
-        _ => return false,
+    let Some(first) = iterator.next() else {
+        return false;
     };
     // NOTE: Original Sonusmix logic returns `all(|x| x == first)` — which is
     // true when volumes are NOT mixed. We preserve the original behavior here

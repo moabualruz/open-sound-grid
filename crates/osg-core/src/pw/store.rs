@@ -257,21 +257,22 @@ impl Store {
         Ok(())
     }
 
+    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its param event
     pub(super) fn update_node_param(&mut self, _type_: ParamType, id: u32, pod: Option<&Pod>) {
         // abort if no pod is available
-        let pod = match pod {
-            Some(p) => p,
-            None => return,
+        let Some(pod) = pod else {
+            return;
         };
 
         let node = self
             .nodes
             .get_mut(&id)
-            .expect("The node was destroyed unexpectedly");
+            .expect("node must exist when receiving its param update");
 
         // deserialize the pod
         let (_, value) =
-            PodDeserializer::deserialize_any_from(pod.as_bytes()).expect("Deserialization failed");
+            PodDeserializer::deserialize_any_from(pod.as_bytes())
+                .expect("PW-provided pod bytes must be deserializable");
 
         let node_props = NodeProps::new(value);
 
@@ -283,6 +284,7 @@ impl Store {
         }
     }
 
+    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its info event
     pub(super) fn update_node_info(&mut self, node_info: &NodeInfoRef) {
         let Some(props) = node_info.props() else {
             return;
@@ -290,7 +292,7 @@ impl Store {
         let node = self
             .nodes
             .get_mut(&node_info.id())
-            .expect("The node was destroyed unexpectedly");
+            .expect("node must exist when receiving its param update");
         if let EndpointId::Device { device_index, .. } = &mut node.endpoint
             && let Some(idx) = props
                 .get("card.profile.device")
@@ -302,7 +304,7 @@ impl Store {
     }
 
     pub(super) fn set_node_volume(
-        &mut self,
+        &self,
         id: u32,
         channel_volumes: Vec<f32>,
     ) -> Result<(), PwError> {
@@ -336,7 +338,7 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn set_node_mute(&mut self, id: u32, mute: bool) -> Result<(), PwError> {
+    pub(super) fn set_node_mute(&self, id: u32, mute: bool) -> Result<(), PwError> {
         let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
 
         if let EndpointId::Device {
@@ -366,6 +368,8 @@ impl Store {
         Ok(())
     }
 
+    #[allow(clippy::expect_used)] // PW guarantees the device exists when dispatching its param event
+    #[allow(clippy::too_many_arguments)] // Matches PW callback signature
     pub(super) fn update_device_param(
         &mut self,
         _type_: ParamType,
@@ -376,7 +380,7 @@ impl Store {
         let device = self
             .devices
             .get_mut(&id)
-            .expect("The device was destroyed unexpectedly");
+            .expect("device must exist when receiving its param update");
 
         // If index is 0, clear as we assume more routes will be coming later if there are more
         if index == 0 {
@@ -384,9 +388,8 @@ impl Store {
         }
 
         // abort if no pod is available
-        let pod = match pod {
-            Some(p) => p,
-            None => return,
+        let Some(pod) = pod else {
+            return;
         };
 
         // Deserialize the pod

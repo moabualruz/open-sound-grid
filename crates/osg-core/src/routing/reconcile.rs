@@ -25,6 +25,7 @@ use itertools::Itertools;
 
 /// Stateless domain service. Reads MixerSession + AudioGraph, emits corrective commands.
 /// PipeWire: no equivalent — this is our domain reconciliation logic.
+#[allow(missing_debug_implementations)] // Stateless service, no fields to debug
 pub struct ReconciliationService;
 
 impl ReconciliationService {
@@ -127,6 +128,7 @@ impl MixerSession {
     // diff_channels — ensure virtual channels exist in PipeWire
     // -----------------------------------------------------------------------
 
+    #[allow(clippy::expect_used)] // channel keys come from self.channels iteration
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
@@ -219,10 +221,12 @@ impl MixerSession {
                         }),
                 );
                 // Push desired mute state.
+                // Locked endpoints cannot be in MuteMixed state (lock() returns None for it)
+                #[allow(clippy::expect_used)]
                 let endpoint_muted = endpoint
                     .volume_locked_muted
                     .is_muted()
-                    .expect("mute should not be mixed when locked");
+                    .expect("locked endpoint cannot be MuteMixed");
                 messages.extend(
                     nodes
                         .iter()
@@ -252,6 +256,7 @@ impl MixerSession {
     // -----------------------------------------------------------------------
 
     /// Reconcile the link state between desired and actual PipeWire graphs.
+    #[allow(clippy::too_many_lines)] // Single match-driven reconciliation loop
     pub fn diff_links(
         &mut self,
         graph: &AudioGraph,
@@ -438,7 +443,7 @@ impl MixerSession {
     // -----------------------------------------------------------------------
 
     /// Find all PipeWire links between any two active endpoints.
-    #[allow(clippy::type_complexity)]
+    #[allow(clippy::type_complexity, clippy::unused_self)]
     fn find_relevant_links<'a>(
         &self,
         graph: &'a AudioGraph,
@@ -477,6 +482,7 @@ impl MixerSession {
     }
 
     /// Generate commands to remove PW links between two endpoints.
+    #[allow(clippy::too_many_arguments)]
     pub fn remove_pipewire_node_links(
         &self,
         graph: &AudioGraph,

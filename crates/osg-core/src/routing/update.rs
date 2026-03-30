@@ -16,6 +16,7 @@ use crate::routing::messages::{StateMsg, StateOutputMsg};
 impl MixerSession {
     /// Process a single state-mutation message. Returns an optional output
     /// notification and a vec of PipeWire commands to send immediately.
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     pub fn update(
         &mut self,
         graph: &AudioGraph,

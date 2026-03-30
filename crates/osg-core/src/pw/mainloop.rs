@@ -43,7 +43,7 @@ impl Master {
 
     /// Listen for info events on the core.
     /// see [Core::add_listener_local()]
-    fn init_core_listeners(&mut self) -> pipewire::core::Listener {
+    fn init_core_listeners(&self) -> pipewire::core::Listener {
         self.pw_core
             .add_listener_local()
             .info({
@@ -66,7 +66,7 @@ impl Master {
 
     /// Listen for new events in the registry.
     /// see [Registry::add_listener_local()]
-    fn registry_listener(&mut self) -> pipewire::registry::Listener {
+    fn registry_listener(&self) -> pipewire::registry::Listener {
         self.registry
             .add_listener_local()
             .global({
@@ -99,7 +99,7 @@ impl Master {
 
     /// Listen for remove events in the registry.
     /// See [Registry::add_listener_local()]
-    fn registry_remove_listener(&mut self) -> pipewire::registry::Listener {
+    fn registry_remove_listener(&self) -> pipewire::registry::Listener {
         self.registry
             .add_listener_local()
             .global_remove({
@@ -384,7 +384,7 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_lines, clippy::cognitive_complexity)]
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
 ) -> Result<
@@ -426,21 +426,18 @@ pub(super) fn init_mainloop(
         // If there was an error, report it and exit
         let (mainloop, _context, pw_core, registry) = match init_result {
             Ok(result) => {
-                init_status_tx.send(Ok(())).expect(
-                    "If the init_status receiver has been dropped something has gone very wrong",
-                );
+                // Receiver dropped means caller already gave up — nothing we can do
+                let _ = init_status_tx.send(Ok(()));
                 result
             }
             Err(err) => {
-                init_status_tx.send(Err(err)).expect(
-                    "If the init_status receiver has been dropped something has gone very wrong",
-                );
+                let _ = init_status_tx.send(Err(err));
                 return;
             }
         };
 
         // init registry listener
-        let mut master = Master::new(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
+        let master = Master::new(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
 
         let _listener = master.registry_listener();
         let _remove_listener = master.registry_remove_listener();

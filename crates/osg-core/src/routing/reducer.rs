@@ -25,6 +25,7 @@ const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(16);
 
 /// The public handle to the reducer. Cheap to clone.
 #[derive(Clone)]
+#[allow(missing_debug_implementations)] // Contains channel senders which are not Debug
 pub struct ReducerHandle {
     msg_tx: mpsc::UnboundedSender<ReducerMsg>,
     state_rx: watch::Receiver<Arc<MixerSession>>,
@@ -114,6 +115,7 @@ pub fn debounced_graph_sender(
 ///
 /// `pw_sender` is used to push corrective commands to PipeWire.
 /// `settings_rx` receives updated `ReconcileSettings` from the config layer.
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 pub async fn run_reducer(
     pw_sender: std::sync::mpsc::Sender<ToPipewireMessage>,
     initial_settings: ReconcileSettings,

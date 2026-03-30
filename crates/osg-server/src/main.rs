@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use osg_core::OsgCore;
 
+#[allow(missing_debug_implementations)]
 struct AppState {
     core: OsgCore,
 }
@@ -34,10 +35,14 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let listener = TcpListener::bind("127.0.0.1:9100").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:9100")
+        .await
+        .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("bind failed: {e}")))?;
     tracing::info!("Listening on http://127.0.0.1:9100");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("serve failed: {e}")))?;
 
     Ok(())
 }

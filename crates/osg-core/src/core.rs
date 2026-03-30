@@ -14,6 +14,7 @@ use crate::pw::{AudioGraph, PipewireHandle, PwError, ToPipewireMessage};
 ///
 /// Connects to the running PipeWire daemon, watches the graph,
 /// and exposes state via snapshot + broadcast channel.
+#[allow(missing_debug_implementations)] // Contains PipewireHandle which holds thread handles
 pub struct OsgCore {
     _pw_handle: PipewireHandle,
     graph: Arc<Mutex<AudioGraph>>,
@@ -40,7 +41,11 @@ impl OsgCore {
             (pw_sender_clone, pw_receiver),
             move |new_graph| {
                 let snapshot = *new_graph;
-                *graph_clone.lock().unwrap() = snapshot.clone();
+                // Mutex should never be poisoned — only held briefly for snapshot assignment
+                #[allow(clippy::unwrap_used)]
+                {
+                    *graph_clone.lock().unwrap() = snapshot.clone();
+                }
                 // Broadcast to all subscribers (ignore error if no receivers)
                 let _ = tx_clone.send(snapshot);
             },
@@ -58,6 +63,8 @@ impl OsgCore {
 
     /// Get a snapshot of the current PipeWire graph state.
     pub fn snapshot(&self) -> AudioGraph {
+        // Mutex should never be poisoned — only held briefly for snapshot reads
+        #[allow(clippy::unwrap_used)]
         self.graph.lock().unwrap().clone()
     }
 

@@ -32,18 +32,23 @@ pub mod parse {
     /// certain format, but may only exist behind a reference. Therefore, a function cannot return
     /// a [`Pod`] directly. Instead, this type owns those bytes until the [`Pod`] is needed,
     /// similar to what a [`String`] does for a [`&str`].
+    #[allow(missing_debug_implementations)] // Opaque byte buffer, Debug would just show hex
     pub struct PodBytes(Box<[u8]>);
 
     impl PodBytes {
         pub fn from_value(value: &Value) -> Self {
             let mut bytes = Vec::new();
+            // Serializing to a Vec<u8> is infallible in practice
+            #[allow(clippy::expect_used)]
             PodSerializer::serialize(Cursor::new(&mut bytes), value)
-                .expect("A Vec should not have any errors serializing");
+                .expect("Vec<u8> serialization is infallible");
             Self(bytes.into_boxed_slice())
         }
 
         pub fn pod(&self) -> &Pod {
-            Pod::from_bytes(&self.0).expect("Internal bytes are known to be a well-formed Pod")
+            // Internal bytes are guaranteed to be well-formed from PodSerializer
+            #[allow(clippy::expect_used)]
+            Pod::from_bytes(&self.0).expect("internal bytes are known well-formed")
         }
     }
 
@@ -136,8 +141,8 @@ pub mod parse {
         }
     }
 
-    // Safety: This is a known ASCII string, so unwrap is safe.
-    // Using match because const context cannot use .unwrap().
+    // Safety: Known ASCII string; using match because const context cannot use .unwrap().
+    #[allow(clippy::panic)] // const context requires panic! for the unreachable branch
     pub const STRUCT_KEY_DEVICE_ICON_NAME: &str = match c"device.icon-name".to_str() {
         Ok(s) => s,
         Err(_) => panic!("DEVICE_ICON_NAME key is not valid UTF-8"),

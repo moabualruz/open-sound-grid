@@ -547,6 +547,7 @@ impl Link {
 }
 
 impl Link<()> {
+    #[allow(clippy::too_many_arguments)] // Test-only constructor, clarity over parameter count
     pub fn new_test(
         id: u32,
         start_node: u32,

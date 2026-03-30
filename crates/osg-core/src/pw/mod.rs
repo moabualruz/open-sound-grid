@@ -77,6 +77,7 @@ pub enum GroupNodeKind {
     Sink,
 }
 
+#[allow(missing_debug_implementations)] // Contains thread JoinHandles which are not Debug
 pub struct PipewireHandle {
     pipewire_thread_handle: Option<thread::JoinHandle<()>>,
     adapter_thread_handle: Option<thread::JoinHandle<Result<(), PipewireChannelError>>>,
@@ -103,6 +104,7 @@ impl PipewireHandle {
     }
 }
 
+#[allow(clippy::cognitive_complexity)] // Drop impl uses let-chains for thread join error handling
 impl Drop for PipewireHandle {
     fn drop(&mut self) {
         let _ = self.pipewire_sender.send(ToPipewireMessage::Exit);
