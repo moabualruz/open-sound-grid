@@ -6,7 +6,7 @@ use pipewire::{
     context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, properties::properties,
     proxy::ProxyT, registry::RegistryRc, spa::param::ParamType, types::ObjectType,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, trace, warn};
 use ulid::Ulid;
 
 use super::{
@@ -50,13 +50,13 @@ impl Master {
                 let store = self.store.clone();
                 let sender = self.sender.clone();
                 move |info| {
-                    debug!("info event: {info:?}");
+                    trace!("info event: {info:?}");
                     store.borrow_mut().set_osg_client_id(info.id());
                     let _ = sender.send(ToPipewireMessage::Update);
                 }
             })
             .done(|id, seq| {
-                debug!("Pipewire done event: {id}, {seq:?}");
+                trace!("Pipewire done event: {id}, {seq:?}");
             })
             .error(|id, seq, res, msg| {
                 error!("Pipewire error event ({id}, {seq}, {res}): {msg:?}");
@@ -323,7 +323,7 @@ pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)>
                     )
                 });
             if end_port_id.is_none() {
-                debug!("Could not find matching end port for {}", start_port_id);
+                trace!("Could not find matching end port for {}", start_port_id);
             }
             Some((start_port_id, end_port_id?))
         })
@@ -453,42 +453,42 @@ pub(super) fn init_mainloop(
                 ToPipewireMessage::Update => update_fn(Box::new(store.borrow().dump_graph())),
                 ToPipewireMessage::NodeVolume(id, volume) => {
                     if let Err(err) = store.borrow_mut().set_node_volume(id, volume) {
-                        error!("Error setting volume: {err:?}");
+                        warn!("Error setting volume: {err:?}");
                     }
                 }
                 ToPipewireMessage::NodeMute(id, mute) => {
                     if let Err(err) = store.borrow_mut().set_node_mute(id, mute) {
-                        error!("Error setting mute: {err:?}");
+                        warn!("Error setting mute: {err:?}");
                     }
                 }
                 ToPipewireMessage::CreatePortLink { start_id, end_id } => {
                     if let Err(err) = master.create_port_link(start_id, end_id) {
-                        error!("Error creating port link: {err:?}");
+                        warn!("Error creating port link: {err:?}");
                     };
                 }
                 ToPipewireMessage::CreateNodeLinks { start_id, end_id } => {
                     if let Err(err) = master.create_node_links(start_id, end_id) {
-                        error!("Error creating node links: {err:?}");
+                        warn!("Error creating node links: {err:?}");
                     };
                 }
                 ToPipewireMessage::RemovePortLink { start_id, end_id } => {
                     if let Err(err) = master.remove_port_link(start_id, end_id) {
-                        error!("Error removing port link: {err:?}");
+                        warn!("Error removing port link: {err:?}");
                     };
                 }
                 ToPipewireMessage::RemoveNodeLinks { start_id, end_id } => {
                     if let Err(err) = master.remove_node_links(start_id, end_id) {
-                        error!("Error removing node links: {err:?}");
+                        warn!("Error removing node links: {err:?}");
                     };
                 }
                 ToPipewireMessage::CreateGroupNode(name, id, kind) => {
                     if let Err(err) = master.create_group_node(name, id, kind) {
-                        error!("Error creating group node: {err:?}");
+                        warn!("Error creating group node: {err:?}");
                     }
                 }
                 ToPipewireMessage::RemoveGroupNode(name) => {
                     if let Err(err) = master.remove_group_node(name) {
-                        error!("Error removing group node: {err:?}");
+                        warn!("Error removing group node: {err:?}");
                     }
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),

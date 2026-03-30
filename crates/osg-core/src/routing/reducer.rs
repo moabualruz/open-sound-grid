@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::config::{PersistentSettings, PersistentState};
 use crate::graph::{DesiredState, ReconcileSettings};
@@ -124,7 +124,7 @@ pub async fn run_reducer(
     let initial_state = match PersistentState::load() {
         Ok(ps) => ps.into_state(),
         Err(err) => {
-            error!("[Reducer] failed to load persistent state: {err:#}");
+            warn!("[Reducer] failed to load persistent state: {err:#}");
             DesiredState::default()
         }
     };
@@ -149,11 +149,11 @@ pub async fn run_reducer(
         let save = |state: &DesiredState, s: &ReconcileSettings| {
             let ps = PersistentState::from_state(state.clone());
             if let Err(err) = ps.save() {
-                error!("[Reducer] save state error: {err:#}");
+                warn!("[Reducer] save state error: {err:#}");
             }
             let ps = PersistentSettings::from_settings(s.clone());
             if let Err(err) = ps.save() {
-                error!("[Reducer] save settings error: {err:#}");
+                warn!("[Reducer] save settings error: {err:#}");
             }
         };
 

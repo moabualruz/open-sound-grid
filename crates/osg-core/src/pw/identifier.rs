@@ -10,6 +10,7 @@ use super::PortKind;
 /// Handles parsing all of the identifying fields on a Node, and uses them to generate different
 /// identifiers. Only serializes fields relevant to identifying the node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NodeIdentifier {
     is_monitor: bool,
     node_name: Option<String>,

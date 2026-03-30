@@ -18,6 +18,7 @@ use crate::pw::{GroupNodeKind, NodeIdentifier, PortKind};
 
 /// Opaque ID for a persistent (name-matched) node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PersistentNodeId(Ulid);
 
 #[allow(clippy::new_without_default)]
@@ -31,12 +32,13 @@ impl PersistentNodeId {
     }
 }
 
-/// Opaque ID for a virtual group node managed by OSG.
+/// Unique ID for a Channel. PipeWire: GroupNode ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct GroupNodeId(Ulid);
+#[serde(rename_all = "camelCase")]
+pub struct ChannelId(Ulid);
 
 #[allow(clippy::new_without_default)]
-impl GroupNodeId {
+impl ChannelId {
     pub fn new() -> Self {
         Self(Ulid::new())
     }
@@ -46,12 +48,13 @@ impl GroupNodeId {
     }
 }
 
-/// Opaque ID for an application (all nodes sharing the same binary+name).
+/// Unique ID for a detected audio app. PipeWire: Client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ApplicationId(Ulid);
+#[serde(rename_all = "camelCase")]
+pub struct AppId(Ulid);
 
 #[allow(clippy::new_without_default)]
-impl ApplicationId {
+impl AppId {
     pub fn new() -> Self {
         Self(Ulid::new())
     }
@@ -59,6 +62,7 @@ impl ApplicationId {
 
 /// Opaque ID for a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceId(Ulid);
 
 // ---------------------------------------------------------------------------
@@ -69,6 +73,7 @@ pub struct DeviceId(Ulid);
 /// This might be a single node, a virtual group, or all sources/sinks
 /// belonging to an application or device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum EndpointDescriptor {
     /// A single node identified only by its PipeWire ID.
     /// Cannot survive PipeWire restarts.
@@ -77,22 +82,22 @@ pub enum EndpointDescriptor {
     /// re-matched after PipeWire restarts.
     PersistentNode(PersistentNodeId, PortKind),
     /// A virtual node created and managed by OSG.
-    GroupNode(GroupNodeId),
+    Channel(ChannelId),
     /// All sources or sinks (minus explicit exceptions) for an application.
-    Application(ApplicationId, PortKind),
+    App(AppId, PortKind),
     /// All sources or sinks for a device.
     Device(DeviceId, PortKind),
 }
 
 impl EndpointDescriptor {
     /// Whether this endpoint can carry traffic of the given `kind`.
-    /// Group nodes are bidirectional and match both.
+    /// Channels are bidirectional and match both.
     pub fn is_kind(&self, kind: PortKind) -> bool {
         match self {
-            Self::GroupNode(_) => true,
+            Self::Channel(_) => true,
             Self::EphemeralNode(_, k)
             | Self::PersistentNode(_, k)
-            | Self::Application(_, k)
+            | Self::App(_, k)
             | Self::Device(_, k) => *k == kind,
         }
     }
@@ -100,19 +105,19 @@ impl EndpointDescriptor {
     /// True when the endpoint appears in the source/sink list of the given kind.
     pub fn is_list(&self, kind: PortKind) -> bool {
         match self {
-            Self::GroupNode(_) => false,
+            Self::Channel(_) => false,
             Self::EphemeralNode(_, k)
             | Self::PersistentNode(_, k)
-            | Self::Application(_, k)
+            | Self::App(_, k)
             | Self::Device(_, k) => *k == kind,
         }
     }
 
-    /// True for single-node endpoints (ephemeral, persistent, group).
+    /// True for single-node endpoints (ephemeral, persistent, channel).
     pub fn is_single(&self) -> bool {
         matches!(
             self,
-            Self::EphemeralNode(..) | Self::PersistentNode(..) | Self::GroupNode(_)
+            Self::EphemeralNode(..) | Self::PersistentNode(..) | Self::Channel(_)
         )
     }
 }
@@ -122,6 +127,7 @@ impl EndpointDescriptor {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Endpoint {
     pub descriptor: EndpointDescriptor,
     pub is_placeholder: bool,
@@ -208,6 +214,7 @@ impl Endpoint {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Link {
     pub start: EndpointDescriptor,
     pub end: EndpointDescriptor,
@@ -220,6 +227,7 @@ pub struct Link {
 /// The desired link state. There is no "DisconnectedUnlocked" variant;
 /// a link in that state is simply absent from the state vec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum LinkState {
     /// Some but not all matching node-port pairs are connected.
     PartiallyConnected,
@@ -255,6 +263,7 @@ impl LinkState {
 /// others are not ("MuteMixed"). A user cannot input this state and cannot
 /// lock volume while in it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum VolumeLockMuteState {
     MuteMixed,
     MutedLocked,
@@ -317,12 +326,14 @@ impl VolumeLockMuteState {
 }
 
 // ---------------------------------------------------------------------------
-// GroupNode — virtual node managed by OSG
+// Channel — user-created virtual audio bus
 // ---------------------------------------------------------------------------
 
+/// User-created virtual audio bus. PipeWire: null-audio-sink / GroupNode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupNode {
-    pub id: GroupNodeId,
+#[serde(rename_all = "camelCase")]
+pub struct Channel {
+    pub id: ChannelId,
     pub kind: GroupNodeKind,
     /// PipeWire ID once the node is created; `None` while pending.
     #[serde(skip)]
@@ -333,12 +344,14 @@ pub struct GroupNode {
 }
 
 // ---------------------------------------------------------------------------
-// Application — all nodes sharing the same binary+name
+// App — running application emitting audio
 // ---------------------------------------------------------------------------
 
+/// Running application emitting audio. PipeWire: Client/Stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Application {
-    pub id: ApplicationId,
+#[serde(rename_all = "camelCase")]
+pub struct App {
+    pub id: AppId,
     pub kind: PortKind,
     #[serde(skip)]
     pub is_active: bool,
@@ -348,7 +361,7 @@ pub struct Application {
     pub exceptions: Vec<EndpointDescriptor>,
 }
 
-impl Application {
+impl App {
     pub fn new_inactive(
         application_name: String,
         binary: String,
@@ -356,7 +369,7 @@ impl Application {
         kind: PortKind,
     ) -> Self {
         Self {
-            id: ApplicationId::new(),
+            id: AppId::new(),
             kind,
             is_active: false,
             name: application_name,
@@ -382,6 +395,7 @@ impl Application {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Device;
 
 // ---------------------------------------------------------------------------
@@ -389,6 +403,7 @@ pub struct Device;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesiredState {
     pub active_sources: Vec<EndpointDescriptor>,
     pub active_sinks: Vec<EndpointDescriptor>,
@@ -398,9 +413,9 @@ pub struct DesiredState {
     pub links: Vec<Link>,
     /// Mapping from persistent node IDs to their identifiers.
     pub persistent_nodes: HashMap<PersistentNodeId, (NodeIdentifier, PortKind)>,
-    pub applications: HashMap<ApplicationId, Application>,
+    pub apps: HashMap<AppId, App>,
     pub devices: HashMap<DeviceId, Device>,
-    pub group_nodes: IndexMap<GroupNodeId, GroupNode>,
+    pub channels: IndexMap<ChannelId, Channel>,
 }
 
 // ---------------------------------------------------------------------------
@@ -408,10 +423,11 @@ pub struct DesiredState {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReconcileSettings {
     pub lock_endpoint_connections: bool,
     pub lock_group_node_connections: bool,
-    pub application_sources_include_monitors: bool,
+    pub app_sources_include_monitors: bool,
     pub volume_limit: f64,
 }
 
@@ -420,7 +436,7 @@ impl Default for ReconcileSettings {
         Self {
             lock_endpoint_connections: false,
             lock_group_node_connections: true,
-            application_sources_include_monitors: false,
+            app_sources_include_monitors: false,
             volume_limit: 100.0,
         }
     }

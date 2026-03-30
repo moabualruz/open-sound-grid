@@ -2,7 +2,7 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{ApplicationId, EndpointDescriptor, GroupNodeId};
+use crate::graph::{AppId, ChannelId, EndpointDescriptor};
 use crate::pw::{GroupNodeKind, PortKind};
 
 // ---------------------------------------------------------------------------
@@ -13,15 +13,15 @@ use crate::pw::{GroupNodeKind, PortKind};
 #[derive(Debug, Clone)]
 pub enum StateMsg {
     AddEphemeralNode(u32, PortKind),
-    AddApplication(ApplicationId, PortKind),
-    AddGroupNode(String, GroupNodeKind),
+    AddApp(AppId, PortKind),
+    AddChannel(String, GroupNodeKind),
     RemoveEndpoint(EndpointDescriptor),
     SetVolume(EndpointDescriptor, f32),
     SetMute(EndpointDescriptor, bool),
     SetVolumeLocked(EndpointDescriptor, bool),
     /// `None` resets to the default display name.
     RenameEndpoint(EndpointDescriptor, Option<String>),
-    ChangeGroupNodeKind(GroupNodeId, GroupNodeKind),
+    ChangeChannelKind(ChannelId, GroupNodeKind),
     Link(EndpointDescriptor, EndpointDescriptor),
     RemoveLink(EndpointDescriptor, EndpointDescriptor),
     SetLinkLocked(EndpointDescriptor, EndpointDescriptor, bool),

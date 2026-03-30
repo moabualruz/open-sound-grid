@@ -7,7 +7,7 @@ use itertools::Itertools;
 use tracing::{error, warn};
 
 use crate::graph::{
-    DesiredState, Endpoint, EndpointDescriptor, GroupNode, GroupNodeId, Link, LinkState,
+    Channel, ChannelId, DesiredState, Endpoint, EndpointDescriptor, Link, LinkState,
     ReconcileSettings, average_volumes,
 };
 use crate::pw::{Graph, PortKind, ToPipewireMessage};
@@ -57,9 +57,9 @@ impl DesiredState {
                         PortKind::Sink => self.active_sinks.push(descriptor),
                     }
 
-                    // If the node matches an existing application, add as exception.
+                    // If the node matches an existing app, add as exception.
                     if let Some(app) = self
-                        .applications
+                        .apps
                         .values_mut()
                         .find(|a| a.is_active && a.matches(&node.identifier, kind))
                     {
@@ -69,12 +69,12 @@ impl DesiredState {
                     Some(StateOutputMsg::EndpointAdded(descriptor))
                 }
 
-                StateMsg::AddGroupNode(name, kind) => {
-                    let id = GroupNodeId::new();
-                    let descriptor = EndpointDescriptor::GroupNode(id);
-                    self.group_nodes.insert(
+                StateMsg::AddChannel(name, kind) => {
+                    let id = ChannelId::new();
+                    let descriptor = EndpointDescriptor::Channel(id);
+                    self.channels.insert(
                         id,
-                        GroupNode {
+                        Channel {
                             id,
                             kind,
                             pipewire_id: None,
@@ -89,21 +89,21 @@ impl DesiredState {
                     Some(StateOutputMsg::EndpointAdded(descriptor))
                 }
 
-                StateMsg::AddApplication(id, kind) => {
-                    let Some(mut application) = self.applications.get(&id).cloned() else {
-                        error!("[State] cannot add application {id:?}: not in state");
+                StateMsg::AddApp(id, kind) => {
+                    let Some(mut app) = self.apps.get(&id).cloned() else {
+                        error!("[State] cannot add app {id:?}: not in state");
                         break 'handler None;
                     };
 
-                    let descriptor = EndpointDescriptor::Application(id, kind);
-                    application.is_active = true;
+                    let descriptor = EndpointDescriptor::App(id, kind);
+                    app.is_active = true;
                     match kind {
                         PortKind::Source => self.active_sources.push(descriptor),
                         PortKind::Sink => self.active_sinks.push(descriptor),
                     }
 
                     // Add matching existing endpoints as exceptions.
-                    application.exceptions = self
+                    app.exceptions = self
                         .active_sources
                         .iter()
                         .chain(self.active_sinks.iter())
@@ -114,17 +114,17 @@ impl DesiredState {
                                 .resolve_endpoint(*ep, graph, settings)
                                 .into_iter()
                                 .flatten()
-                                .any(|n| application.matches(&n.identifier, kind)),
+                                .any(|n| app.matches(&n.identifier, kind)),
                             _ => false,
                         })
                         .collect();
 
-                    self.applications.insert(id, application.clone());
+                    self.apps.insert(id, app.clone());
                     self.endpoints.insert(
                         descriptor,
                         Endpoint::new(descriptor)
-                            .with_display_name(application.name_with_tag())
-                            .with_icon_name(application.icon_name),
+                            .with_display_name(app.name_with_tag())
+                            .with_icon_name(app.icon_name),
                     );
 
                     Some(StateOutputMsg::EndpointAdded(descriptor))
@@ -139,27 +139,27 @@ impl DesiredState {
                     self.active_sources.retain(|e| *e != ep);
                     self.active_sinks.retain(|e| *e != ep);
 
-                    for app in self.applications.values_mut() {
+                    for app in self.apps.values_mut() {
                         app.exceptions.retain(|e| *e != ep);
                     }
 
                     match ep {
                         EndpointDescriptor::EphemeralNode(..) => {}
-                        EndpointDescriptor::GroupNode(id) => {
-                            if self.group_nodes.shift_remove(&id).is_none() {
-                                warn!("[State] group node {id:?} was not in state");
+                        EndpointDescriptor::Channel(id) => {
+                            if self.channels.shift_remove(&id).is_none() {
+                                warn!("[State] channel {id:?} was not in state");
                             }
                             pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
                         }
-                        EndpointDescriptor::Application(id, _) => {
+                        EndpointDescriptor::App(id, _) => {
                             if self.resolve_endpoint(ep, graph, settings).is_some() {
-                                if let Some(app) = self.applications.get_mut(&id) {
+                                if let Some(app) = self.apps.get_mut(&id) {
                                     app.is_active = false;
                                 } else {
-                                    error!("[State] application {id:?} missing");
+                                    error!("[State] app {id:?} missing");
                                 }
                             } else {
-                                self.applications.remove(&id);
+                                self.apps.remove(&id);
                             }
                         }
                         _ => {
@@ -394,26 +394,26 @@ impl DesiredState {
                     None
                 }
 
-                StateMsg::ChangeGroupNodeKind(id, kind) => {
-                    if let Some(gn) = self.group_nodes.get_mut(&id)
-                        && kind != gn.kind
+                StateMsg::ChangeChannelKind(id, kind) => {
+                    if let Some(ch) = self.channels.get_mut(&id)
+                        && kind != ch.kind
                     {
                         pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
-                        gn.kind = kind;
-                        gn.pending = false;
+                        ch.kind = kind;
+                        ch.pending = false;
                     }
                     None
                 }
 
-                StateMsg::RenameEndpoint(descriptor @ EndpointDescriptor::GroupNode(id), name) => {
-                    if let (Some(endpoint), Some(gn)) = (
+                StateMsg::RenameEndpoint(descriptor @ EndpointDescriptor::Channel(id), name) => {
+                    if let (Some(endpoint), Some(ch)) = (
                         self.endpoints.get_mut(&descriptor),
-                        self.group_nodes.get_mut(&id),
+                        self.channels.get_mut(&id),
                     ) && let Some(name) = name.filter(|n| *n != endpoint.display_name)
                     {
                         pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
                         endpoint.display_name = name;
-                        gn.pending = false;
+                        ch.pending = false;
                     }
                     None
                 }

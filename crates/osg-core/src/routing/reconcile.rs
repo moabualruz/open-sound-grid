@@ -6,14 +6,14 @@
 //
 // Key concepts:
 //   * `diff_nodes`      — resolve endpoints to PW nodes, mark placeholders
-//   * `diff_group_nodes`— ensure virtual group nodes exist in PW
+//   * `diff_channels`   — ensure virtual channels exist in PW
 //   * `diff_properties` — reconcile volume / mute between desired & actual
 //   * `diff_links`      — reconcile connections, respecting lock state
 
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    Application, DesiredState, EndpointDescriptor, Link, LinkState, PersistentNodeId,
+    App, DesiredState, EndpointDescriptor, Link, LinkState, PersistentNodeId,
     ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{Graph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
@@ -27,7 +27,7 @@ impl DesiredState {
     /// Run the full reconciliation pass. Returns PipeWire commands to execute.
     pub fn diff(&mut self, graph: &Graph, settings: &ReconcileSettings) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
-        let mut messages = self.diff_group_nodes(&endpoint_nodes);
+        let mut messages = self.diff_channels(&endpoint_nodes);
         messages.extend(self.diff_properties(&endpoint_nodes));
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages
@@ -39,7 +39,7 @@ impl DesiredState {
 
     /// Try to resolve each endpoint to one or more PipeWire nodes.
     /// Unresolvable endpoints are marked as placeholders. Leftover PW nodes
-    /// become candidates. Applications are discovered/updated.
+    /// become candidates. Apps are discovered/updated.
     pub fn diff_nodes<'a>(
         &mut self,
         graph: &'a Graph,
@@ -98,44 +98,44 @@ impl DesiredState {
             })
             .collect();
 
-        // Discover new applications from the graph.
-        self.discover_applications(graph);
+        // Discover new apps from the graph.
+        self.discover_apps(graph);
 
         endpoint_nodes
     }
 
     // -----------------------------------------------------------------------
-    // diff_group_nodes
+    // diff_channels — ensure virtual channels exist in PipeWire
     // -----------------------------------------------------------------------
 
-    fn diff_group_nodes(
+    fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
-        for id in self.group_nodes.keys().copied().collect::<Vec<_>>() {
-            let endpoint_desc = EndpointDescriptor::GroupNode(id);
+        for id in self.channels.keys().copied().collect::<Vec<_>>() {
+            let endpoint_desc = EndpointDescriptor::Channel(id);
             if let Some(node) = endpoint_nodes
                 .get(&endpoint_desc)
                 .and_then(|nodes| nodes.first())
             {
-                let group_node = self
-                    .group_nodes
+                let channel = self
+                    .channels
                     .get_mut(&id)
-                    .expect("group node must exist");
-                if group_node.pending {
-                    group_node.pending = false;
+                    .expect("channel must exist");
+                if channel.pending {
+                    channel.pending = false;
                 }
-                if group_node.pipewire_id != Some(node.id) {
-                    group_node.pipewire_id = Some(node.id);
+                if channel.pipewire_id != Some(node.id) {
+                    channel.pipewire_id = Some(node.id);
                 }
             } else {
-                let group_node = self
-                    .group_nodes
+                let channel = self
+                    .channels
                     .get_mut(&id)
-                    .expect("group node must exist");
-                if !group_node.pending {
-                    group_node.pending = true;
+                    .expect("channel must exist");
+                if !channel.pending {
+                    channel.pending = true;
                     let ep = self
                         .endpoints
                         .get(&endpoint_desc)
@@ -143,7 +143,7 @@ impl DesiredState {
                     messages.push(ToPipewireMessage::CreateGroupNode(
                         ep.display_name.clone(),
                         id.inner(),
-                        group_node.kind,
+                        channel.kind,
                     ));
                 }
             }
@@ -369,7 +369,7 @@ impl DesiredState {
                 None
             }
 
-            EndpointDescriptor::GroupNode(id) => graph
+            EndpointDescriptor::Channel(id) => graph
                 .group_nodes
                 .get(&id.inner())
                 .and_then(|gn| gn.id)
@@ -377,9 +377,9 @@ impl DesiredState {
                 .filter(|node| !node.ports.is_empty())
                 .map(|node| vec![node]),
 
-            EndpointDescriptor::Application(id, kind) => {
-                let application = self.applications.get(&id)?;
-                let exceptions: Vec<&PwNode> = application
+            EndpointDescriptor::App(id, kind) => {
+                let app = self.apps.get(&id)?;
+                let exceptions: Vec<&PwNode> = app
                     .exceptions
                     .iter()
                     .filter_map(|exc| match exc {
@@ -395,10 +395,10 @@ impl DesiredState {
                 let nodes: Vec<&PwNode> = graph
                     .nodes
                     .values()
-                    .filter(|node| application.matches(&node.identifier, kind))
+                    .filter(|node| app.matches(&node.identifier, kind))
                     .filter(|node| {
                         kind != PortKind::Source
-                            || settings.application_sources_include_monitors
+                            || settings.app_sources_include_monitors
                             || !node.is_source_monitor()
                     })
                     .filter(|node| !exceptions.iter().any(|n| n.id == node.id))
@@ -484,36 +484,36 @@ impl DesiredState {
         messages
     }
 
-    /// Discover new applications from the PipeWire graph.
-    fn discover_applications(&mut self, graph: &Graph) {
-        let mut applications = HashMap::<(String, String, PortKind), String>::new();
+    /// Discover new apps from the PipeWire graph.
+    fn discover_apps(&mut self, graph: &Graph) {
+        let mut discovered = HashMap::<(String, String, PortKind), String>::new();
         for node in graph.nodes.values() {
-            if let (Some(app), Some(binary)) = (
+            if let (Some(app_name), Some(binary)) = (
                 node.identifier.application_name.as_ref(),
                 node.identifier.binary_name.as_ref(),
             ) {
                 if node.has_port_kind(PortKind::Source) {
-                    applications.insert(
-                        (app.clone(), binary.clone(), PortKind::Source),
+                    discovered.insert(
+                        (app_name.clone(), binary.clone(), PortKind::Source),
                         node.identifier.icon_name().to_owned(),
                     );
                 }
                 if node.has_port_kind(PortKind::Sink) {
-                    applications.insert(
-                        (app.clone(), binary.clone(), PortKind::Sink),
+                    discovered.insert(
+                        (app_name.clone(), binary.clone(), PortKind::Sink),
                         node.identifier.icon_name().to_owned(),
                     );
                 }
             }
         }
         // Remove existing combinations.
-        for app in self.applications.values() {
-            applications.remove(&(app.name.clone(), app.binary.clone(), app.kind));
+        for app in self.apps.values() {
+            discovered.remove(&(app.name.clone(), app.binary.clone(), app.kind));
         }
-        // Add new inactive applications.
-        for ((name, binary, kind), icon) in applications {
-            let app = Application::new_inactive(name, binary, icon, kind);
-            self.applications.insert(app.id, app);
+        // Add new inactive apps.
+        for ((name, binary, kind), icon) in discovered {
+            let app = App::new_inactive(name, binary, icon, kind);
+            self.apps.insert(app.id, app);
         }
     }
 

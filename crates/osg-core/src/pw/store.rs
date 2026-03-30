@@ -1,7 +1,7 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
 use std::{collections::HashMap, fmt::Debug};
-use tracing::error;
+use tracing::warn;
 use ulid::Ulid;
 
 use pipewire::{
@@ -393,7 +393,7 @@ impl Store {
         if let Some(route) = DeviceActiveRoute::from_value(pod) {
             device.active_routes.push(route);
         } else {
-            error!("Failed to find needed fields on device {id}'s active route param.");
+            warn!("Failed to find needed fields on device {id}'s active route param.");
         }
     }
 

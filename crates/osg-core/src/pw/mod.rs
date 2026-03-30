@@ -64,11 +64,12 @@ pub enum PwError {
 const OSG_APP_NAME: &str = "open-sound-grid";
 const OSG_APP_ID: &str = "org.opensoundgrid.OpenSoundGrid";
 
-/// The kind of virtual group node to create in PipeWire.
+/// Kind of virtual audio bus to create. Domain: Channel kind.
 ///
 /// TODO: Move to crate::state once the state module is created.
 /// This is defined here temporarily so the PW layer compiles standalone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum GroupNodeKind {
     Source,
     #[default]
@@ -148,7 +149,9 @@ pub enum ToPipewireMessage {
     RemovePortLink { start_id: u32, end_id: u32 },
     #[rustfmt::skip]
     RemoveNodeLinks { start_id: u32, end_id: u32 },
+    /// Domain: AddChannel. Creates a virtual audio bus (Channel) in PipeWire.
     CreateGroupNode(String, Ulid, GroupNodeKind),
+    /// Domain: RemoveChannel. Removes a virtual audio bus (Channel) from PipeWire.
     RemoveGroupNode(Ulid),
     Exit,
 }

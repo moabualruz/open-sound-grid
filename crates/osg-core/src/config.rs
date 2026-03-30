@@ -69,7 +69,7 @@ impl PersistentState {
         // Only persist locked links.
         state.links.retain(|link| link.state.is_locked());
         // Only persist active applications.
-        state.applications.retain(|_, app| app.is_active);
+        state.apps.retain(|_, app| app.is_active);
 
         Self {
             version: APP_VERSION.to_string(),
