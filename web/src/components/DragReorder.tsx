@@ -52,23 +52,27 @@ export default function DragReorder<T>(props: DragReorderProps<T>): JSX.Element 
         const dragHandle = () => (
           <div
             draggable={true}
-            onDragStart={() => handleDragStart(index())}
+            onDragStart={(e: DragEvent) => {
+              e.dataTransfer?.setData("text/plain", String(index()));
+              e.dataTransfer!.effectAllowed = "move";
+              handleDragStart(index());
+            }}
             onDragEnd={reset}
-            class="cursor-grab active:cursor-grabbing"
+            class="cursor-grab active:cursor-grabbing px-1 py-2"
             aria-label="Drag to reorder"
           >
             <svg
-              width="12"
-              height="12"
-              viewBox="0 0 12 12"
+              width="10"
+              height="16"
+              viewBox="0 0 10 16"
               class="text-text-muted/40 hover:text-text-muted"
             >
-              <circle cx="4" cy="3" r="1" fill="currentColor" />
-              <circle cx="8" cy="3" r="1" fill="currentColor" />
-              <circle cx="4" cy="6" r="1" fill="currentColor" />
-              <circle cx="8" cy="6" r="1" fill="currentColor" />
-              <circle cx="4" cy="9" r="1" fill="currentColor" />
-              <circle cx="8" cy="9" r="1" fill="currentColor" />
+              <circle cx="3" cy="3" r="1.5" fill="currentColor" />
+              <circle cx="7" cy="3" r="1.5" fill="currentColor" />
+              <circle cx="3" cy="8" r="1.5" fill="currentColor" />
+              <circle cx="7" cy="8" r="1.5" fill="currentColor" />
+              <circle cx="3" cy="13" r="1.5" fill="currentColor" />
+              <circle cx="7" cy="13" r="1.5" fill="currentColor" />
             </svg>
           </div>
         );
