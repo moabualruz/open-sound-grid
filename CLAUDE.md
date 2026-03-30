@@ -3,18 +3,20 @@
 ## Build & Development
 
 ```bash
-cargo check                    # Type check workspace
-cargo test                     # All tests (unit + integration)
-cargo fmt --all                # Format
-cargo clippy -- -D warnings    # Lint, zero warnings required
+make check                     # Full check: Rust (fmt+clippy+test) + Web (tsc+eslint+prettier) + ADR-005 standards
+make fix                       # Auto-fix all fixable issues in both stacks
+make build                     # Build both Rust + web
 
-cargo run -p osg-server        # Run web server
+cargo run -p osg-server        # Run server (serves web/dist/ at :9100)
+cd web && npm run dev           # Vite dev server (:5173, proxies to :9100)
 RUST_LOG=osg_core=debug cargo run -p osg-server  # Debug logging
 ```
 
-**System deps**: `libpipewire-0.3-dev`, `libclang-dev`, `pkg-config`
+**System deps**: `libpipewire-0.3-dev`, `libclang-dev`, `pkg-config`, Node.js 20+
 **Rust**: 1.94+ (edition 2024)
-**CI**: fmt → clippy (`-D warnings`) → tests. Run locally before every commit. GitHub Actions exist but are manual-trigger only.
+**Web**: SolidJS + Vite + Tailwind v4 + TypeScript (in `web/`)
+**CI**: `make check` runs all 3 lint layers. GitHub Actions exist but are manual-trigger only.
+**Config**: state persists to `~/.local/share/open-sound-grid/state.toml`, settings to `~/.config/open-sound-grid/settings.toml`
 
 ## Architecture
 
