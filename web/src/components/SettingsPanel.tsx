@@ -40,10 +40,10 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
           </div>
 
           <div class="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
-            {/* Connection */}
+            {/* PipeWire */}
             <section>
               <h3 class="mb-2 text-[11px] font-semibold uppercase tracking-widest text-text-muted">
-                Connection
+                PipeWire
               </h3>
               <div class="space-y-1.5 text-xs text-text-secondary">
                 <div class="flex justify-between">

@@ -78,6 +78,7 @@ impl MixerSession {
                         Channel {
                             id,
                             kind,
+                            output_node_id: None,
                             pipewire_id: None,
                             pending: true,
                         },
@@ -428,6 +429,35 @@ impl MixerSession {
                             _ => endpoint.custom_name = name,
                         }
                     }
+                    None
+                }
+
+                StateMsg::SetMixOutput(channel_id, output_node_id) => {
+                    if let Some(ch) = self.channels.get_mut(&channel_id) {
+                        ch.output_node_id = output_node_id;
+                        // TODO: Create PW links from mix sink to output device
+                        // pw_messages.push(ToPipewireMessage::CreateNodeLinks {
+                        //     start_id: ch.pipewire_id.unwrap(),
+                        //     end_id: output_node_id.unwrap(),
+                        // });
+                    }
+                    None
+                }
+
+                StateMsg::SetEndpointVisible(descriptor, visible) => {
+                    if let Some(endpoint) = self.endpoints.get_mut(&descriptor) {
+                        endpoint.visible = visible;
+                    }
+                    None
+                }
+
+                StateMsg::SetDisplayOrder(order) => {
+                    self.display_order = order;
+                    None
+                }
+
+                StateMsg::SetDefaultOutputNode(node_id) => {
+                    self.default_output_node_id = node_id;
                     None
                 }
             }

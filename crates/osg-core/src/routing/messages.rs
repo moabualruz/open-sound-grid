@@ -22,6 +22,14 @@ pub enum StateMsg {
     /// `None` resets to the default display name.
     RenameEndpoint(EndpointDescriptor, Option<String>),
     ChangeChannelKind(ChannelId, ChannelKind),
+    /// Assign an output device node to a mix channel.
+    SetMixOutput(ChannelId, Option<u32>),
+    /// Toggle endpoint visibility (hide/show instead of delete).
+    SetEndpointVisible(EndpointDescriptor, bool),
+    /// Set the display order for endpoints.
+    SetDisplayOrder(Vec<EndpointDescriptor>),
+    /// Update the OS default output node (from PipeWire metadata).
+    SetDefaultOutputNode(Option<u32>),
     Link(EndpointDescriptor, EndpointDescriptor),
     RemoveLink(EndpointDescriptor, EndpointDescriptor),
     SetLinkLocked(EndpointDescriptor, EndpointDescriptor, bool),

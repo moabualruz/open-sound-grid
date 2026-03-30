@@ -142,9 +142,16 @@ pub struct Endpoint {
     /// True when channels across the backing nodes have differing volumes.
     pub volume_mixed: bool,
     pub volume_locked_muted: VolumeLockMuteState,
+    /// Hidden endpoints are preserved but not shown in the UI's active lists.
+    #[serde(default = "default_true")]
+    pub visible: bool,
     /// Transient flag: a volume/mute command is in-flight to PipeWire.
     #[serde(skip)]
     pub volume_pending: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Endpoint {
@@ -159,6 +166,7 @@ impl Endpoint {
             volume: 1.0,
             volume_mixed: false,
             volume_locked_muted: VolumeLockMuteState::UnmutedUnlocked,
+            visible: true,
             volume_pending: false,
         }
     }
@@ -338,6 +346,9 @@ impl VolumeLockMuteState {
 pub struct Channel {
     pub id: ChannelId,
     pub kind: ChannelKind,
+    /// For sink channels (mixes): the assigned output device node ID.
+    /// `None` means no output assigned. Monitor uses OS default.
+    pub output_node_id: Option<u32>,
     /// PipeWire ID once the node is created; `None` while pending.
     #[serde(skip)]
     pub pipewire_id: Option<u32>,
@@ -425,6 +436,13 @@ pub struct MixerSession {
     pub apps: HashMap<AppId, App>,
     pub devices: HashMap<DeviceId, Device>,
     pub channels: IndexMap<ChannelId, Channel>,
+    /// User-defined display order for endpoints (channel/mix ordering).
+    #[serde(default)]
+    pub display_order: Vec<EndpointDescriptor>,
+    /// PipeWire node ID of the OS default audio sink.
+    /// Updated from PipeWire metadata `default.audio.sink`.
+    #[serde(skip)]
+    pub default_output_node_id: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

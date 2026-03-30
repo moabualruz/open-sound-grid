@@ -5,6 +5,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  SlidersVertical,
   Music,
   Globe,
   Bell,
@@ -132,10 +133,21 @@ export default function ChannelLabel(props: ChannelLabelProps) {
         </button>
 
         <button
-          onClick={() => send({ type: "removeEndpoint", endpoint: props.descriptor })}
+          class="text-text-muted/40 transition-colors duration-150 hover:text-text-muted"
+          title="Effects (coming soon)"
+          aria-label="Effects"
+          disabled
+        >
+          <SlidersVertical size={12} />
+        </button>
+
+        <button
+          onClick={() =>
+            send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
+          }
           class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
-          title="Remove"
-          aria-label="Remove channel"
+          title="Hide channel"
+          aria-label="Hide channel"
         >
           <X size={12} />
         </button>

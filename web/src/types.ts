@@ -106,6 +106,7 @@ export interface Endpoint {
   volume: number;
   volumeMixed: boolean;
   volumeLockedMuted: VolumeLockMuteState;
+  visible: boolean;
 }
 
 export interface MixerLink {
@@ -117,6 +118,7 @@ export interface MixerLink {
 export interface Channel {
   id: string;
   kind: GroupNodeKind;
+  outputNodeId: number | null;
 }
 
 export interface App {
@@ -137,6 +139,8 @@ export interface MixerSession {
   apps: Record<string, App>;
   devices: Record<string, unknown>;
   channels: Record<string, Channel>;
+  displayOrder: EndpointDescriptor[];
+  defaultOutputNodeId: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,4 +161,7 @@ export type Command =
       source: EndpointDescriptor;
       target: EndpointDescriptor;
       locked: boolean;
-    };
+    }
+  | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
+  | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }
+  | { type: "setDisplayOrder"; order: EndpointDescriptor[] };

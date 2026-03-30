@@ -12,6 +12,8 @@ const EMPTY_SESSION: MixerSession = {
   apps: {},
   devices: {},
   channels: {},
+  displayOrder: [],
+  defaultOutputNodeId: null,
 };
 
 interface SessionState {

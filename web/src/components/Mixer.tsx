@@ -190,7 +190,13 @@ export default function Mixer() {
                         color={getMixColor(mix.ep.displayName)}
                         outputDevice={mixOutputs[mixKey] ?? null}
                         usedDeviceIds={usedDeviceIds()}
-                        onRemove={() => send({ type: "removeEndpoint", endpoint: mix.desc })}
+                        onRemove={() =>
+                          send({
+                            type: "setEndpointVisible",
+                            endpoint: mix.desc,
+                            visible: false,
+                          })
+                        }
                         onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
                         dragHandle={dragHandle}
                       />

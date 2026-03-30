@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{ChannelKind, EndpointDescriptor};
+use crate::graph::{ChannelId, ChannelKind, EndpointDescriptor};
 use crate::routing::StateMsg;
 
 /// A command received from the frontend over WebSocket.
@@ -60,6 +60,21 @@ pub enum Command {
         target: EndpointDescriptor,
         locked: bool,
     },
+
+    /// Assign an output device to a mix. `None` clears the assignment.
+    SetMixOutput {
+        channel: ChannelId,
+        output_node_id: Option<u32>,
+    },
+
+    /// Toggle endpoint visibility (hide/show instead of delete).
+    SetEndpointVisible {
+        endpoint: EndpointDescriptor,
+        visible: bool,
+    },
+
+    /// Set the display order for endpoints.
+    SetDisplayOrder { order: Vec<EndpointDescriptor> },
 }
 
 impl Command {
@@ -81,6 +96,14 @@ impl Command {
                 target,
                 locked,
             } => StateMsg::SetLinkLocked(source, target, locked),
+            Self::SetMixOutput {
+                channel,
+                output_node_id,
+            } => StateMsg::SetMixOutput(channel, output_node_id),
+            Self::SetEndpointVisible { endpoint, visible } => {
+                StateMsg::SetEndpointVisible(endpoint, visible)
+            }
+            Self::SetDisplayOrder { order } => StateMsg::SetDisplayOrder(order),
         }
     }
 }
