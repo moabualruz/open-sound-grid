@@ -2,6 +2,7 @@ import { GraphProvider } from "./stores/graphStore";
 import { SessionProvider } from "./stores/sessionStore";
 import NodeList from "./components/NodeList";
 import ChannelList from "./components/ChannelList";
+import AppList from "./components/AppList";
 import MixerPanel from "./components/MixerPanel";
 
 export default function App() {
@@ -15,8 +16,9 @@ export default function App() {
           </header>
           <main class="grid gap-8 lg:grid-cols-2">
             <ChannelList />
-            <NodeList />
+            <AppList />
             <MixerPanel />
+            <NodeList />
           </main>
         </div>
       </SessionProvider>

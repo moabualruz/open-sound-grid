@@ -1,5 +1,6 @@
 import { For, Show, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
+import type { Channel } from "../types";
 
 export default function ChannelList() {
   const { state, send } = useSession();
@@ -14,6 +15,14 @@ export default function ChannelList() {
   }
 
   const channels = () => Object.values(state.session.channels);
+
+  function getChannelName(channel: Channel): string {
+    const ep = state.session.endpoints.find(
+      ([desc]) => "channel" in desc && desc.channel === channel.id,
+    );
+    if (ep) return ep[1].customName ?? ep[1].displayName;
+    return channel.id.slice(0, 8) + "...";
+  }
 
   return (
     <section>
@@ -53,7 +62,7 @@ export default function ChannelList() {
             {(channel) => (
               <li class="flex items-center justify-between rounded-lg border border-border bg-surface-alt px-4 py-3">
                 <div class="flex items-center gap-2">
-                  <span class="font-medium">{channel.id}</span>
+                  <span class="font-medium">{getChannelName(channel)}</span>
                   <span class="text-text-muted text-xs">{channel.kind}</span>
                 </div>
                 <button
