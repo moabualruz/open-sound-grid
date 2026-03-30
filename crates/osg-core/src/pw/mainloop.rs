@@ -408,10 +408,20 @@ fn init_metadata_listener(
     metadata_out: &Rc<RefCell<Option<Metadata>>>,
     global: &pipewire::registry::GlobalObject<&pipewire::spa::utils::dict::DictRef>,
 ) {
+    // Only bind the "default" metadata — it has default.audio.sink/source
+    let is_default = global
+        .props
+        .map(|p| p.get("metadata.name") == Some("default"))
+        .unwrap_or(false);
+    if !is_default {
+        return;
+    }
+
     let Ok(metadata) = registry.bind::<Metadata, _>(global) else {
         warn!("[PW] failed to bind metadata object {}", global.id);
         return;
     };
+    debug!("[PW] bound 'default' metadata object (id={})", global.id);
     let listener = metadata
         .add_listener_local()
         .property({
