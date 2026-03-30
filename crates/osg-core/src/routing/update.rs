@@ -513,8 +513,23 @@ impl MixerSession {
                 }
 
                 StateMsg::SetEndpointVisible(descriptor, visible) => {
+                    let nodes = self.resolve_endpoint(descriptor, graph, settings);
                     if let Some(endpoint) = self.endpoints.get_mut(&descriptor) {
                         endpoint.visible = visible;
+                        // Mute when hiding, unmute when showing
+                        if !visible {
+                            endpoint.volume_locked_muted =
+                                endpoint.volume_locked_muted.with_mute(true);
+                        }
+                    }
+                    // Mute/unmute the PipeWire nodes
+                    if let Some(nodes) = nodes {
+                        let muted = !visible;
+                        pw_messages.extend(
+                            nodes
+                                .into_iter()
+                                .map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
+                        );
                     }
                     None
                 }

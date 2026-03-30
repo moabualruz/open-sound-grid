@@ -64,19 +64,18 @@ export default function Mixer() {
 
   const rawChannels = () =>
     state.session.endpoints
-      .filter(([desc]) => "channel" in desc && channelKind(desc) !== "sink")
+      .filter(([desc, ep]) => "channel" in desc && channelKind(desc) !== "sink" && ep.visible)
       .map(([desc, ep]) => ({ desc, ep }));
 
   const sinkChannels = () =>
     state.session.endpoints
-      .filter(([desc]) => "channel" in desc && channelKind(desc) === "sink")
+      .filter(([desc, ep]) => "channel" in desc && channelKind(desc) === "sink" && ep.visible)
       .map(([desc, ep]) => ({ desc, ep }));
 
   const rawMixes = () => {
-    const fromSinks = state.session.activeSinks.map((desc) => ({
-      desc,
-      ep: findEndpoint(state.session.endpoints, desc),
-    }));
+    const fromSinks = state.session.activeSinks
+      .map((desc) => ({ desc, ep: findEndpoint(state.session.endpoints, desc) }))
+      .filter((m) => m.ep?.visible !== false);
     if (fromSinks.length > 0) return fromSinks;
     return sinkChannels();
   };
