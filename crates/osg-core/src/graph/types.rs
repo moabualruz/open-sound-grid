@@ -4,8 +4,6 @@
 // the user *wants* the PipeWire graph to look like; the reconciliation
 // loop in `crate::routing::reconcile` compares them against reality.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
@@ -198,7 +196,6 @@ impl Endpoint {
         self.details.join("\n\n")
     }
 
-    #[cfg(test)]
     pub fn new_test(descriptor: EndpointDescriptor) -> Self {
         Self::new(descriptor)
             .with_display_name("TESTING_ENDPOINT".to_owned())

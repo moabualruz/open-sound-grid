@@ -10,8 +10,6 @@
 //   * `diff_properties` — reconcile volume / mute between desired & actual
 //   * `diff_links`      — reconcile connections, respecting lock state
 
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{

@@ -65,7 +65,6 @@ impl NodeIdentifier {
         }
     }
 
-    #[cfg(test)]
     pub fn new_test() -> Self {
         Self {
             is_monitor: false,
@@ -130,7 +129,6 @@ impl NodeIdentifier {
         })
     }
 
-    #[allow(dead_code)] // This will be used for persistent nodes
     pub fn identifier(&self) -> &str {
         self.identifier_.get_or_init(|| {
             self.node_name
@@ -188,7 +186,6 @@ impl NodeIdentifier {
     }
 
     #[rustfmt::skip] // Rustfmt inconsistently expands the lines and it's really hard to read
-    #[allow(dead_code)] // This will be used for persistent nodes
     pub fn matches(&self, other: &NodeIdentifier) -> bool {
         // Compare the first property that exist on both identifiers
         let ids = self.node_name.as_ref().zip(other.node_name.as_ref())

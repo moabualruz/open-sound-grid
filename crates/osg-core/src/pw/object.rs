@@ -124,7 +124,7 @@ pub struct GroupNode<P = pipewire::node::Node, L = pipewire::proxy::ProxyListene
     pub kind: GroupNodeKind,
     pub(super) proxy: P,
     // This just needs to be stored here because dropping it removes the listener
-    pub(super) listener: L,
+    pub(super) _listener: L,
 }
 
 impl<P: Debug, L> Debug for GroupNode<P, L> {
@@ -145,7 +145,7 @@ impl GroupNode {
             name: self.name.clone(),
             kind: self.kind,
             proxy: (),
-            listener: (),
+            _listener: (),
         }
     }
 }
@@ -161,14 +161,6 @@ pub struct Client<P = pipewire::client::Client> {
     pub nodes: Vec<u32>,
     #[serde(skip)]
     pub(super) _proxy: P,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum EndpointKind {
-    Physical,
-    Application,
-    Osg,
 }
 
 impl Client<pipewire::client::Client> {
@@ -202,8 +194,9 @@ impl Client<pipewire::client::Client> {
             _proxy: (),
         }
     }
+}
 
-    #[cfg(test)]
+impl Client<()> {
     pub fn new_test(id: u32, is_osg: bool, nodes: Vec<u32>) -> Client<()> {
         Client {
             id,
@@ -390,8 +383,9 @@ impl Node {
             listener: (),
         }
     }
+}
 
-    #[cfg(test)]
+impl Node<(), ()> {
     pub fn new_test(id: u32, endpoint: EndpointId) -> Node<(), ()> {
         Node {
             id,
@@ -461,8 +455,9 @@ impl Port {
             _proxy: (),
         }
     }
+}
 
-    #[cfg(test)]
+impl Port<()> {
     pub fn new_test(id: u32, node: u32, kind: PortKind, is_monitor: bool) -> Port<()> {
         Port {
             id,
@@ -542,8 +537,9 @@ impl Link {
             proxy: (),
         }
     }
+}
 
-    #[cfg(test)]
+impl Link<()> {
     pub fn new_test(
         id: u32,
         start_node: u32,

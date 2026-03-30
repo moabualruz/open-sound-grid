@@ -4,8 +4,6 @@
 // how audio should be routed. The `pw` module holds the *actual* PipeWire
 // graph; reconciliation (in `crate::routing::reconcile`) bridges the two.
 
-#![allow(dead_code)]
-
 pub mod types;
 
 // Re-export the most commonly used items at module level.

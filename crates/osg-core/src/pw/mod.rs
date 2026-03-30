@@ -1,19 +1,13 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
-#[allow(dead_code)]
 mod identifier;
-#[allow(dead_code)]
 mod mainloop;
-#[allow(dead_code)]
 mod object;
-#[allow(dead_code)]
 mod pod;
-#[allow(dead_code)]
 mod store;
 
 use std::{collections::HashMap, sync::mpsc, thread};
 
-use anyhow::{Context, Result};
 use thiserror::Error;
 use tracing::error;
 use ulid::Ulid;
@@ -22,6 +16,47 @@ pub use identifier::NodeIdentifier;
 pub use object::PortKind;
 
 use mainloop::init_mainloop;
+pub use mainloop::map_ports;
+
+/// Errors originating from the PipeWire backend.
+#[derive(Error, Debug)]
+pub enum PwError {
+    #[error("failed to connect to PipeWire: {0}")]
+    ConnectionFailed(String),
+
+    #[error("node {0} not found")]
+    NodeNotFound(u32),
+
+    #[error("port {0} not found")]
+    PortNotFound(u32),
+
+    #[error("device {0} not found")]
+    DeviceNotFound(u32),
+
+    #[error("no active route found on device {device_id} with device index {device_index}")]
+    RouteNotFound { device_id: u32, device_index: i32 },
+
+    #[error("failed to create sink: {0}")]
+    SinkCreationFailed(String),
+
+    #[error("failed to create link: {0}")]
+    LinkCreationFailed(String),
+
+    #[error("invalid port: {0}")]
+    InvalidPort(String),
+
+    #[error("no port pairs to connect between nodes {start_id} and {end_id}")]
+    NoPortPairs { start_id: u32, end_id: u32 },
+
+    #[error("group node with id '{0}' does not exist")]
+    GroupNodeNotFound(ulid::Ulid),
+
+    #[error("node {0} is missing device index")]
+    MissingDeviceIndex(u32),
+
+    #[error("PipeWire thread exited unexpectedly")]
+    ThreadExited,
+}
 
 // TODO: Import from crate::state once the state module is created
 // use crate::state::GroupNodeKind;
@@ -54,11 +89,10 @@ impl PipewireHandle {
             mpsc::Receiver<ToPipewireMessage>,
         ),
         update_fn: impl Fn(Box<Graph>) + Send + 'static,
-    ) -> Result<Self> {
+    ) -> Result<Self, PwError> {
         // TODO: Decide if we actually need a dedicated channel and message type to communicate
         // from Pipewire to the main thread, or if the graph updates are enough
-        let (pipewire_thread_handle, pw_sender, _from_pw_receiver) =
-            init_mainloop(update_fn).context("Error initializing the Pipewire thread")?;
+        let (pipewire_thread_handle, pw_sender, _from_pw_receiver) = init_mainloop(update_fn)?;
         let adapter_thread_handle = init_adapter(to_pw_channel.1, pw_sender);
         Ok(Self {
             pipewire_thread_handle: Some(pipewire_thread_handle),
@@ -107,12 +141,10 @@ pub enum ToPipewireMessage {
     NodeVolume(u32, Vec<f32>),
     NodeMute(u32, bool),
     #[rustfmt::skip]
-    #[allow(dead_code)] // This will be used for individual port mapping
     CreatePortLink { start_id: u32, end_id: u32 },
     #[rustfmt::skip]
     CreateNodeLinks { start_id: u32, end_id: u32 },
     #[rustfmt::skip]
-    #[allow(dead_code)] // This will be used for individual port mapping
     RemovePortLink { start_id: u32, end_id: u32 },
     #[rustfmt::skip]
     RemoveNodeLinks { start_id: u32, end_id: u32 },

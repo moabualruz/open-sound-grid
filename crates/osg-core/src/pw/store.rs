@@ -1,6 +1,5 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
-use anyhow::{Result, anyhow};
 use std::{collections::HashMap, fmt::Debug};
 use tracing::error;
 use ulid::Ulid;
@@ -17,7 +16,7 @@ use pipewire::{
 };
 
 use super::{
-    Graph,
+    Graph, PwError,
     object::{
         Client, Device, EndpointId, GroupNode, Link, Node, ObjectConvertError, Port, PortKind,
     },
@@ -302,28 +301,31 @@ impl Store {
         node.identifier.update_from_props(props);
     }
 
-    pub(super) fn set_node_volume(&mut self, id: u32, channel_volumes: Vec<f32>) -> Result<()> {
-        let node = self
-            .nodes
-            .get(&id)
-            .ok_or_else(|| anyhow!("Node {id} not found"))?;
+    pub(super) fn set_node_volume(
+        &mut self,
+        id: u32,
+        channel_volumes: Vec<f32>,
+    ) -> Result<(), PwError> {
+        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
 
         if let EndpointId::Device {
             id: device_id,
             device_index,
         } = node.endpoint
         {
-            let device_index = device_index
-                .ok_or_else(|| anyhow!("Node {id} is connected to a device but does not have an associated device index"))?;
+            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
             let device = self
                 .devices
                 .get(&device_id)
-                .ok_or_else(|| anyhow!("Device {device_id} not found"))?;
+                .ok_or(PwError::DeviceNotFound(device_id))?;
             let route = device
                 .active_routes
                 .iter()
                 .find(|route| route.device_index == device_index)
-                .ok_or_else(|| anyhow!("No active route found on device {device_id} with device index {device_index}"))?;
+                .ok_or(PwError::RouteNotFound {
+                    device_id,
+                    device_index,
+                })?;
             let (param_type, pod) = route.build_device_volume_pod(channel_volumes);
             device.proxy.set_param(param_type, 0, pod.pod());
         } else {
@@ -334,28 +336,27 @@ impl Store {
         Ok(())
     }
 
-    pub(super) fn set_node_mute(&mut self, id: u32, mute: bool) -> Result<()> {
-        let node = self
-            .nodes
-            .get(&id)
-            .ok_or_else(|| anyhow!("Node {id} not found"))?;
+    pub(super) fn set_node_mute(&mut self, id: u32, mute: bool) -> Result<(), PwError> {
+        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
 
         if let EndpointId::Device {
             id: device_id,
             device_index,
         } = node.endpoint
         {
-            let device_index = device_index
-                .ok_or_else(|| anyhow!("Node {id} is connected to a device but does not have an associated device index"))?;
+            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
             let device = self
                 .devices
                 .get(&device_id)
-                .ok_or_else(|| anyhow!("Device {device_id} not found"))?;
+                .ok_or(PwError::DeviceNotFound(device_id))?;
             let route = device
                 .active_routes
                 .iter()
                 .find(|route| route.device_index == device_index)
-                .ok_or_else(|| anyhow!("No active route found on device {device_id} with device index {device_index}"))?;
+                .ok_or(PwError::RouteNotFound {
+                    device_id,
+                    device_index,
+                })?;
             let (param_type, pod) = route.build_device_mute_pod(mute);
             device.proxy.set_param(param_type, 0, pod.pod());
         } else {

@@ -4,25 +4,20 @@
 // thread. Graph updates from PipeWire are debounced (16ms ≈ 1/60s) before
 // triggering a reconciliation pass.
 
-#![allow(dead_code)]
-
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tracing::error;
 
 use crate::config::{PersistentSettings, PersistentState};
 use crate::graph::{DesiredState, ReconcileSettings};
 use crate::pw::{Graph, ToPipewireMessage};
+use crate::routing::RoutingError;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
 /// Debounce interval for PipeWire graph updates (≈60 Hz).
 const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(16);
-
-/// Autosave interval.
-const SAVE_FREQUENCY: Duration = Duration::from_secs(30);
 
 // ---------------------------------------------------------------------------
 // Public handle
@@ -122,7 +117,7 @@ pub fn debounced_graph_sender(
 pub async fn run_reducer(
     pw_sender: std::sync::mpsc::Sender<ToPipewireMessage>,
     initial_settings: ReconcileSettings,
-) -> Result<(ReducerHandle, mpsc::UnboundedSender<ReducerMsg>)> {
+) -> Result<(ReducerHandle, mpsc::UnboundedSender<ReducerMsg>), RoutingError> {
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<ReducerMsg>();
 
     // Load persisted state, falling back to defaults.

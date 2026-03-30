@@ -2,8 +2,6 @@
 //
 // Messages flowing through the routing layer.
 
-#![allow(dead_code)]
-
 use crate::graph::{ApplicationId, EndpointDescriptor, GroupNodeId};
 use crate::pw::{GroupNodeKind, PortKind};
 

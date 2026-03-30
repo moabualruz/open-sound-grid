@@ -6,12 +6,19 @@
 //   3. Corrective `ToPipewireMessage` commands are sent to PipeWire
 //   4. PipeWire graph updates are debounced (16ms) and fed back into the diff
 
-#![allow(dead_code)]
-
 pub mod messages;
 pub mod reconcile;
 pub mod reducer;
 mod update;
 
+use thiserror::Error;
+
 pub use messages::{StateMsg, StateOutputMsg};
 pub use reducer::{ReducerHandle, debounced_graph_sender, run_reducer};
+
+/// Errors originating from the routing/reducer layer.
+#[derive(Error, Debug)]
+pub enum RoutingError {
+    #[error("failed to send message to reducer")]
+    ReducerSendFailed,
+}

@@ -3,20 +3,37 @@
 // Configuration persistence using TOML. State and settings are saved to
 // XDG-compliant directories (overridable via env vars).
 
-#![allow(dead_code)]
-
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::debug;
 
 use crate::graph::{DesiredState, ReconcileSettings};
 
 const APP_ID: &str = "open-sound-grid";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Errors originating from configuration persistence.
+#[derive(Error, Debug)]
+pub enum ConfigError {
+    #[error("could not resolve data directory")]
+    DataDirNotFound,
+
+    #[error("could not resolve config directory")]
+    ConfigDirNotFound,
+
+    #[error("failed to serialize: {0}")]
+    SerializeFailed(#[from] toml::ser::Error),
+
+    #[error("failed to deserialize: {0}")]
+    DeserializeFailed(#[from] toml::de::Error),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
 
 // ---------------------------------------------------------------------------
 // Directory resolution
@@ -64,25 +81,24 @@ impl PersistentState {
         self.state
     }
 
-    pub fn save(&self) -> Result<()> {
-        let dir = data_dir().context("could not resolve data dir")?;
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let dir = data_dir().ok_or(ConfigError::DataDirNotFound)?;
         let app_dir = dir.join(APP_ID);
-        fs::create_dir_all(&app_dir).context("failed to create data dir")?;
+        fs::create_dir_all(&app_dir)?;
 
         let path = app_dir.join("state.toml");
-        let content = toml::to_string_pretty(self).context("failed to serialize state")?;
-        let mut file = File::create(&path).context("failed to create state file")?;
-        file.write_all(content.as_bytes())
-            .context("failed to write state file")?;
+        let content = toml::to_string_pretty(self)?;
+        let mut file = File::create(&path)?;
+        file.write_all(content.as_bytes())?;
         debug!("[Config] saved state to {}", path.display());
         Ok(())
     }
 
-    pub fn load() -> Result<Self> {
-        let dir = data_dir().context("could not resolve data dir")?;
+    pub fn load() -> Result<Self, ConfigError> {
+        let dir = data_dir().ok_or(ConfigError::DataDirNotFound)?;
         let path = dir.join(APP_ID).join("state.toml");
-        let content = fs::read_to_string(&path).context("failed to read state file")?;
-        toml::from_str(&content).context("failed to deserialize state")
+        let content = fs::read_to_string(&path)?;
+        Ok(toml::from_str(&content)?)
     }
 }
 
@@ -108,24 +124,23 @@ impl PersistentSettings {
         self.settings
     }
 
-    pub fn save(&self) -> Result<()> {
-        let dir = config_dir().context("could not resolve config dir")?;
+    pub fn save(&self) -> Result<(), ConfigError> {
+        let dir = config_dir().ok_or(ConfigError::ConfigDirNotFound)?;
         let app_dir = dir.join(APP_ID);
-        fs::create_dir_all(&app_dir).context("failed to create config dir")?;
+        fs::create_dir_all(&app_dir)?;
 
         let path = app_dir.join("settings.toml");
-        let content = toml::to_string_pretty(self).context("failed to serialize settings")?;
-        let mut file = File::create(&path).context("failed to create settings file")?;
-        file.write_all(content.as_bytes())
-            .context("failed to write settings file")?;
+        let content = toml::to_string_pretty(self)?;
+        let mut file = File::create(&path)?;
+        file.write_all(content.as_bytes())?;
         debug!("[Config] saved settings to {}", path.display());
         Ok(())
     }
 
-    pub fn load() -> Result<Self> {
-        let dir = config_dir().context("could not resolve config dir")?;
+    pub fn load() -> Result<Self, ConfigError> {
+        let dir = config_dir().ok_or(ConfigError::ConfigDirNotFound)?;
         let path = dir.join(APP_ID).join("settings.toml");
-        let content = fs::read_to_string(&path).context("failed to read settings file")?;
-        toml::from_str(&content).context("failed to deserialize settings")
+        let content = fs::read_to_string(&path)?;
+        Ok(toml::from_str(&content)?)
     }
 }

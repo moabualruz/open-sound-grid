@@ -3,8 +3,6 @@
 // State mutation handlers: process a `StateMsg` against the `DesiredState`
 // and emit PipeWire commands + optional output notifications.
 
-#![allow(dead_code)]
-
 use itertools::Itertools;
 use tracing::{error, warn};
 

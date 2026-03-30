@@ -2,7 +2,6 @@
 
 use std::{cell::RefCell, rc::Rc, sync::mpsc, thread::JoinHandle};
 
-use anyhow::{Context, Result, anyhow};
 use pipewire::{
     context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, properties::properties,
     proxy::ProxyT, registry::RegistryRc, spa::param::ParamType, types::ObjectType,
@@ -11,7 +10,7 @@ use tracing::{debug, error};
 use ulid::Ulid;
 
 use super::{
-    FromPipewireMessage, Graph, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind,
+    FromPipewireMessage, Graph, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
     ToPipewireMessage, object::Port, store::Store,
 };
 
@@ -117,21 +116,23 @@ impl Master {
 
     /// Create a link between two ports. Checks that the ports exist, and their direction. Does
     /// nothing if a link between those two ports already exists.
-    fn create_port_link(&self, start_id: u32, end_id: u32) -> Result<()> {
+    fn create_port_link(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
         let store = self.store.borrow();
         let Some(start_port) = store.ports.get(&start_id) else {
-            return Err(anyhow!(
-                "start_id {start_id} did not exist or was not a port"
-            ));
+            return Err(PwError::PortNotFound(start_id));
         };
         if start_port.kind != PortKind::Source {
-            return Err(anyhow!("Port {start_id} was not a source port"));
+            return Err(PwError::InvalidPort(format!(
+                "port {start_id} is not a source port"
+            )));
         }
         let Some(end_port) = store.ports.get(&end_id) else {
-            return Err(anyhow!("end_id {end_id} did not exist or was not a port"));
+            return Err(PwError::PortNotFound(end_id));
         };
         if end_port.kind != PortKind::Sink {
-            return Err(anyhow!("Port {end_id} was not a sink port"));
+            return Err(PwError::InvalidPort(format!(
+                "port {end_id} is not a sink port"
+            )));
         }
         if start_port.links.iter().any(|link_id| {
             store
@@ -155,21 +156,19 @@ impl Master {
                     *NODE_PASSIVE => "true",
                 },
             )
-            .context("Failed to create link")?;
+            .map_err(|e| PwError::LinkCreationFailed(e.to_string()))?;
         Ok(())
     }
 
     /// Create links between all matching ports of two nodes. Checks that both ids are nodes, and
     /// skips links that do not already exist. Only connects nodes in the specified direction.
-    fn create_node_links(&self, start_id: u32, end_id: u32) -> Result<()> {
+    fn create_node_links(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
         let store = self.store.borrow();
         let Some(start_node) = store.nodes.get(&start_id) else {
-            return Err(anyhow!(
-                "start_id {start_id} did not exist or was not a node"
-            ));
+            return Err(PwError::NodeNotFound(start_id));
         };
         let Some(end_node) = store.nodes.get(&end_id) else {
-            return Err(anyhow!("end_id {end_id} did not exist or was not a node"));
+            return Err(PwError::NodeNotFound(end_id));
         };
         let end_ports: Vec<&Port> = end_node
             .ports
@@ -185,9 +184,7 @@ impl Master {
             .collect();
         let port_pairs = map_ports(start_ports, end_ports);
         if port_pairs.is_empty() {
-            return Err(anyhow!(
-                "No port pairs to connect between nodes {start_id} and {end_id}"
-            ));
+            return Err(PwError::NoPortPairs { start_id, end_id });
         }
         for (start_port, end_port) in port_pairs {
             self.create_port_link(start_port, end_port)?;
@@ -195,7 +192,7 @@ impl Master {
         Ok(())
     }
 
-    fn remove_port_link(&self, start_id: u32, end_id: u32) -> Result<()> {
+    fn remove_port_link(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
         let store = self.store.borrow_mut();
         // There shouldn't be more than one link between the same two ports, but loop just in case
         // there is for some reason.
@@ -207,7 +204,7 @@ impl Master {
         Ok(())
     }
 
-    fn remove_node_links(&self, start_id: u32, end_id: u32) -> Result<()> {
+    fn remove_node_links(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
         let store = self.store.borrow_mut();
         for link_id in store.links.values().filter_map(|link| {
             (link.start_node == start_id && link.end_node == end_id).then_some(link.id)
@@ -217,7 +214,12 @@ impl Master {
         Ok(())
     }
 
-    fn create_group_node(&self, name: String, id: Ulid, kind: GroupNodeKind) -> Result<()> {
+    fn create_group_node(
+        &self,
+        name: String,
+        id: Ulid,
+        kind: GroupNodeKind,
+    ) -> Result<(), PwError> {
         let proxy = self
             .pw_core
             .create_object::<pipewire::node::Node>(
@@ -242,7 +244,7 @@ impl Master {
                     "monitor.passthrough" => "true",
                 },
             )
-            .with_context(|| format!("Failed to create group node '{name}'"))?;
+            .map_err(|e| PwError::SinkCreationFailed(format!("group node '{name}': {e}")))?;
         let listener = proxy
             .upcast_ref()
             .add_listener_local()
@@ -268,18 +270,18 @@ impl Master {
                 name,
                 kind,
                 proxy,
-                listener,
+                _listener: listener,
             },
         );
         Ok(())
     }
 
-    fn remove_group_node(&self, id: Ulid) -> Result<()> {
+    fn remove_group_node(&self, id: Ulid) -> Result<(), PwError> {
         let mut store = self.store.borrow_mut();
         let group_node = store
             .group_nodes
             .remove(&id)
-            .with_context(|| format!("Group node with id '{id}' does not exist"))?;
+            .ok_or(PwError::GroupNodeNotFound(id))?;
 
         // Dropping the proxy deletes the object on the server
         drop(group_node);
@@ -297,7 +299,7 @@ impl Master {
 /// |-----------|--------|
 /// | start = 1 | map single port to all end ports |
 /// | otherwise | map by channel names |
-fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)> {
+pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)> {
     if start.len() == 1 {
         return end
             .iter()
@@ -382,16 +384,20 @@ pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<Graph>) + Send + 'static,
-) -> Result<(
-    JoinHandle<()>,
-    pipewire::channel::Sender<ToPipewireMessage>,
-    mpsc::Receiver<FromPipewireMessage>,
-)> {
+) -> Result<
+    (
+        JoinHandle<()>,
+        pipewire::channel::Sender<ToPipewireMessage>,
+        mpsc::Receiver<FromPipewireMessage>,
+    ),
+    PwError,
+> {
     let (to_pw_tx, to_pw_rx) = pipewire::channel::channel();
     let (from_pw_tx, from_pw_rx) = mpsc::channel();
-    let (init_status_tx, init_status_rx) = oneshot::channel::<Result<()>>();
+    let (init_status_tx, init_status_rx) = oneshot::channel::<Result<(), PwError>>();
 
     let to_pw_tx_clone = to_pw_tx.clone();
     let handle = std::thread::spawn(move || {
@@ -401,20 +407,20 @@ pub(super) fn init_mainloop(
 
         // Initialize PipeWire — using the Rc variants from pipewire-rs 0.9
         // These are internally reference-counted and can be cloned freely.
-        let init_result = (|| -> Result<(MainLoopRc, ContextRc, CoreRc, RegistryRc)> {
-            let mainloop =
-                MainLoopRc::new(None).context("Failed to initialize Pipewire mainloop")?;
-            let context =
-                ContextRc::new(&mainloop, None).context("Failed to initialize Pipewire context")?;
+        let init_result = (|| -> Result<(MainLoopRc, ContextRc, CoreRc, RegistryRc), PwError> {
+            let mainloop = MainLoopRc::new(None)
+                .map_err(|e| PwError::ConnectionFailed(format!("mainloop init: {e}")))?;
+            let context = ContextRc::new(&mainloop, None)
+                .map_err(|e| PwError::ConnectionFailed(format!("context init: {e}")))?;
             let pw_core = context
                 .connect_rc(Some(properties! {
                     *MEDIA_CATEGORY => "Manager",
                     *APP_ICON_NAME => OSG_APP_ID,
                 }))
-                .context("Failed to connect to Pipewire")?;
+                .map_err(|e| PwError::ConnectionFailed(format!("core connect: {e}")))?;
             let registry = pw_core
                 .get_registry_rc()
-                .context("Failed to get Pipewire registry")?;
+                .map_err(|e| PwError::ConnectionFailed(format!("registry: {e}")))?;
             Ok((mainloop, context, pw_core, registry))
         })();
         // If there was an error, report it and exit
@@ -497,114 +503,6 @@ pub(super) fn init_mainloop(
     match init_status_rx.recv() {
         Ok(Ok(_)) => Ok((handle, to_pw_tx, from_pw_rx)),
         Ok(Err(init_error)) => Err(init_error),
-        Err(recv_error) => Err(recv_error).context("The Pipewire thread unexpectedly exited early"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::pw::object::Port;
-
-    fn ch5_1() -> (Vec<Port<()>>, Vec<Port<()>>) {
-        let mut start = vec![
-            Port::new_test(1, 0, PortKind::Source, false),
-            Port::new_test(2, 0, PortKind::Source, false),
-            Port::new_test(3, 0, PortKind::Source, false),
-            Port::new_test(4, 0, PortKind::Source, false),
-            Port::new_test(5, 0, PortKind::Source, false),
-            Port::new_test(6, 0, PortKind::Source, false),
-        ];
-        start[0].channel = "FL".to_string();
-        start[1].channel = "FR".to_string();
-        start[2].channel = "RL".to_string();
-        start[3].channel = "RR".to_string();
-        start[4].channel = "FC".to_string();
-        start[5].channel = "LFE".to_string();
-
-        let mut end = vec![
-            Port::new_test(7, 0, PortKind::Source, false),
-            Port::new_test(8, 0, PortKind::Source, false),
-            Port::new_test(9, 0, PortKind::Source, false),
-            Port::new_test(10, 0, PortKind::Source, false),
-            Port::new_test(11, 0, PortKind::Source, false),
-            Port::new_test(12, 0, PortKind::Source, false),
-        ];
-        end[0].channel = "FL".to_string();
-        end[1].channel = "FR".to_string();
-        end[2].channel = "RL".to_string();
-        end[3].channel = "RR".to_string();
-        end[4].channel = "FC".to_string();
-        end[5].channel = "LFE".to_string();
-
-        (start, end)
-    }
-
-    #[test]
-    fn stereo_port_mapping() {
-        let mut start = vec![
-            Port::new_test(1, 0, PortKind::Source, false),
-            Port::new_test(2, 0, PortKind::Source, false),
-        ];
-        start[0].channel = "FL".to_string();
-        start[1].channel = "FR".to_string();
-
-        let mut end = vec![
-            Port::new_test(3, 0, PortKind::Source, false),
-            Port::new_test(4, 0, PortKind::Source, false),
-        ];
-        end[0].channel = "FL".to_string();
-        end[1].channel = "FR".to_string();
-
-        let start_refs = start.iter().collect();
-        let end_refs = end.iter().collect();
-
-        assert_eq!(map_ports(start_refs, end_refs), vec![(1, 3), (2, 4)])
-    }
-
-    #[test]
-    fn ch5_1_port_mapping() {
-        let (start, end) = ch5_1();
-
-        let start_refs = start.iter().collect();
-        let end_refs = end.iter().collect();
-
-        assert_eq!(
-            map_ports(start_refs, end_refs),
-            vec![(1, 7), (2, 8), (3, 9), (4, 10), (5, 11), (6, 12)]
-        )
-    }
-
-    #[test]
-    fn ch5_1_with_missing_port_in_end_mapping() {
-        let (start, mut end) = ch5_1();
-
-        end.remove(0);
-
-        let start_refs = start.iter().collect();
-        let end_refs = end.iter().collect();
-
-        assert_eq!(
-            map_ports(start_refs, end_refs),
-            vec![(2, 8), (3, 9), (4, 10), (5, 11), (6, 12)]
-        )
-    }
-
-    #[test]
-    fn mono_to_stereo_port_mapping() {
-        let mut start = vec![Port::new_test(1, 0, PortKind::Source, false)];
-        start[0].channel = "MONO".to_string();
-
-        let mut end = vec![
-            Port::new_test(2, 0, PortKind::Source, false),
-            Port::new_test(3, 0, PortKind::Source, false),
-        ];
-        end[0].channel = "FL".to_string();
-        end[1].channel = "FR".to_string();
-
-        let start_refs = start.iter().collect();
-        let end_refs = end.iter().collect();
-
-        assert_eq!(map_ports(start_refs, end_refs), vec![(1, 2), (1, 3)])
+        Err(_) => Err(PwError::ThreadExited),
     }
 }
