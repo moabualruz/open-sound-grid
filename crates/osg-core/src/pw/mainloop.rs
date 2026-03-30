@@ -25,7 +25,7 @@ struct Master {
     pw_core: CoreRc,
     registry: RegistryRc,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
-    /// PipeWire settings metadata proxy — used to set default.audio.sink.
+    /// PipeWire "default" metadata proxy — used to set default.configured.audio.sink.
     settings_metadata: Rc<RefCell<Option<Metadata>>>,
 }
 

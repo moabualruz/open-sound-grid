@@ -51,6 +51,14 @@ export function getOutputDevices(
   for (const [_id, dev] of Object.entries(devices) as [string, PwDevice][]) {
     const devNodes = dev.nodes.map((nid) => nodes[String(nid)]).filter(Boolean) as PwNode[];
     for (const node of devNodes) {
+      const name = node.identifier.nodeName ?? "";
+      // Skip virtual/internal sinks (EasyEffects, OSG channels)
+      if (
+        name.startsWith("easyeffects_") ||
+        name.startsWith("ee_") ||
+        name.startsWith("osg.group.")
+      )
+        continue;
       if (node.ports.some(([, kind]) => kind === "sink")) {
         result.push({
           deviceId: node.identifier.nodeName ?? `pw:${node.id}`,
