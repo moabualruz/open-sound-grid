@@ -18,9 +18,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const [cellVol, setCellVol] = createSignal(1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let userDragging = false;
 
-  // Sync cell volume from link's cellVolume (per-route, independent)
-  createEffect(() => setCellVol(props.link?.cellVolume ?? 1));
+  // Sync from backend — but not while the user is actively dragging the slider
+  createEffect(() => {
+    const vol = props.link?.cellVolume ?? 1;
+    if (!userDragging) setCellVol(vol);
+  });
 
   const isMuted = () => {
     const s = props.sourceEndpoint?.volumeLockedMuted;
@@ -32,6 +36,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const effectivePct = () => Math.round(cellVol() * masterVol() * 100);
 
   function handleInput(value: number) {
+    userDragging = true;
     setCellVol(value);
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -41,6 +46,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
         target: props.sinkDescriptor,
         volume: value,
       });
+      userDragging = false;
     }, DEBOUNCE_MS);
   }
 

@@ -38,6 +38,7 @@ export function SessionProvider(props: ParentProps) {
   let sessionWs: WebSocket | null = null;
   let commandWs: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  const pendingCommands: string[] = [];
 
   function connect() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -58,12 +59,21 @@ export function SessionProvider(props: ParentProps) {
 
     // Command WebSocket (write)
     commandWs = new WebSocket(`${protocol}//${host}/ws/commands`);
+    commandWs.onopen = () => {
+      // Flush any commands queued while disconnected
+      while (pendingCommands.length > 0) {
+        commandWs!.send(pendingCommands.shift()!);
+      }
+    };
     commandWs.onerror = () => commandWs?.close();
   }
 
   function send(cmd: Command) {
+    const json = JSON.stringify(cmd);
     if (commandWs?.readyState === WebSocket.OPEN) {
-      commandWs.send(JSON.stringify(cmd));
+      commandWs.send(json);
+    } else {
+      pendingCommands.push(json);
     }
   }
 

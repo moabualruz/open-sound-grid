@@ -49,8 +49,13 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let userDragging = false;
 
-  createEffect(() => setLocal(props.endpoint.volume));
+  // Sync from backend — but not while the user is actively dragging the slider
+  createEffect(() => {
+    const vol = props.endpoint.volume;
+    if (!userDragging) setLocal(vol);
+  });
 
   const displayName = () => props.endpoint.customName ?? props.endpoint.displayName;
   const isCustom = () => !PRESET_CHANNEL_NAMES.includes(props.endpoint.displayName);
@@ -75,10 +80,12 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   };
 
   function handleInput(value: number) {
+    userDragging = true;
     setLocal(value);
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       send({ type: "setVolume", endpoint: props.descriptor, volume: value });
+      userDragging = false;
     }, DEBOUNCE_MS);
   }
 

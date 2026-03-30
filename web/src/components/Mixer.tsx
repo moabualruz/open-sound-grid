@@ -143,38 +143,37 @@ export default function Mixer() {
   // TODO(backend): persist output device assignments to settings.toml
   const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
 
-  // Auto-assign OS default output device to Monitor mix (initial only)
-  const userOverrides = new Set<string>();
+  // Initialize output device assignments from backend channel state + OS default
+  let outputsInitialized = false;
   createEffect(() => {
     const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
-    if (allDevs.length === 0) return;
-    const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
-    if (!monitorMix) return;
-    const monitorKey = JSON.stringify(monitorMix.desc);
+    if (allDevs.length === 0 || outputsInitialized) return;
 
-    // Don't override if user explicitly chose a device for this mix
-    if (userOverrides.has(monitorKey)) return;
-
-    // Use PipeWire's default.audio.sink to find the right device
-    const defaultName = graphState.graph.defaultSinkName;
-    if (defaultName) {
-      const defaultDev = allDevs.find((d) => d.deviceId === defaultName);
-      if (defaultDev && mixOutputs[monitorKey] !== defaultDev.deviceId) {
-        setMixOutputs(monitorKey, defaultDev.deviceId);
-        return;
+    // Seed from backend: channels that already have output_node_id assigned
+    for (const m of mixes()) {
+      if (!("channel" in m.desc)) continue;
+      const ch = state.session.channels[m.desc.channel];
+      if (ch?.outputNodeId) {
+        const dev = allDevs.find((d) => d.pwNodeId === ch.outputNodeId);
+        if (dev) setMixOutputs(JSON.stringify(m.desc), dev.deviceId);
       }
     }
 
-    // Fallback: assign first device if nothing assigned yet
-    if (!mixOutputs[monitorKey]) {
-      setMixOutputs(monitorKey, allDevs[0].deviceId);
+    // Auto-assign Monitor to OS default if not already assigned
+    const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
+    if (monitorMix) {
+      const monitorKey = JSON.stringify(monitorMix.desc);
+      if (!mixOutputs[monitorKey]) {
+        const defaultName = graphState.graph.defaultSinkName;
+        const defaultDev = defaultName ? allDevs.find((d) => d.deviceId === defaultName) : null;
+        setMixOutputs(monitorKey, defaultDev?.deviceId ?? allDevs[0].deviceId);
+      }
     }
+
+    outputsInitialized = true;
   });
 
   function setMixOutput(mixKey: string, deviceId: string | null) {
-    // Track that the user explicitly chose a device for this mix
-    userOverrides.add(mixKey);
-
     // If assigning a device that another mix uses, clear it from that mix
     if (deviceId) {
       for (const [key, val] of Object.entries(mixOutputs)) {
