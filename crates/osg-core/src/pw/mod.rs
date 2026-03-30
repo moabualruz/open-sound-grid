@@ -140,6 +140,8 @@ pub struct AudioGraph {
     pub links: HashMap<u32, Link>,
     /// The PipeWire node name of the OS default audio sink (from metadata).
     pub default_sink_name: Option<String>,
+    /// The PipeWire node name of the OS default audio source/mic (from metadata).
+    pub default_source_name: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]

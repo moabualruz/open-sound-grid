@@ -71,6 +71,7 @@ export interface AudioGraph {
   ports: Record<string, PwPort>;
   links: Record<string, PwLink>;
   defaultSinkName: string | null;
+  defaultSourceName: string | null;
 }
 
 // ---------------------------------------------------------------------------

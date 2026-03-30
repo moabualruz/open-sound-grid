@@ -10,6 +10,7 @@ const EMPTY_GRAPH: AudioGraph = {
   ports: {},
   links: {},
   defaultSinkName: null,
+  defaultSourceName: null,
 };
 
 interface GraphState {

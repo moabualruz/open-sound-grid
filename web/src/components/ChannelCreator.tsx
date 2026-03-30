@@ -63,11 +63,11 @@ function deviceNodeIds(devices: Record<string, PwDevice>): Set<number> {
   return ids;
 }
 
-// TODO(backend): resolve real mic name for EasyEffects source via PipeWire metadata
-// or EasyEffects socket API. Currently shows PipeWire node description.
-function inputNodeName(node: PwNode): string {
-  const desc = node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
-  return desc;
+function inputNodeName(node: PwNode, defaultSourceName: string | null): string {
+  if (isEasyEffectsSource(node) && defaultSourceName) {
+    return `${defaultSourceName} (EasyEffects)`;
+  }
+  return node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
 }
 
 export default function ChannelCreator(): JSX.Element {
@@ -86,8 +86,12 @@ export default function ChannelCreator(): JSX.Element {
         // Include: hardware device inputs OR EasyEffects processed source
         return devNodes.has(n.id) || isEasyEffectsSource(n);
       })
-      .filter((n) => inputNodeName(n).toLowerCase().includes(q))
-      .sort((a, b) => inputNodeName(a).localeCompare(inputNodeName(b)));
+      .filter((n) => inputNodeName(n, graphState.graph.defaultSourceName).toLowerCase().includes(q))
+      .sort((a, b) =>
+        inputNodeName(a, graphState.graph.defaultSourceName).localeCompare(
+          inputNodeName(b, graphState.graph.defaultSourceName),
+        ),
+      );
   };
 
   const runningApps = () => {
@@ -174,7 +178,7 @@ export default function ChannelCreator(): JSX.Element {
                 </div>
                 <For each={inputDevices()}>
                   {(node) => {
-                    const name = inputNodeName(node);
+                    const name = inputNodeName(node, graphState.graph.defaultSourceName);
                     return (
                       <button
                         onClick={() => create(name, "source")}

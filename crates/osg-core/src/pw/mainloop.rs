@@ -418,13 +418,25 @@ fn init_metadata_listener(
             let store = store.clone();
             let sender = sender.clone();
             move |_subject, key, _type, value| {
-                if key == Some("default.audio.sink") {
-                    let name = value
-                        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
-                        .and_then(|v| v.get("name")?.as_str().map(String::from));
-                    debug!("default.audio.sink changed: {name:?}");
-                    store.borrow_mut().default_sink_name = name;
-                    let _ = sender.send(ToPipewireMessage::Update);
+                let parse_name = |v: &str| -> Option<String> {
+                    serde_json::from_str::<serde_json::Value>(v)
+                        .ok()
+                        .and_then(|v| v.get("name")?.as_str().map(String::from))
+                };
+                match key {
+                    Some("default.audio.sink") => {
+                        let name = value.and_then(parse_name);
+                        debug!("default.audio.sink changed: {name:?}");
+                        store.borrow_mut().default_sink_name = name;
+                        let _ = sender.send(ToPipewireMessage::Update);
+                    }
+                    Some("default.audio.source") => {
+                        let name = value.and_then(parse_name);
+                        debug!("default.audio.source changed: {name:?}");
+                        store.borrow_mut().default_source_name = name;
+                        let _ = sender.send(ToPipewireMessage::Update);
+                    }
+                    _ => {}
                 }
                 0
             }
