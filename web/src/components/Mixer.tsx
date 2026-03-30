@@ -83,13 +83,17 @@ export default function Mixer() {
 
   const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
 
-  // Optimistic local order — instant UI update, then persist to backend
+  // Local order — instant UI, persisted to backend on change
   const [localOrder, setLocalOrder] = createSignal<EndpointDescriptor[]>([]);
+  let orderInitialized = false;
 
-  // Sync from backend when it sends display order
+  // Sync from backend ONCE on initial load only
   createEffect(() => {
     const backendOrder = state.session.displayOrder;
-    if (backendOrder.length > 0) setLocalOrder(backendOrder);
+    if (!orderInitialized && backendOrder.length > 0) {
+      orderInitialized = true;
+      setLocalOrder(backendOrder);
+    }
   });
 
   function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): EndpointEntry[] {
