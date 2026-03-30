@@ -1,75 +1,163 @@
 import { For, Show, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import type { PwNode } from "../types";
+import {
+  Plus,
+  Mic,
+  Music,
+  Globe,
+  Bell,
+  Gamepad2,
+  MessageCircle,
+  Speaker,
+  Zap,
+  Volume2,
+  PenLine,
+} from "lucide-solid";
+import type { App, PwNode, PwDevice } from "../types";
 
-const PRESETS = [
-  { name: "Music", icon: "🎵", kind: "duplex" as const },
-  { name: "Browser", icon: "🌐", kind: "duplex" as const },
-  { name: "System", icon: "🔔", kind: "duplex" as const },
-  { name: "Game", icon: "🎮", kind: "duplex" as const },
-  { name: "Voice Chat", icon: "💬", kind: "duplex" as const },
-  { name: "SFX", icon: "🔊", kind: "duplex" as const },
-  { name: "Aux 1", icon: "🎛️", kind: "duplex" as const },
+const CHANNEL_TEMPLATES = [
+  { name: "Music", icon: Music, kind: "duplex" as const },
+  { name: "Browser", icon: Globe, kind: "duplex" as const },
+  { name: "System", icon: Bell, kind: "duplex" as const },
+  { name: "Game", icon: Gamepad2, kind: "duplex" as const },
+  { name: "SFX", icon: Zap, kind: "duplex" as const },
+  { name: "Voice Chat", icon: MessageCircle, kind: "duplex" as const },
+  { name: "Aux 1", icon: Volume2, kind: "duplex" as const },
 ];
 
-/** Get a human-friendly name for a PipeWire node. */
-function nodeName(node: PwNode): string {
-  return node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
+function nodeHasSourcePorts(node: PwNode): boolean {
+  return node.ports.some(([, kind]) => kind === "source");
 }
 
-/** Filter out internal/system nodes, keep user-facing audio apps. */
-function isUserApp(node: PwNode): boolean {
+function isOsgNode(node: PwNode): boolean {
   const name = node.identifier.nodeName ?? "";
-  // Skip internal PipeWire/system nodes
-  if (name.startsWith("Midi-Bridge") || name.startsWith("bluez_midi")) return false;
-  if (name.includes("v4l2_")) return false; // video devices
-  // Must have audio ports
-  return node.ports.length > 0;
+  return name.startsWith("osg.group.");
 }
 
-export default function ChannelCreator() {
-  const { send } = useSession();
-  const { graph } = useGraph();
+function isInternalNode(node: PwNode): boolean {
+  const name = node.identifier.nodeName ?? "";
+  return (
+    name.startsWith("Midi-Bridge") ||
+    name.startsWith("bluez_midi") ||
+    name.includes("v4l2_") ||
+    name.startsWith("libpipewire")
+  );
+}
+
+function isEasyEffectsInternal(node: PwNode): boolean {
+  const name = node.identifier.nodeName ?? "";
+  return name.startsWith("ee_") || name === "easyeffects_sink";
+}
+
+function isEasyEffectsSource(node: PwNode): boolean {
+  return (node.identifier.nodeName ?? "") === "easyeffects_source";
+}
+
+function deviceNodeIds(devices: Record<string, PwDevice>): Set<number> {
+  const ids = new Set<number>();
+  for (const dev of Object.values(devices) as PwDevice[]) {
+    for (const nodeId of dev.nodes) ids.add(nodeId);
+  }
+  return ids;
+}
+
+// TODO(backend): resolve real mic name for EasyEffects source via PipeWire metadata
+// or EasyEffects socket API. Currently shows PipeWire node description.
+function inputNodeName(node: PwNode): string {
+  const desc = node.identifier.nodeDescription ?? node.identifier.nodeNick ?? `Node ${node.id}`;
+  return desc;
+}
+
+export default function ChannelCreator(): JSX.Element {
+  const { state, send } = useSession();
+  const graphState = useGraph();
   const [open, setOpen] = createSignal(false);
   const [search, setSearch] = createSignal("");
 
-  const audioApps = () => {
+  const inputDevices = () => {
     const q = search().toLowerCase();
-    return (Object.values(graph.nodes) as PwNode[])
-      .filter(isUserApp)
-      .filter((n) => nodeName(n).toLowerCase().includes(q))
-      .sort((a, b) => nodeName(a).localeCompare(nodeName(b)));
+    const devNodes = deviceNodeIds(graphState.graph.devices);
+    return (Object.values(graphState.graph.nodes) as PwNode[])
+      .filter((n) => {
+        if (isOsgNode(n) || isInternalNode(n) || isEasyEffectsInternal(n)) return false;
+        if (!nodeHasSourcePorts(n)) return false;
+        // Include: hardware device inputs OR EasyEffects processed source
+        return devNodes.has(n.id) || isEasyEffectsSource(n);
+      })
+      .filter((n) => inputNodeName(n).toLowerCase().includes(q))
+      .sort((a, b) => inputNodeName(a).localeCompare(inputNodeName(b)));
   };
 
-  const filteredPresets = () => {
+  const runningApps = () => {
     const q = search().toLowerCase();
-    return PRESETS.filter((p) => p.name.toLowerCase().includes(q));
+    return (Object.values(state.session.apps) as App[])
+      .filter((app) => {
+        const display = app.name || app.binary;
+        if (!display || display.includes("(deleted)")) return false;
+        return display.toLowerCase().includes(q);
+      })
+      .sort((a, b) => (a.name || a.binary).localeCompare(b.name || b.binary));
   };
+
+  const existingChannelNames = () => {
+    const names = new Set<string>();
+    for (const [, ep] of state.session.endpoints) {
+      names.add(ep.displayName);
+      if (ep.customName) names.add(ep.customName);
+    }
+    return names;
+  };
+
+  const availableTemplates = () => {
+    const q = search().toLowerCase();
+    const existing = existingChannelNames();
+    return CHANNEL_TEMPLATES.filter(
+      (p) => !existing.has(p.name) && p.name.toLowerCase().includes(q),
+    );
+  };
+
+  const [customName, setCustomName] = createSignal("");
 
   function create(name: string, kind: "source" | "duplex" | "sink") {
     send({ type: "createChannel", name, kind });
     setOpen(false);
     setSearch("");
+    setCustomName("");
   }
+
+  function close() {
+    setOpen(false);
+    setSearch("");
+  }
+
+  const hasResults = () =>
+    inputDevices().length > 0 || runningApps().length > 0 || availableTemplates().length > 0;
 
   return (
     <div class="relative">
       <button
-        onClick={() => setOpen(!open())}
-        class="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border bg-bg-secondary px-3 py-2.5 text-[13px] text-text-muted transition-colors hover:border-accent hover:text-accent"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open()}
+        aria-haspopup="listbox"
+        class="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border bg-bg-elevated px-3 py-2.5 transition-colors duration-150 hover:border-accent hover:text-accent"
       >
-        <span class="text-base">+</span> Create channel
+        <Plus size={14} class="text-text-muted" />
+        <span class="text-[13px] text-text-muted">Create channel</span>
       </button>
 
       <Show when={open()}>
-        <div class="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+        <div class="fixed inset-0 z-20" onClick={close} />
 
-        <div class="absolute bottom-full left-0 z-30 mb-1 w-72 rounded-lg border border-border bg-bg-elevated shadow-xl">
+        <div
+          class="absolute bottom-full left-0 z-30 mb-1 w-72 rounded-lg border border-border bg-bg-elevated shadow-xl"
+          onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && close()}
+        >
           <div class="border-b border-border p-2">
             <input
               type="text"
-              placeholder="Search..."
+              placeholder="Search devices, apps, presets..."
               value={search()}
               onInput={(e) => setSearch(e.currentTarget.value)}
               autofocus
@@ -78,27 +166,25 @@ export default function ChannelCreator() {
           </div>
 
           <div class="max-h-72 overflow-y-auto">
-            <Show when={audioApps().length > 0}>
+            {/* Input Devices (hardware capture — mics, interfaces) */}
+            <Show when={inputDevices().length > 0}>
               <div class="px-2 pt-2">
-                <div class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-                  Audio Sources
+                <div class="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
+                  Input Devices
                 </div>
-                <For each={audioApps()}>
+                <For each={inputDevices()}>
                   {(node) => {
-                    const name = nodeName(node);
-                    const hasPorts = node.ports.length > 0;
+                    const name = inputNodeName(node);
                     return (
                       <button
-                        onClick={() => create(name, "duplex")}
-                        class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                        onClick={() => create(name, "source")}
+                        class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
                       >
-                        <span class="text-base">🔈</span>
-                        <span class="flex-1 truncate">{name}</span>
-                        <Show when={hasPorts}>
-                          <span class="rounded-full bg-vu-safe/20 px-1.5 py-0.5 text-[10px] text-vu-safe">
-                            live
-                          </span>
-                        </Show>
+                        <Mic size={16} class="shrink-0 text-text-muted" />
+                        <span class="flex-1 truncate text-xs text-text-secondary">{name}</span>
+                        <span class="rounded-full bg-vu-safe/15 px-1.5 py-0.5 text-[10px] text-vu-safe">
+                          input
+                        </span>
                       </button>
                     );
                   }}
@@ -106,22 +192,78 @@ export default function ChannelCreator() {
               </div>
             </Show>
 
+            {/* Running Apps (backend-detected audio apps) */}
+            <Show when={runningApps().length > 0}>
+              <div class="px-2 pt-2">
+                <div class="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
+                  Running Apps
+                </div>
+                <For each={runningApps()}>
+                  {(app) => {
+                    const display = app.name || app.binary;
+                    return (
+                      <button
+                        onClick={() => create(display, "duplex")}
+                        class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
+                      >
+                        <Speaker size={16} class="shrink-0 text-text-muted" />
+                        <span class="flex-1 truncate text-xs text-text-secondary">{display}</span>
+                        <span class="rounded-full bg-accent-secondary/15 px-1.5 py-0.5 text-[10px] text-accent-secondary">
+                          live
+                        </span>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+
+            {/* Channel Templates + Custom */}
             <div class="px-2 py-2">
-              <div class="px-1 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
+              <div class="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
                 Add Empty Channel
               </div>
-              <For each={filteredPresets()}>
+              <For each={availableTemplates()}>
                 {(preset) => (
                   <button
                     onClick={() => create(preset.name, preset.kind)}
-                    class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                    class="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 hover:bg-bg-hover hover:text-text-primary"
                   >
-                    <span class="text-base">{preset.icon}</span>
-                    <span>{preset.name}</span>
+                    <preset.icon size={16} class="shrink-0 text-text-muted" />
+                    <span class="text-xs text-text-secondary">{preset.name}</span>
                   </button>
                 )}
               </For>
+              {/* Custom channel with user-defined name */}
+              <div class="mt-1 flex items-center gap-1.5 rounded-md px-2 py-1">
+                <PenLine size={16} class="shrink-0 text-text-muted" />
+                <input
+                  type="text"
+                  placeholder="Custom name..."
+                  value={customName()}
+                  onInput={(e) => setCustomName(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && customName().trim()) {
+                      create(customName().trim(), "duplex");
+                    }
+                  }}
+                  class="flex-1 rounded border border-border bg-bg-primary px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:border-border-active focus:outline-none"
+                />
+                <button
+                  onClick={() => customName().trim() && create(customName().trim(), "duplex")}
+                  disabled={!customName().trim()}
+                  class="rounded bg-accent px-2 py-1 text-xs text-white disabled:opacity-30"
+                >
+                  Add
+                </button>
+              </div>
             </div>
+
+            <Show when={search() && !hasResults()}>
+              <p class="px-4 py-6 text-center text-xs text-text-muted">
+                No results for &ldquo;{search()}&rdquo;
+              </p>
+            </Show>
           </div>
         </div>
       </Show>

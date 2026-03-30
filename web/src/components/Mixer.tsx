@@ -1,11 +1,17 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, createEffect, createMemo } from "solid-js";
+import { createStore } from "solid-js/store";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
+import Sidebar from "./Sidebar";
+import MixHeader, { getOutputDevices } from "./MixHeader";
+import MixCreator from "./MixCreator";
+import ChannelLabel from "./ChannelLabel";
 import MatrixCell from "./MatrixCell";
 import ChannelCreator from "./ChannelCreator";
-import type { Endpoint, PwDevice } from "../types";
-
-const DEFAULT_MIXES = ["Monitor", "Stream"];
+import EmptyState from "./EmptyState";
+import SettingsPanel from "./SettingsPanel";
+import DragReorder from "./DragReorder";
+import type { Endpoint, EndpointDescriptor, MixerLink } from "../types";
 
 const MIX_COLORS: Record<string, string> = {
   Monitor: "var(--color-mix-monitor)",
@@ -15,218 +21,231 @@ const MIX_COLORS: Record<string, string> = {
   Aux: "var(--color-mix-aux)",
 };
 
-const MIX_ICONS: Record<string, string> = {
-  Monitor: "🎧",
-  Stream: "📡",
-  VOD: "🎬",
-  Chat: "💬",
-  Aux: "🔈",
-};
-
 function getMixColor(name: string): string {
-  return MIX_COLORS[name] ?? "var(--color-accent-secondary)";
+  for (const [key, color] of Object.entries(MIX_COLORS)) {
+    if (name.includes(key)) return color;
+  }
+  return "var(--color-mix-monitor)";
 }
 
-function isMuted(ep: Endpoint): boolean {
-  const s = ep.volumeLockedMuted;
-  return s === "mutedLocked" || s === "mutedUnlocked" || s === "muteMixed";
+function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function findEndpoint(
+  endpoints: [EndpointDescriptor, Endpoint][],
+  desc: EndpointDescriptor,
+): Endpoint | undefined {
+  return endpoints.find(([d]) => descriptorsEqual(d, desc))?.[1];
+}
+
+function findLink(
+  links: MixerLink[],
+  source: EndpointDescriptor,
+  target: EndpointDescriptor,
+): MixerLink | null {
+  return (
+    links.find((l) => descriptorsEqual(l.start, source) && descriptorsEqual(l.end, target)) ?? null
+  );
 }
 
 export default function Mixer() {
   const { state, send } = useSession();
-  const { graph, connected } = useGraph();
-  const [mixes, setMixes] = createSignal(DEFAULT_MIXES);
+  const graphState = useGraph();
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
-  function addMix() {
-    const names = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
-    const existing = mixes();
-    const next = names.find((n) => !existing.includes(n)) ?? `Mix ${existing.length + 1}`;
-    setMixes([...existing, next]);
+  function channelKind(desc: EndpointDescriptor): string | undefined {
+    if (!("channel" in desc)) return undefined;
+    const ch = state.session.channels[desc.channel];
+    return ch?.kind;
   }
 
-  function removeMix(name: string) {
-    setMixes(mixes().filter((m) => m !== name));
-  }
+  type EndpointEntry = { desc: EndpointDescriptor; ep: Endpoint };
 
-  const channels = () =>
+  const rawChannels = () =>
     state.session.endpoints
-      .filter(([desc]) => "channel" in desc)
+      .filter(([desc]) => "channel" in desc && channelKind(desc) !== "sink")
       .map(([desc, ep]) => ({ desc, ep }));
 
-  const hardwareDevices = (): PwDevice[] => {
-    return (Object.values(graph.devices) as PwDevice[])
-      .filter((d) => d.nodes.length > 0)
-      .sort((a, b) => a.name.localeCompare(b.name));
+  const sinkChannels = () =>
+    state.session.endpoints
+      .filter(([desc]) => "channel" in desc && channelKind(desc) === "sink")
+      .map(([desc, ep]) => ({ desc, ep }));
+
+  const rawMixes = () => {
+    const fromSinks = state.session.activeSinks.map((desc) => ({
+      desc,
+      ep: findEndpoint(state.session.endpoints, desc),
+    }));
+    if (fromSinks.length > 0) return fromSinks;
+    return sinkChannels();
+  };
+
+  // TODO(backend): persist channel/mix order to settings.toml
+  const [channelOrder, setChannelOrder] = createSignal<string[]>([]);
+  const [mixOrder, setMixOrder] = createSignal<string[]>([]);
+
+  const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
+
+  function applyOrder(items: EndpointEntry[], order: string[]): EndpointEntry[] {
+    if (order.length === 0) return items;
+    const byKey = new Map(items.map((item) => [descKey(item.desc), item]));
+    const ordered: EndpointEntry[] = [];
+    for (const key of order) {
+      const item = byKey.get(key);
+      if (item) {
+        ordered.push(item);
+        byKey.delete(key);
+      }
+    }
+    for (const item of byKey.values()) ordered.push(item);
+    return ordered;
+  }
+
+  const channels = createMemo(() => applyOrder(rawChannels(), channelOrder()));
+  const mixes = createMemo(() =>
+    applyOrder(
+      rawMixes().filter((m): m is { desc: EndpointDescriptor; ep: Endpoint } => m.ep != null),
+      mixOrder(),
+    ),
+  );
+
+  // TODO(backend): persist output device assignments to settings.toml
+  // TODO(backend): two-way sync with PipeWire metadata default.audio.sink
+  const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
+
+  // Auto-assign first output device to Monitor mix
+  createEffect(() => {
+    const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
+    if (allDevs.length === 0) return;
+    const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
+    if (!monitorMix) return;
+    const monitorKey = JSON.stringify(monitorMix.desc);
+    if (!mixOutputs[monitorKey]) {
+      setMixOutputs(monitorKey, allDevs[0].deviceId);
+    }
+  });
+
+  function setMixOutput(mixKey: string, deviceId: string | null) {
+    // If assigning a device that another mix uses, clear it from that mix
+    if (deviceId) {
+      for (const [key, val] of Object.entries(mixOutputs)) {
+        if (val === deviceId && key !== mixKey) {
+          setMixOutputs(key, null);
+        }
+      }
+    }
+    setMixOutputs(mixKey, deviceId);
+  }
+
+  const usedDeviceIds = () => {
+    const ids = new Set<string>();
+    for (const val of Object.values(mixOutputs)) {
+      if (val) ids.add(val);
+    }
+    return ids;
   };
 
   return (
     <div class="flex h-screen flex-col">
       {/* Header */}
-      <header class="flex items-center justify-between border-b border-border bg-bg-secondary px-5 py-2.5">
-        <h1 class="text-base font-semibold tracking-tight">Open Sound Grid</h1>
-        <div class="flex items-center gap-5 text-xs text-text-secondary">
+      <header class="flex items-center justify-between border-b border-border bg-bg-secondary px-5 py-2">
+        <h1 class="text-sm font-semibold tracking-tight text-text-primary">Open Sound Grid</h1>
+        <div class="flex items-center gap-4 text-xs text-text-secondary">
           <span class="flex items-center gap-1.5">
             <span
-              class={`inline-block h-2 w-2 rounded-full ${connected ? "bg-vu-safe" : "bg-vu-hot"}`}
+              class={`inline-block h-1.5 w-1.5 rounded-full ${graphState.connected ? "bg-vu-safe" : "bg-vu-hot"}`}
             />
-            {connected ? "Connected" : "Disconnected"}
+            {graphState.connected ? "Connected" : "Disconnected"}
           </span>
           <span>{channels().length} ch</span>
+          <span>{mixes().length} mix</span>
         </div>
       </header>
 
       <div class="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside class="flex w-52 shrink-0 flex-col border-r border-border bg-[#161616]">
-          <div class="border-b border-border px-4 py-2.5">
-            <h2 class="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
-              Devices
-            </h2>
-          </div>
-          <div class="flex-1 overflow-y-auto px-3 py-2">
-            <For each={hardwareDevices()}>
-              {(device) => (
-                <div class="group mb-1 flex w-full flex-col gap-1.5 rounded-md px-2.5 py-2.5">
-                  <div class="flex items-center gap-2">
-                    <span class="text-base">🎤</span>
-                    <span class="truncate text-[13px] font-medium text-text-primary">
-                      {device.name}
-                    </span>
-                  </div>
-                  {/* VU meter bar */}
-                  <div class="h-1.5 w-full overflow-hidden rounded-full bg-[#1a1a1a]">
-                    <div
-                      class="h-full rounded-full transition-all"
-                      style={{
-                        width: "35%",
-                        background:
-                          "linear-gradient(to right, var(--color-vu-safe) 0%, var(--color-vu-safe) 70%, var(--color-vu-warm) 85%, var(--color-vu-hot) 100%)",
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </For>
-          </div>
-          <div class="border-t border-[#222] p-3">
-            <div class="text-[11px] font-semibold uppercase tracking-widest text-text-muted">
-              Mixes & Effects
-            </div>
-            <div class="mt-2 space-y-0.5">
-              <For each={mixes()}>
-                {(mix) => (
-                  <div
-                    class="flex items-center gap-2 rounded-md border-l-2 px-2.5 py-1.5 text-[13px] text-text-secondary"
-                    style={{ "border-left-color": getMixColor(mix) }}
-                  >
-                    <span>{MIX_ICONS[mix] ?? "🔈"}</span>
-                    <span>{mix}</span>
-                  </div>
-                )}
-              </For>
-            </div>
-          </div>
-        </aside>
+        <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
 
         {/* Main mixer area */}
         <main class="flex flex-1 flex-col overflow-auto bg-bg-primary p-4">
-          {/* Mix column headers */}
-          <div class="mb-3 flex gap-3">
-            {/* Channel label spacer */}
-            <div class="w-52 shrink-0" />
-            <For each={mixes()}>
-              {(mix) => (
-                <div
-                  class="flex min-w-44 flex-1 items-center gap-2 rounded-t-lg border-t-[3px] bg-bg-secondary px-4 py-2.5"
-                  style={{ "border-top-color": getMixColor(mix) }}
-                >
-                  <span class="text-lg">{MIX_ICONS[mix] ?? "🔈"}</span>
-                  <div>
-                    <div class="text-sm font-semibold" style={{ color: getMixColor(mix) }}>
-                      {mix}
-                    </div>
-                    <div class="text-[11px] text-text-muted">output</div>
-                  </div>
-                  <button
-                    onClick={() => removeMix(mix)}
-                    class="ml-auto text-text-muted transition-colors hover:text-vu-hot"
-                    title={`Remove ${mix}`}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-            </For>
-            {/* Add mix button */}
-            <Show when={mixes().length < 5}>
-              <button
-                onClick={addMix}
-                class="flex min-w-12 items-center justify-center rounded-t-lg border-t-[3px] border-t-border bg-bg-secondary px-3 py-2.5 text-text-muted transition-colors hover:border-t-accent hover:text-accent"
-                title="Add mix"
-              >
-                +
-              </button>
-            </Show>
-          </div>
-
-          {/* Matrix rows */}
-          <div class="flex flex-1 flex-col gap-2">
-            <For each={channels()}>
-              {({ desc, ep }) => (
-                <div class="flex gap-3">
-                  {/* Channel label */}
-                  <div class="flex w-52 shrink-0 items-center gap-2 rounded-lg border border-border bg-bg-secondary px-3 py-2.5">
-                    <button
-                      onClick={() => send({ type: "setMute", endpoint: desc, muted: !isMuted(ep) })}
-                      class={`shrink-0 text-sm transition-colors ${isMuted(ep) ? "text-vu-hot" : "text-text-muted hover:text-text-primary"}`}
-                      title={isMuted(ep) ? "Unmute all" : "Mute all"}
-                    >
-                      {isMuted(ep) ? "🔇" : "🔊"}
-                    </button>
-                    <span class="flex-1 truncate text-[13px] font-medium">
-                      {ep.customName ?? ep.displayName}
-                    </span>
-                    <button
-                      onClick={() => send({ type: "removeEndpoint", endpoint: desc })}
-                      class="shrink-0 text-text-muted transition-colors hover:text-vu-hot"
-                      title="Remove channel"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  {/* Matrix cells */}
-                  <For each={mixes()}>
-                    {(mix) => (
-                      <MatrixCell endpoint={ep} descriptor={desc} mixColor={getMixColor(mix)} />
-                    )}
-                  </For>
-                </div>
-              )}
-            </For>
-
-            {/* Create channel button */}
-            <div class="flex gap-3">
-              <div class="w-52 shrink-0">
-                <ChannelCreator />
+          <Show when={graphState.connected} fallback={<EmptyState kind="disconnected" />}>
+            {/* Mix column headers */}
+            <div class="mb-2 flex items-stretch gap-2">
+              <div class="flex w-48 shrink-0 items-stretch justify-end">
+                <MixCreator maxMixes={8} currentCount={mixes().length} />
               </div>
+              <DragReorder
+                items={mixes()}
+                keyFn={(m) => descKey(m.desc)}
+                onReorder={(reordered) => setMixOrder(reordered.map((m) => descKey(m.desc)))}
+                direction="horizontal"
+              >
+                {(mix, _idx, dragHandle) => {
+                  const mixKey = descKey(mix.desc);
+                  return (
+                    <div class="flex min-w-[10rem] flex-1 flex-col">
+                      <MixHeader
+                        descriptor={mix.desc}
+                        endpoint={mix.ep}
+                        color={getMixColor(mix.ep.displayName)}
+                        outputDevice={mixOutputs[mixKey] ?? null}
+                        usedDeviceIds={usedDeviceIds()}
+                        onRemove={() => send({ type: "removeEndpoint", endpoint: mix.desc })}
+                        onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
+                        dragHandle={dragHandle}
+                      />
+                    </div>
+                  );
+                }}
+              </DragReorder>
             </div>
 
-            {/* Empty state */}
-            <Show when={channels().length === 0}>
-              <div class="flex flex-1 items-center justify-center">
-                <div class="text-center text-text-muted">
-                  <p class="mb-1 text-sm">No channels in mixer</p>
-                  <p class="text-xs">Click "+ Create channel" or a device in the sidebar</p>
+            {/* Matrix rows */}
+            <div class="flex flex-1 flex-col gap-1.5">
+              <DragReorder
+                items={channels()}
+                keyFn={(ch) => descKey(ch.desc)}
+                onReorder={(reordered) => setChannelOrder(reordered.map((ch) => descKey(ch.desc)))}
+              >
+                {(ch, _idx, dragHandle) => (
+                  <div class="flex items-stretch gap-2">
+                    <ChannelLabel descriptor={ch.desc} endpoint={ch.ep} dragHandle={dragHandle} />
+                    <For each={mixes()}>
+                      {({ desc: sinkDesc, ep: sinkEp }) => (
+                        <MatrixCell
+                          link={findLink(state.session.links, ch.desc, sinkDesc)}
+                          sourceEndpoint={ch.ep}
+                          sourceDescriptor={ch.desc}
+                          sinkDescriptor={sinkDesc}
+                          mixColor={getMixColor(sinkEp?.displayName ?? "")}
+                        />
+                      )}
+                    </For>
+                  </div>
+                )}
+              </DragReorder>
+
+              {/* Create channel */}
+              <div class="flex gap-2">
+                <div class="w-48 shrink-0">
+                  <ChannelCreator />
                 </div>
               </div>
-            </Show>
-          </div>
+
+              {/* Empty states */}
+              <Show when={channels().length === 0 && mixes().length > 0}>
+                <EmptyState kind="no-channels" />
+              </Show>
+              <Show when={mixes().length === 0}>
+                <EmptyState kind="no-mixes" />
+              </Show>
+            </div>
+          </Show>
         </main>
       </div>
 
       {/* Status bar */}
-      <footer class="flex items-center justify-between border-t border-border bg-bg-secondary px-5 py-1.5 text-[11px] text-text-muted">
+      <footer class="flex items-center justify-between border-t border-border bg-bg-secondary px-5 py-1 text-[11px] text-text-muted">
         <span class="flex items-center gap-1.5">
           <span
             class={`inline-block h-1.5 w-1.5 rounded-full ${state.connected ? "bg-vu-safe" : "bg-vu-hot"}`}
@@ -235,10 +254,13 @@ export default function Mixer() {
         </span>
         <div class="flex items-center gap-4">
           <span>{channels().length} channels</span>
-          <span>{Object.keys(graph.nodes).length} nodes</span>
+          <span>{mixes().length} mixes</span>
+          <span>{Object.keys(graphState.graph.nodes).length} nodes</span>
           <span>v0.1.0</span>
         </div>
       </footer>
+
+      <SettingsPanel open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
