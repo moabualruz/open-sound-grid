@@ -1,6 +1,7 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
+import { useMixerSettings } from "../stores/mixerSettings";
 import { Volume2, VolumeX } from "lucide-solid";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
@@ -16,14 +17,21 @@ const DEBOUNCE_MS = 16;
 
 export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
+  const { settings } = useMixerSettings();
   const [cellVol, setCellVol] = createSignal(1);
+  const [cellL, setCellL] = createSignal(1);
+  const [cellR, setCellR] = createSignal(1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let userDragging = false;
 
+  const isStereo = () => settings.stereoMode === "stereo";
+
   // Sync from backend — but not while the user is actively dragging the slider
   createEffect(() => {
-    const vol = props.link?.cellVolume ?? 1;
-    if (!userDragging) setCellVol(vol);
+    if (userDragging) return;
+    setCellVol(props.link?.cellVolume ?? 1);
+    setCellL(props.link?.cellVolumeLeft ?? 1);
+    setCellR(props.link?.cellVolumeRight ?? 1);
   });
 
   // Cell is "muted" when no link exists (unrouted) or channel is muted
@@ -35,16 +43,27 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const isMuted = () => !isLinked() || channelMuted();
 
   const masterVol = () => props.sourceEndpoint?.volume ?? 1;
+  const masterL = () => props.sourceEndpoint?.volumeLeft ?? 1;
+  const masterR = () => props.sourceEndpoint?.volumeRight ?? 1;
   const cellPct = () => Math.round(cellVol() * 100);
+  const cellPctL = () => Math.round(cellL() * 100);
+  const cellPctR = () => Math.round(cellR() * 100);
   const effectivePct = () => Math.round(cellVol() * masterVol() * 100);
+  const effectivePctL = () => Math.round(cellL() * masterL() * 100);
+  const effectivePctR = () => Math.round(cellR() * masterR() * 100);
 
-  function handleInput(value: number) {
-    // Auto-create link on first interaction if not linked
+  function ensureLinked() {
     if (!isLinked()) {
       send({ type: "link", source: props.sourceDescriptor, target: props.sinkDescriptor });
     }
+  }
+
+  function handleInput(value: number) {
+    ensureLinked();
     userDragging = true;
     setCellVol(value);
+    setCellL(value);
+    setCellR(value);
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       send({
@@ -52,6 +71,25 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
         source: props.sourceDescriptor,
         target: props.sinkDescriptor,
         volume: value,
+      });
+      userDragging = false;
+    }, DEBOUNCE_MS);
+  }
+
+  function handleStereoInput(channel: "left" | "right", value: number) {
+    ensureLinked();
+    userDragging = true;
+    if (channel === "left") setCellL(value);
+    else setCellR(value);
+    setCellVol((cellL() + cellR()) / 2);
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      send({
+        type: "setLinkStereoVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        left: cellL(),
+        right: cellR(),
       });
       userDragging = false;
     }, DEBOUNCE_MS);
@@ -107,50 +145,96 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           </Show>
         </button>
 
-        {/* Cell volume slider */}
-        <div class="relative flex-1" onWheel={handleWheel}>
-          {/* Effective volume ghost indicator (master × cell) */}
-          <div
-            class="pointer-events-none absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full"
-            style={{
-              width: `${effectivePct()}%`,
-              background: isMuted() ? "var(--color-text-muted)" : "var(--color-vu-safe)",
-              opacity: isMuted() ? 0.08 : 0.25,
-            }}
-          />
-          {/* Cell ratio indicator */}
-          <div
-            class="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full"
-            style={{
-              width: `${cellPct()}%`,
-              background: isMuted() ? "var(--color-text-muted)" : "var(--color-accent)",
-              opacity: isMuted() ? 0.1 : 0.15,
-            }}
-          />
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={cellVol()}
-            onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
-            aria-label="Cell volume"
-            aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
-            class="relative z-10 w-full"
-          />
-        </div>
-
-        {/* Percentage: cell% (→effective%) */}
-        <div
-          class={`flex flex-col items-end font-mono text-[10px] leading-tight ${
-            isMuted() ? "text-text-muted/30" : "text-text-secondary"
-          }`}
+        {/* Cell volume slider(s) */}
+        <Show
+          when={isStereo()}
+          fallback={
+            <div class="relative flex-1" onWheel={handleWheel}>
+              <div
+                class="pointer-events-none absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full"
+                style={{
+                  width: `${effectivePct()}%`,
+                  background: isMuted() ? "var(--color-text-muted)" : "var(--color-vu-safe)",
+                  opacity: isMuted() ? 0.08 : 0.25,
+                }}
+              />
+              <div
+                class="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full"
+                style={{
+                  width: `${cellPct()}%`,
+                  background: isMuted() ? "var(--color-text-muted)" : "var(--color-accent)",
+                  opacity: isMuted() ? 0.1 : 0.15,
+                }}
+              />
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={cellVol()}
+                onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
+                aria-label="Cell volume"
+                aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
+                class="relative z-10 w-full"
+              />
+            </div>
+          }
         >
-          <span>{cellPct()}</span>
-          <Show when={!isMuted() && cellPct() !== effectivePct()}>
-            <span class="text-text-muted">→{effectivePct()}</span>
-          </Show>
-        </div>
+          <div class="flex flex-1 flex-col gap-0">
+            <div class="flex items-center gap-1">
+              <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={cellL()}
+                onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
+                aria-label="Cell volume left"
+                class="w-full"
+              />
+              <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
+                {cellPctL()}
+                <Show when={cellPctL() !== effectivePctL()}>
+                  <span class="text-text-muted">→{effectivePctL()}</span>
+                </Show>
+              </span>
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="w-2 text-[8px] font-bold text-text-muted">R</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={cellR()}
+                onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
+                aria-label="Cell volume right"
+                class="w-full"
+              />
+              <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
+                {cellPctR()}
+                <Show when={cellPctR() !== effectivePctR()}>
+                  <span class="text-text-muted">→{effectivePctR()}</span>
+                </Show>
+              </span>
+            </div>
+          </div>
+        </Show>
+
+        {/* Percentage (mono only) */}
+        <Show when={!isStereo()}>
+          <div
+            class={`flex flex-col items-end font-mono text-[10px] leading-tight ${
+              isMuted() ? "text-text-muted/30" : "text-text-secondary"
+            }`}
+          >
+            <span>{cellPct()}</span>
+            <Show when={!isMuted() && cellPct() !== effectivePct()}>
+              <span class="text-text-muted">→{effectivePct()}</span>
+            </Show>
+          </div>
+        </Show>
       </div>
     </div>
   );

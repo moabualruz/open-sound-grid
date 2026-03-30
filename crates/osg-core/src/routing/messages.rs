@@ -38,6 +38,8 @@ pub enum StateMsg {
     SetLinkLocked(EndpointDescriptor, EndpointDescriptor, bool),
     /// Set per-route cell volume (independent of channel master).
     SetLinkVolume(EndpointDescriptor, EndpointDescriptor, f32),
+    /// Set per-route stereo cell volume (independent L/R).
+    SetLinkStereoVolume(EndpointDescriptor, EndpointDescriptor, f32, f32),
 }
 
 // ---------------------------------------------------------------------------

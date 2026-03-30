@@ -2,6 +2,7 @@ import { Show, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
+import { useMixerSettings } from "../stores/mixerSettings";
 import { X, Monitor, Sun, Moon, SlidersVertical } from "lucide-solid";
 
 interface SettingsPanelProps {
@@ -12,9 +13,8 @@ interface SettingsPanelProps {
 export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
   const { state } = useSession();
   const graphState = useGraph();
+  const { settings, setStereoMode } = useMixerSettings();
   const [presetName, setPresetName] = createSignal("");
-  // TODO(backend): persist stereo mode to settings.toml via command
-  const [stereoMode, setStereoMode] = createSignal<"mono" | "stereo">("mono");
   // TODO(backend): persist latency setting via command
   const [latency, setLatency] = createSignal("0");
 
@@ -83,7 +83,7 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
                     <button
                       onClick={() => setStereoMode("mono")}
                       class={`flex flex-1 items-center justify-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors duration-150 ${
-                        stereoMode() === "mono"
+                        settings.stereoMode === "mono"
                           ? "border-border-active bg-bg-hover text-text-primary"
                           : "border-border text-text-muted hover:text-text-secondary"
                       }`}
@@ -94,7 +94,7 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
                     <button
                       onClick={() => setStereoMode("stereo")}
                       class={`flex flex-1 items-center justify-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors duration-150 ${
-                        stereoMode() === "stereo"
+                        settings.stereoMode === "stereo"
                           ? "border-border-active bg-bg-hover text-text-primary"
                           : "border-border text-text-muted hover:text-text-secondary"
                       }`}
@@ -104,7 +104,7 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
                     </button>
                   </div>
                   <p class="mt-1 text-[10px] text-text-muted">
-                    {stereoMode() === "stereo"
+                    {settings.stereoMode === "stereo"
                       ? "Independent left/right volume control per channel"
                       : "Single volume slider controls both channels"}
                   </p>

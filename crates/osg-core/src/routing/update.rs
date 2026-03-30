@@ -183,6 +183,8 @@ impl MixerSession {
                         break 'handler None;
                     };
                     endpoint.volume = volume;
+                    endpoint.volume_left = volume;
+                    endpoint.volume_right = volume;
                     endpoint.volume_mixed = false;
 
                     if let Some(nodes) = nodes {
@@ -209,6 +211,8 @@ impl MixerSession {
                         break 'handler None;
                     };
                     endpoint.volume = (left + right) / 2.0;
+                    endpoint.volume_left = left;
+                    endpoint.volume_right = right;
                     endpoint.volume_mixed = (left - right).abs() > f32::EPSILON;
 
                     if let Some(nodes) = nodes {
@@ -345,6 +349,8 @@ impl MixerSession {
                             end: sink,
                             state: LinkState::ConnectedUnlocked,
                             cell_volume: 1.0,
+                            cell_volume_left: 1.0,
+                            cell_volume_right: 1.0,
                             pending: !msgs.is_empty(),
                         });
                     }
@@ -415,6 +421,8 @@ impl MixerSession {
                                 end: sink,
                                 state: LinkState::DisconnectedLocked,
                                 cell_volume: 1.0,
+                                cell_volume_left: 1.0,
+                                cell_volume_right: 1.0,
                                 pending: false,
                             });
                         }
@@ -473,7 +481,23 @@ impl MixerSession {
                         .iter_mut()
                         .find(|l| l.start == source && l.end == sink)
                     {
-                        link.cell_volume = volume.clamp(0.0, 1.0);
+                        let v = volume.clamp(0.0, 1.0);
+                        link.cell_volume = v;
+                        link.cell_volume_left = v;
+                        link.cell_volume_right = v;
+                    }
+                    None
+                }
+
+                StateMsg::SetLinkStereoVolume(source, sink, left, right) => {
+                    if let Some(link) = self
+                        .links
+                        .iter_mut()
+                        .find(|l| l.start == source && l.end == sink)
+                    {
+                        link.cell_volume_left = left.clamp(0.0, 1.0);
+                        link.cell_volume_right = right.clamp(0.0, 1.0);
+                        link.cell_volume = (left + right) / 2.0;
                     }
                     None
                 }

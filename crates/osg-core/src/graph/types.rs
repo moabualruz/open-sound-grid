@@ -139,6 +139,12 @@ pub struct Endpoint {
     pub icon_name: String,
     pub details: Vec<String>,
     pub volume: f32,
+    /// Left channel volume (0.0–1.0). Equals `volume` when mono.
+    #[serde(default = "default_one")]
+    pub volume_left: f32,
+    /// Right channel volume (0.0–1.0). Equals `volume` when mono.
+    #[serde(default = "default_one")]
+    pub volume_right: f32,
     /// True when channels across the backing nodes have differing volumes.
     pub volume_mixed: bool,
     pub volume_locked_muted: VolumeLockMuteState,
@@ -164,6 +170,8 @@ impl Endpoint {
             icon_name: String::new(),
             details: Vec::new(),
             volume: 1.0,
+            volume_left: 1.0,
+            volume_right: 1.0,
             volume_mixed: false,
             volume_locked_muted: VolumeLockMuteState::UnmutedUnlocked,
             visible: true,
@@ -234,6 +242,12 @@ pub struct Link {
     /// Effective volume to PipeWire = master × cell_volume.
     #[serde(default = "default_one")]
     pub cell_volume: f32,
+    /// Per-route left channel volume (0.0–1.0). Equals `cell_volume` when mono.
+    #[serde(default = "default_one")]
+    pub cell_volume_left: f32,
+    /// Per-route right channel volume (0.0–1.0). Equals `cell_volume` when mono.
+    #[serde(default = "default_one")]
+    pub cell_volume_right: f32,
     /// Transient: a link command is in-flight to PipeWire.
     #[serde(skip)]
     pub pending: bool,

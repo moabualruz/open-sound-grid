@@ -88,6 +88,14 @@ pub enum Command {
         volume: f32,
     },
 
+    /// Set per-route stereo cell volume (independent L/R).
+    SetLinkStereoVolume {
+        source: EndpointDescriptor,
+        target: EndpointDescriptor,
+        left: f32,
+        right: f32,
+    },
+
     /// Set the display order for source channels (rows).
     SetChannelOrder { order: Vec<EndpointDescriptor> },
 
@@ -124,6 +132,12 @@ impl Command {
                 target,
                 volume,
             } => StateMsg::SetLinkVolume(source, target, volume),
+            Self::SetLinkStereoVolume {
+                source,
+                target,
+                left,
+                right,
+            } => StateMsg::SetLinkStereoVolume(source, target, left, right),
             Self::SetMixOutput {
                 channel,
                 output_node_id,

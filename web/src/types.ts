@@ -106,6 +106,8 @@ export interface Endpoint {
   iconName: string;
   details: string[];
   volume: number;
+  volumeLeft: number;
+  volumeRight: number;
   volumeMixed: boolean;
   volumeLockedMuted: VolumeLockMuteState;
   visible: boolean;
@@ -116,6 +118,8 @@ export interface MixerLink {
   end: EndpointDescriptor;
   state: LinkState;
   cellVolume: number;
+  cellVolumeLeft: number;
+  cellVolumeRight: number;
 }
 
 export interface Channel {
@@ -172,6 +176,13 @@ export type Command =
       source: EndpointDescriptor;
       target: EndpointDescriptor;
       volume: number;
+    }
+  | {
+      type: "setLinkStereoVolume";
+      source: EndpointDescriptor;
+      target: EndpointDescriptor;
+      left: number;
+      right: number;
     }
   | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
   | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }
