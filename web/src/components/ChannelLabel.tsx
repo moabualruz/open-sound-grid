@@ -198,12 +198,18 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           fallback={
             <div class="flex items-center gap-1">
               <div class="relative flex-1">
+                {/* Peak level (behind slider) */}
                 <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-1.5 -translate-y-1/2 rounded-full"
+                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                   style={{
-                    width: `${pct()}%`,
-                    background: isMuted() ? "var(--color-text-muted)" : "var(--color-accent)",
-                    opacity: isMuted() ? 0.1 : 0.2,
+                    width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
+                    background:
+                      (props.peakLeft ?? 0) > 0.9
+                        ? "var(--color-vu-hot)"
+                        : (props.peakLeft ?? 0) > 0.7
+                          ? "var(--color-vu-warm)"
+                          : "var(--color-vu-safe)",
+                    opacity: 0.25,
                   }}
                 />
                 <input
@@ -225,67 +231,64 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           <div class="flex flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={localL()}
-                aria-label="Left volume"
-                onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
-                class="w-full"
-              />
+              <div class="relative flex-1">
+                <div
+                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
+                  style={{
+                    width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
+                    background:
+                      (props.peakLeft ?? 0) > 0.9
+                        ? "var(--color-vu-hot)"
+                        : (props.peakLeft ?? 0) > 0.7
+                          ? "var(--color-vu-warm)"
+                          : "var(--color-vu-safe)",
+                    opacity: 0.25,
+                  }}
+                />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={localL()}
+                  aria-label="Left volume"
+                  onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
+                  class="relative z-10 w-full"
+                />
+              </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctL()}</span>
             </div>
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={localR()}
-                aria-label="Right volume"
-                onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
-                class="w-full"
-              />
+              <div class="relative flex-1">
+                <div
+                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
+                  style={{
+                    width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
+                    background:
+                      (props.peakRight ?? 0) > 0.9
+                        ? "var(--color-vu-hot)"
+                        : (props.peakRight ?? 0) > 0.7
+                          ? "var(--color-vu-warm)"
+                          : "var(--color-vu-safe)",
+                    opacity: 0.25,
+                  }}
+                />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={localR()}
+                  aria-label="Right volume"
+                  onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
+                  class="relative z-10 w-full"
+                />
+              </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctR()}</span>
             </div>
           </div>
         </Show>
-        {/* Peak level bar */}
-        <div class="mt-0.5 flex gap-0.5">
-          <div class="h-[3px] flex-1 rounded-full bg-bg-primary">
-            <div
-              class="h-full rounded-full transition-all duration-75"
-              style={{
-                width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                background:
-                  (props.peakLeft ?? 0) > 0.9
-                    ? "var(--color-vu-hot)"
-                    : (props.peakLeft ?? 0) > 0.7
-                      ? "var(--color-vu-warm)"
-                      : "var(--color-vu-safe)",
-              }}
-            />
-          </div>
-          <Show when={isStereo()}>
-            <div class="h-[3px] flex-1 rounded-full bg-bg-primary">
-              <div
-                class="h-full rounded-full transition-all duration-75"
-                style={{
-                  width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
-                  background:
-                    (props.peakRight ?? 0) > 0.9
-                      ? "var(--color-vu-hot)"
-                      : (props.peakRight ?? 0) > 0.7
-                        ? "var(--color-vu-warm)"
-                        : "var(--color-vu-safe)",
-                }}
-              />
-            </div>
-          </Show>
-        </div>
       </div>
     </div>
   );
