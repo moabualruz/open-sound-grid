@@ -205,12 +205,10 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
               </h3>
               <div class="space-y-1 text-[10px] text-text-muted">
                 <p>Real-time VU meters (needs /ws/levels backend endpoint)</p>
-                <p>Stereo L/R independent control (needs backend stereo commands)</p>
-                <p>Per-mix output device selection</p>
                 <p>Preset save/load (needs backend persistence)</p>
                 <p>Light/System theme</p>
-                <p>EasyEffects mic name resolution</p>
                 <p>Keyboard navigation (arrow keys, shortcuts)</p>
+                <p>Compact view</p>
               </div>
             </section>
           </div>
