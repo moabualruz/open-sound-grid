@@ -35,7 +35,18 @@ function isMuted(ep: Endpoint): boolean {
 export default function Mixer() {
   const { state, send } = useSession();
   const { graph, connected } = useGraph();
-  const [mixes] = createSignal(DEFAULT_MIXES);
+  const [mixes, setMixes] = createSignal(DEFAULT_MIXES);
+
+  function addMix() {
+    const names = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
+    const existing = mixes();
+    const next = names.find((n) => !existing.includes(n)) ?? `Mix ${existing.length + 1}`;
+    setMixes([...existing, next]);
+  }
+
+  function removeMix(name: string) {
+    setMixes(mixes().filter((m) => m !== name));
+  }
 
   const channels = () =>
     state.session.endpoints
@@ -127,9 +138,26 @@ export default function Mixer() {
                     </div>
                     <div class="text-[11px] text-text-muted">output</div>
                   </div>
+                  <button
+                    onClick={() => removeMix(mix)}
+                    class="ml-auto text-text-muted transition-colors hover:text-vu-hot"
+                    title={`Remove ${mix}`}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
             </For>
+            {/* Add mix button */}
+            <Show when={mixes().length < 5}>
+              <button
+                onClick={addMix}
+                class="flex min-w-12 items-center justify-center rounded-t-lg border-t-[3px] border-t-border bg-bg-secondary px-3 py-2.5 text-text-muted transition-colors hover:border-t-accent hover:text-accent"
+                title="Add mix"
+              >
+                +
+              </button>
+            </Show>
           </div>
 
           {/* Matrix rows */}

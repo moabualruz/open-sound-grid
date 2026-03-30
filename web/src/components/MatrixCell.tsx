@@ -75,11 +75,7 @@ export default function MatrixCell(props: MatrixCellProps) {
             width: `${pct()}%`,
             background: isMuted()
               ? "var(--color-text-muted)"
-              : pct() > 90
-                ? "var(--color-vu-hot)"
-                : pct() > 70
-                  ? "var(--color-vu-warm)"
-                  : "var(--color-vu-safe)",
+              : `linear-gradient(to right, var(--color-vu-safe) 0%, var(--color-vu-safe) 70%, var(--color-vu-warm) 85%, var(--color-vu-hot) 100%)`,
             opacity: isMuted() ? 0.15 : 0.6,
           }}
         />
