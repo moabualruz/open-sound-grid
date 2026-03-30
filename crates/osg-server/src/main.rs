@@ -8,6 +8,7 @@ use axum::{
 };
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
 use osg_core::OsgCore;
@@ -32,6 +33,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
     let app = Router::new()
         .route("/api/graph", get(get_graph))
         .route("/ws/graph", get(ws_graph))
+        .fallback_service(ServeDir::new("web/dist"))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

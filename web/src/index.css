@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-surface: oklch(0.15 0.01 260);
+  --color-surface-alt: oklch(0.2 0.01 260);
+  --color-surface-hover: oklch(0.25 0.01 260);
+  --color-border: oklch(0.35 0.01 260);
+  --color-text: oklch(0.93 0.01 260);
+  --color-text-muted: oklch(0.6 0.01 260);
+  --color-accent: oklch(0.7 0.15 220);
+  --color-accent-hover: oklch(0.75 0.15 220);
+  --color-source: oklch(0.7 0.12 145);
+  --color-sink: oklch(0.7 0.12 25);
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}

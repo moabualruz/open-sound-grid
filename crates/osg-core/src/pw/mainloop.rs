@@ -6,7 +6,7 @@ use pipewire::{
     context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, properties::properties,
     proxy::ProxyT, registry::RegistryRc, spa::param::ParamType, types::ObjectType,
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, trace, warn};
 use ulid::Ulid;
 
 use super::{
@@ -59,7 +59,7 @@ impl Master {
                 trace!("Pipewire done event: {id}, {seq:?}");
             })
             .error(|id, seq, res, msg| {
-                error!("Pipewire error event ({id}, {seq}, {res}): {msg:?}");
+                trace!("PipeWire error event ({id}, {seq}, {res}): {msg:?}");
             })
             .register()
     }
@@ -90,7 +90,7 @@ impl Master {
                                 _ => {}
                             }
                         }
-                        Err(err) => error!("Error converting object: {err:?}"),
+                        Err(err) => trace!("Skipping non-audio object: {err:?}"),
                     }
                 }
             })
