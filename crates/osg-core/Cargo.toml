@@ -1,0 +1,23 @@
+[package]
+name = "osg-core"
+version = "0.1.0"
+description = "PipeWire orchestration core for Open Sound Grid"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+pipewire = { workspace = true }
+indexmap = { workspace = true }
+slotmap = { workspace = true }
+itertools = { workspace = true }
+ulid = { workspace = true }
+oneshot = { workspace = true }
+dirs = { workspace = true }

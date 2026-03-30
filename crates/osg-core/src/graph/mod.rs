@@ -1,0 +1,16 @@
+// Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
+//
+// The graph module defines the desired-state model: the user's intent for
+// how audio should be routed. The `pw` module holds the *actual* PipeWire
+// graph; reconciliation (in `crate::routing::reconcile`) bridges the two.
+
+#![allow(dead_code)]
+
+pub mod types;
+
+// Re-export the most commonly used items at module level.
+pub use types::{
+    Application, ApplicationId, DesiredState, Device, DeviceId, Endpoint, EndpointDescriptor,
+    GroupNode, GroupNodeId, Link, LinkState, PersistentNodeId, ReconcileSettings,
+    VolumeLockMuteState, aggregate_bools, average_volumes, volumes_mixed,
+};

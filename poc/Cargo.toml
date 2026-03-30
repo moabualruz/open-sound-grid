@@ -1,0 +1,66 @@
+[package]
+name = "open-sound-grid"
+version = "0.1.0"
+edition = "2024"
+description = "Professional audio matrix mixer for Linux"
+license = "CC-BY-NC-SA-4.0"
+repository = "https://github.com/moabualruz/open-sound-grid"
+homepage = "https://github.com/moabualruz/open-sound-grid"
+readme = "README.md"
+keywords = ["audio", "mixer", "pulseaudio", "pipewire", "linux"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+# UI
+iced = { version = "0.14", features = ["canvas", "tokio", "svg", "image"] }
+iced_aw = { version = "0.13", default-features = false, features = ["tab_bar", "context_menu", "number_input", "menu", "card"] }
+
+# Audio
+libpulse-binding = "2.30"
+pipewire = { version = "0.9", optional = true }
+libspa = { version = "0.9", optional = true }
+
+# DSP Effects
+fundsp = "0.23"
+spectrum-analyzer = "1.7"
+realfft = "3.5"
+audio-gate = "0.2"
+
+# Serialization & Config
+serde = { version = "1", features = ["derive"] }
+toml = "1.1"
+confy = "2.0"
+directories = "6"
+
+# Async
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+
+# System Integration
+ksni = "0.3"
+zbus = "5"
+notify-rust = "4"
+freedesktop-desktop-entry = "0.8"
+freedesktop-icons = "0.4"
+single-instance = "0.3"
+
+# Logging & Errors
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+libc = "0.2"
+
+# Icons
+lucide-icons = { version = "0.575", features = ["iced"] }
+
+[dev-dependencies]
+iced_test = "0.14"
+
+[features]
+default = []
+pipewire-backend = ["dep:pipewire", "dep:libspa"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
