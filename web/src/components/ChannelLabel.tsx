@@ -220,7 +220,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             </div>
           }
         >
-          <div class="flex flex-col gap-0.5">
+          <div class="flex flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
               <input

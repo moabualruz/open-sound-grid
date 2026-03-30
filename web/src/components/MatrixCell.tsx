@@ -180,7 +180,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             </div>
           }
         >
-          <div class="flex flex-1 flex-col gap-0">
+          <div class="flex flex-1 flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
               <input
