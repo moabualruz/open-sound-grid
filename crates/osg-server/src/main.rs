@@ -201,8 +201,16 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
                 state.core.start_peak_monitor(pw_id);
             }
         }
-        // Monitor all nodes with audio ports (app streams, hardware)
+        // Monitor all nodes with audio ports (app streams, hardware),
+        // but skip our own peak-monitor streams to avoid infinite recursion
         for (&node_id, node) in &graph.nodes {
+            if node
+                .identifier
+                .node_name()
+                .is_some_and(|n: &str| n.starts_with("osg.peak."))
+            {
+                continue;
+            }
             let has_audio = node.ports.iter().any(|(_, kind, _)| {
                 *kind == osg_core::pw::PortKind::Source || *kind == osg_core::pw::PortKind::Sink
             });

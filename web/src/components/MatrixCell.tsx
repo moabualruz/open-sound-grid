@@ -157,12 +157,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                 class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                 style={{
                   width: `${Math.round(Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) * 100)}%`,
-                  background:
-                    Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0.9
-                      ? "var(--color-vu-hot)"
-                      : Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0.7
-                        ? "var(--color-vu-warm)"
-                        : "var(--color-vu-safe)",
+                  background: "var(--color-vu-gradient)",
+                  "background-size": `${Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0 ? Math.round(100 / Math.max(props.peakLeft ?? 0.01, props.peakRight ?? 0.01)) : 100}% 100%`,
                   opacity: isMuted() ? 0.08 : 0.3,
                 }}
               />
@@ -188,12 +184,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                   class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                   style={{
                     width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                    background:
-                      (props.peakLeft ?? 0) > 0.9
-                        ? "var(--color-vu-hot)"
-                        : (props.peakLeft ?? 0) > 0.7
-                          ? "var(--color-vu-warm)"
-                          : "var(--color-vu-safe)",
+                    background: "var(--color-vu-gradient)",
+                    "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
                     opacity: 0.3,
                   }}
                 />
@@ -222,12 +214,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                   class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                   style={{
                     width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
-                    background:
-                      (props.peakRight ?? 0) > 0.9
-                        ? "var(--color-vu-hot)"
-                        : (props.peakRight ?? 0) > 0.7
-                          ? "var(--color-vu-warm)"
-                          : "var(--color-vu-safe)",
+                    background: "var(--color-vu-gradient)",
+                    "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
                     opacity: 0.3,
                   }}
                 />

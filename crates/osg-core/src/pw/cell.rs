@@ -48,6 +48,7 @@ pub(super) fn create_cell_node(
                 *NODE_NICK => &*name,
                 *NODE_DESCRIPTION => &*name,
                 *APP_NAME => OSG_APP_NAME,
+                *NODE_VIRTUAL => "true",
                 *MEDIA_CLASS => "Audio/Duplex",
                 "audio.position" => "FL,FR",
                 "monitor.channel-volumes" => "true",

@@ -22,10 +22,18 @@
   --color-border: #2a2a2a;
   --color-border-active: #da7756;
 
-  /* VU meter gradient */
+  /* VU meter colors + gradient */
   --color-vu-safe: #4caf50;
   --color-vu-warm: #ff9800;
   --color-vu-hot: #f44336;
+  --color-vu-gradient: linear-gradient(
+    to right,
+    #4caf50 0%,
+    #8bc34a 40%,
+    #ffeb3b 60%,
+    #ff9800 80%,
+    #f44336 100%
+  );
 
   /* Mix column colors (semantic) */
   --color-mix-monitor: #7c9cbf;
