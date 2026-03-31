@@ -42,6 +42,12 @@
   --color-mix-chat: #5daa68;
   --color-mix-aux: #c4a35a;
 
+  /* Source type colors (EQ / effects panels) */
+  --color-source-mic: #e06090;
+  --color-source-app: #b07fe0;
+  --color-source-cell: #40b0a0;
+  --color-source-mix: #5090e0;
+
   /* Typography */
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "Cascadia Code", monospace;

@@ -2,7 +2,7 @@ import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
-import { Volume2, VolumeX } from "lucide-solid";
+import { Volume2, VolumeX, SlidersVertical } from "lucide-solid";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
 interface MatrixCellProps {
@@ -13,6 +13,7 @@ interface MatrixCellProps {
   mixColor: string;
   peakLeft?: number;
   peakRight?: number;
+  onOpenEq?: () => void;
 }
 
 const DEBOUNCE_MS = 16;
@@ -252,6 +253,19 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               <span class="text-text-muted">→{effectivePct()}</span>
             </Show>
           </div>
+        </Show>
+
+        {/* EQ button — visible on hover when route is active */}
+        <Show when={isLinked()}>
+          <button
+            type="button"
+            onClick={() => props.onOpenEq?.()}
+            class="shrink-0 text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent transition-colors duration-150"
+            title="EQ & Effects"
+            aria-label="EQ & Effects"
+          >
+            <SlidersVertical size={12} />
+          </button>
         </Show>
       </div>
     </div>

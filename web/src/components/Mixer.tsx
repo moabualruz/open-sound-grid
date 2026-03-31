@@ -2,7 +2,6 @@ import { For, Show, createSignal, createEffect, createMemo } from "solid-js";
 import { createStore } from "solid-js/store";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import Sidebar from "./Sidebar";
 import MixHeader, { getOutputDevices } from "./MixHeader";
 import MixCreator from "./MixCreator";
 import ChannelLabel from "./ChannelLabel";
@@ -12,6 +11,9 @@ import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
 import DragReorder from "./DragReorder";
 import { useLevels } from "../stores/levelsStore";
+import { Settings } from "lucide-solid";
+import EqPage from "../eq/EqPage";
+import type { EqPageTarget } from "../eq/EqPage";
 import type { Endpoint, EndpointDescriptor, MixerLink, PwGroupNode } from "../types";
 
 const MIX_COLORS: Record<string, string> = {
@@ -55,6 +57,7 @@ export default function Mixer() {
   const graphState = useGraph();
   const levels = useLevels();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [eqTarget, setEqTarget] = createSignal<EqPageTarget | null>(null);
 
   /** Get peak values for a channel by looking up its group node in the peak store. */
   function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
@@ -99,7 +102,6 @@ export default function Mixer() {
   let channelOrderInitialized = false;
   let mixOrderInitialized = false;
 
-  // Sync from backend ONCE on initial load only
   createEffect(() => {
     const backendOrder = state.session.channelOrder;
     if (!channelOrderInitialized && backendOrder.length > 0) {
@@ -151,16 +153,13 @@ export default function Mixer() {
     send({ type: "setMixOrder", order });
   }
 
-  // TODO(backend): persist output device assignments to settings.toml
   const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
 
-  // Initialize output device assignments from backend channel state + OS default
   let outputsInitialized = false;
   createEffect(() => {
     const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
     if (allDevs.length === 0 || outputsInitialized) return;
 
-    // Seed from backend: channels that already have output_node_id assigned
     for (const m of mixes()) {
       if (!("channel" in m.desc)) continue;
       const ch = state.session.channels[m.desc.channel];
@@ -170,7 +169,6 @@ export default function Mixer() {
       }
     }
 
-    // Auto-assign Monitor to OS default if not already assigned
     const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
     if (monitorMix) {
       const monitorKey = JSON.stringify(monitorMix.desc);
@@ -180,7 +178,6 @@ export default function Mixer() {
         const autoDeviceId = defaultDev?.deviceId ?? allDevs[0]?.deviceId;
         if (autoDeviceId) {
           setMixOutputs(monitorKey, autoDeviceId);
-          // Send to backend so PW links are created
           if ("channel" in monitorMix.desc) {
             const dev = allDevs.find((d) => d.deviceId === autoDeviceId);
             if (dev) {
@@ -199,7 +196,6 @@ export default function Mixer() {
   });
 
   function setMixOutput(mixKey: string, deviceId: string | null) {
-    // If assigning a device that another mix uses, clear it from that mix
     if (deviceId) {
       for (const [key, val] of Object.entries(mixOutputs)) {
         if (val === deviceId && key !== mixKey) {
@@ -209,7 +205,6 @@ export default function Mixer() {
     }
     setMixOutputs(mixKey, deviceId);
 
-    // Send to backend: look up the PW node ID from the output device list
     const desc: EndpointDescriptor = JSON.parse(mixKey);
     if ("channel" in desc) {
       const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
@@ -226,28 +221,95 @@ export default function Mixer() {
     return ids;
   };
 
+  // --- EQ page navigation ---
+  function openChannelEq(ep: Endpoint, desc: EndpointDescriptor) {
+    const kind = channelKind(desc);
+    const sourceType = kind === "source" ? "mic" : "app";
+    setEqTarget({
+      label: ep.customName ?? ep.displayName,
+      sourceType,
+      color: "var(--color-source-app)",
+      nodeId: descKey(desc),
+    });
+  }
+
+  function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {
+    const srcEp = findEndpoint(state.session.endpoints, source);
+    const sinkEp = findEndpoint(state.session.endpoints, sink);
+    const srcName = srcEp?.customName ?? srcEp?.displayName ?? "?";
+    const sinkName = sinkEp?.customName ?? sinkEp?.displayName ?? "?";
+    setEqTarget({
+      label: `${srcName} → ${sinkName}`,
+      sourceType: "cell",
+      color: "var(--color-source-cell)",
+      nodeId: `${descKey(source)}::${descKey(sink)}`,
+    });
+  }
+
+  function openMixEq(ep: Endpoint, desc: EndpointDescriptor) {
+    setEqTarget({
+      label: ep.customName ?? ep.displayName,
+      sourceType: "mix",
+      color: getMixColor(ep.displayName),
+      nodeId: descKey(desc),
+    });
+  }
+
   return (
     <div class="flex h-screen flex-col">
-      {/* Header */}
-      <header class="flex items-center justify-between border-b border-border bg-bg-secondary px-5 py-2">
-        <h1 class="text-sm font-semibold tracking-tight text-text-primary">Open Sound Grid</h1>
-        <div class="flex items-center gap-4 text-xs text-text-secondary">
-          <span class="flex items-center gap-1.5">
-            <span
-              class={`inline-block h-1.5 w-1.5 rounded-full ${graphState.connected ? "bg-vu-safe" : "bg-vu-hot"}`}
-            />
-            {graphState.connected ? "Connected" : "Disconnected"}
-          </span>
-          <span>{channels().length} ch</span>
-          <span>{mixes().length} mix</span>
+      {/* Top bar */}
+      <header
+        class="flex items-center justify-between border-b px-5 py-2"
+        style={{
+          "background-color": "var(--color-bg-secondary)",
+          "border-color": "var(--color-border)",
+        }}
+      >
+        <div class="flex items-center gap-4">
+          <h1
+            class="text-sm font-semibold tracking-tight"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            Open Sound Grid
+          </h1>
+          {/* Grid presets */}
+          <select
+            class="rounded px-2 py-1 text-xs"
+            style={{
+              "background-color": "var(--color-bg-primary)",
+              color: "var(--color-text-secondary)",
+              border: "1px solid var(--color-border)",
+            }}
+          >
+            <option>Default Grid</option>
+            <option>Gaming</option>
+            <option>Streaming</option>
+            <option>Music Production</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-2">
+          <button
+            class="flex items-center gap-1 rounded p-1.5 transition-colors"
+            style={{ color: "var(--color-text-muted)" }}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Settings"
+          >
+            <Settings size={16} />
+          </button>
         </div>
       </header>
 
-      <div class="flex flex-1 overflow-hidden">
-        <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
-
-        {/* Main mixer area */}
-        <main class="flex flex-1 flex-col overflow-auto bg-bg-primary p-4">
+      {/* Main content area — either grid or EQ page */}
+      <div class="flex-1 overflow-hidden relative">
+        {/* Matrix grid view */}
+        <div
+          class="absolute inset-0 overflow-auto p-4 transition-transform duration-250"
+          style={{
+            "transition-timing-function": "var(--ease-out-quart)",
+            transform: eqTarget() ? "translateX(-100%)" : "translateX(0)",
+            "background-color": "var(--color-bg-primary)",
+          }}
+        >
           <Show when={graphState.connected} fallback={<EmptyState kind="disconnected" />}>
             {/* Mix column headers */}
             <div class="mb-2 flex items-stretch gap-2">
@@ -271,13 +333,10 @@ export default function Mixer() {
                         outputDevice={mixOutputs[mixKey] ?? null}
                         usedDeviceIds={usedDeviceIds()}
                         onRemove={() =>
-                          send({
-                            type: "setEndpointVisible",
-                            endpoint: mix.desc,
-                            visible: false,
-                          })
+                          send({ type: "setEndpointVisible", endpoint: mix.desc, visible: false })
                         }
                         onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
+                        onOpenEq={() => openMixEq(mix.ep, mix.desc)}
                         dragHandle={dragHandle}
                       />
                     </div>
@@ -305,6 +364,7 @@ export default function Mixer() {
                       dragHandle={dragHandle}
                       peakLeft={getPeaks(ch.desc).left}
                       peakRight={getPeaks(ch.desc).right}
+                      onOpenEq={() => openChannelEq(ch.ep, ch.desc)}
                     />
                     <For each={mixes()}>
                       {({ desc: sinkDesc, ep: sinkEp }) => (
@@ -316,6 +376,7 @@ export default function Mixer() {
                           mixColor={getMixColor(sinkEp?.displayName ?? "")}
                           peakLeft={getPeaks(ch.desc).left}
                           peakRight={getPeaks(ch.desc).right}
+                          onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
                         />
                       )}
                     </For>
@@ -339,11 +400,31 @@ export default function Mixer() {
               </Show>
             </div>
           </Show>
-        </main>
+        </div>
+
+        {/* EQ page view — slides in from the right */}
+        <div
+          class="absolute inset-0 transition-transform duration-250"
+          style={{
+            "transition-timing-function": "var(--ease-out-quart)",
+            transform: eqTarget() ? "translateX(0)" : "translateX(100%)",
+          }}
+        >
+          <Show when={eqTarget()}>
+            {(target) => <EqPage target={target()} onBack={() => setEqTarget(null)} />}
+          </Show>
+        </div>
       </div>
 
       {/* Status bar */}
-      <footer class="flex items-center justify-between border-t border-border bg-bg-secondary px-5 py-1 text-[11px] text-text-muted">
+      <footer
+        class="flex items-center justify-between border-t px-5 py-1 text-[11px]"
+        style={{
+          "background-color": "var(--color-bg-secondary)",
+          "border-color": "var(--color-border)",
+          color: "var(--color-text-muted)",
+        }}
+      >
         <span class="flex items-center gap-1.5">
           <span
             class={`inline-block h-1.5 w-1.5 rounded-full ${state.connected ? "bg-vu-safe" : "bg-vu-hot"}`}

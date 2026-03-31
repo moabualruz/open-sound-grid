@@ -2,7 +2,16 @@ import { Show, For, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import { Headphones, Radio, Film, MessageCircle, Speaker, X, ChevronDown } from "lucide-solid";
+import {
+  Headphones,
+  Radio,
+  Film,
+  MessageCircle,
+  Speaker,
+  X,
+  ChevronDown,
+  SlidersVertical,
+} from "lucide-solid";
 import type { EndpointDescriptor, Endpoint, PwDevice, PwNode } from "../types";
 
 const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
@@ -24,6 +33,7 @@ interface MixHeaderProps {
   usedDeviceIds: Set<string>;
   onRemove: () => void;
   onSelectOutput: (deviceId: string | null) => void;
+  onOpenEq?: () => void;
   dragHandle?: () => JSX.Element;
 }
 
@@ -160,6 +170,15 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
             <ChevronDown size={10} class="shrink-0" />
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => props.onOpenEq?.()}
+          class="flex-shrink-0 text-text-muted/60 transition-colors duration-150 hover:text-accent"
+          aria-label="EQ & Effects"
+          title="EQ & Effects"
+        >
+          <SlidersVertical class="h-[12px] w-[12px]" />
+        </button>
         <button
           type="button"
           onClick={() => props.onRemove()}

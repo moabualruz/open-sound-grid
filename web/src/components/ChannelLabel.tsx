@@ -27,6 +27,7 @@ interface ChannelLabelProps {
   dragHandle?: () => JSX.Element;
   peakLeft?: number;
   peakRight?: number;
+  onOpenEq?: () => void;
 }
 
 const DEBOUNCE_MS = 16;
@@ -174,10 +175,10 @@ export default function ChannelLabel(props: ChannelLabelProps) {
         </button>
 
         <button
-          class="text-text-muted/40 transition-colors duration-150 hover:text-text-muted"
-          title="Effects (coming soon)"
-          aria-label="Effects"
-          disabled
+          class="text-text-muted/60 transition-colors duration-150 hover:text-accent"
+          title="EQ & Effects"
+          aria-label="EQ & Effects"
+          onClick={() => props.onOpenEq?.()}
         >
           <SlidersVertical size={12} />
         </button>
