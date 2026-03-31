@@ -4,6 +4,11 @@
 //! creates a PW filter node with stereo in/out, applies biquad EQ in
 //! the process callback, and reports peak levels.
 //!
+//! Rust 2024 edition requires explicit `unsafe {}` blocks even inside
+//! `unsafe fn`. Since this module is entirely FFI glue, we allow the
+//! legacy behavior to keep the code readable.
+#![allow(unsafe_op_in_unsafe_fn)]
+//!
 //! Thread model:
 //! - `OsgFilter` is created on the PW mainloop thread.
 //! - The `process` callback runs on the PW real-time thread.
@@ -224,7 +229,6 @@ impl OsgFilter {
             &events,
             data as *mut std::os::raw::c_void,
         );
-        // listener must stay alive as long as the filter — stored in OsgFilter
 
         // Add stereo input ports (FL, FR)
         let in_port_l = pipewire_sys::pw_filter_add_port(
