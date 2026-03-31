@@ -100,11 +100,11 @@ impl MixerSession {
     pub fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
 
-        // Collect apps that output audio (Sink kind = app plays audio)
+        // Collect apps that output audio (Source kind = app produces audio)
         let output_apps: Vec<_> = self
             .apps
             .values()
-            .filter(|app| app.kind == PortKind::Sink)
+            .filter(|app| app.kind == PortKind::Source)
             .map(|app| (app.name.clone(), app.binary.clone(), app.icon_name.clone()))
             .collect();
 
