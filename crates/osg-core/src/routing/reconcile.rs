@@ -52,6 +52,7 @@ impl MixerSession {
     ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.diff_channels(&endpoint_nodes);
+        self.ensure_default_links();
         messages.extend(self.diff_cells(graph));
         messages.extend(Self::diff_cell_links(graph));
         messages.extend(self.diff_app_routing(graph));
@@ -125,17 +126,13 @@ impl MixerSession {
             })
             .collect();
 
-        // Discover new apps from the graph.
         self.discover_apps(graph);
-
         endpoint_nodes
     }
 
-    // -----------------------------------------------------------------------
     // diff_channels — ensure virtual channels exist in PipeWire
-    // -----------------------------------------------------------------------
 
-    #[allow(clippy::expect_used)] // channel keys come from self.channels iteration
+    #[allow(clippy::expect_used)]
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
@@ -180,7 +177,6 @@ impl MixerSession {
 
     // -----------------------------------------------------------------------
     // diff_cells — create cell filters only for active routes
-    // -----------------------------------------------------------------------
 
     /// Create cell filter nodes only for routes that have an active Link.
     /// Unlike the old null-audio-sink approach (which pre-created all N×M
@@ -237,9 +233,7 @@ impl MixerSession {
         messages
     }
 
-    // -----------------------------------------------------------------------
-    // diff_app_routing — redirect assigned app streams via target.object
-    // -----------------------------------------------------------------------
+    // diff_app_routing — redirect assigned app streams
 
     /// For each channel with assigned apps, find matching PW stream nodes
     /// and create direct links if not already routed to the channel.
@@ -582,13 +576,16 @@ impl MixerSession {
                 None
             }
 
-            EndpointDescriptor::Channel(id) => graph
-                .group_nodes
-                .get(&id.inner())
-                .and_then(|gn| gn.id)
-                .and_then(|nid| graph.nodes.get(&nid))
-                .filter(|node| !node.ports.is_empty())
-                .map(|node| vec![node]),
+            EndpointDescriptor::Channel(id) => {
+                let name = format!("osg.group.{}", id.inner());
+                // Resolve by group_nodes map (legacy) or by node name scan (pw_filter)
+                let node = graph.group_nodes.get(&id.inner())
+                    .and_then(|gn| gn.id)
+                    .and_then(|nid| graph.nodes.get(&nid))
+                    .or_else(|| graph.nodes.values()
+                        .find(|n| n.identifier.node_name() == Some(&name)));
+                node.filter(|n| !n.ports.is_empty()).map(|n| vec![n])
+            }
 
             EndpointDescriptor::App(id, kind) => {
                 let app = self.apps.get(&id)?;

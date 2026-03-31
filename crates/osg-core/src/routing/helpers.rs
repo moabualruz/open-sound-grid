@@ -4,7 +4,9 @@
 
 use tracing::debug;
 
-use crate::graph::MixerSession;
+use crate::graph::{
+    ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
+};
 use crate::pw::{AudioGraph, PortKind};
 
 const EASYEFFECTS_SOURCE: &str = "easyeffects_source";
@@ -47,6 +49,46 @@ impl MixerSession {
                     ep.display_name
                 );
                 ep.display_name = new_name.clone();
+            }
+        }
+    }
+
+    /// Auto-create ConnectedLocked links for every source × sink pair.
+    /// With pw_filter nodes, WirePlumber doesn't auto-connect so we create
+    /// default links ourselves. Called by reconcile::diff().
+    pub fn ensure_default_links(&mut self) {
+        let sources: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind != ChannelKind::Sink && ch.pipewire_id.is_some())
+            .map(|(id, _)| EndpointDescriptor::Channel(*id))
+            .collect();
+        let sinks: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
+            .map(|(id, _)| EndpointDescriptor::Channel(*id))
+            .collect();
+
+        for source in &sources {
+            for sink in &sinks {
+                let exists = self
+                    .links
+                    .iter()
+                    .any(|l| l.start == *source && l.end == *sink);
+                if !exists {
+                    self.links.push(Link {
+                        start: *source,
+                        end: *sink,
+                        state: LinkState::ConnectedLocked,
+                        cell_volume: 1.0,
+                        cell_volume_left: 1.0,
+                        cell_volume_right: 1.0,
+                        cell_eq: EqConfig::default(),
+                        cell_node_id: None,
+                        pending: false,
+                    });
+                }
             }
         }
     }
