@@ -240,7 +240,7 @@ impl OsgFilter {
             filter,
             libspa_sys::SPA_DIRECTION_INPUT,
             pipewire_sys::pw_filter_port_flags_PW_FILTER_PORT_FLAG_MAP_BUFFERS,
-            0, // port_data_size — we store port ptrs in CallbackData instead
+            std::mem::size_of::<*mut std::os::raw::c_void>(), // port_data_size
             pipewire_sys::pw_properties_new(
                 c"format.dsp".as_ptr().cast::<std::os::raw::c_char>(),
                 c"32 bit float mono audio".as_ptr().cast::<std::os::raw::c_char>(),
@@ -410,20 +410,31 @@ unsafe extern "C" fn on_process(
     let out_l = pipewire_sys::pw_filter_get_dsp_buffer(d.out_port_l, n_samples) as *mut f32;
     let out_r = pipewire_sys::pw_filter_get_dsp_buffer(d.out_port_r, n_samples) as *mut f32;
 
-    if in_l.is_null() || in_r.is_null() || out_l.is_null() || out_r.is_null() {
-        return;
-    }
-
-    let eq = d.handle.load_eq();
-
     let n = n_samples as usize;
-    let in_slice_l = std::slice::from_raw_parts(in_l, n);
-    let in_slice_r = std::slice::from_raw_parts(in_r, n);
-    let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
-    let out_slice_r = std::slice::from_raw_parts_mut(out_r, n);
 
-    let peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
-    let peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
-
-    d.handle.store_peaks(peak_l, peak_r);
+    // Always write output — silence if no input, to prevent graph stalls.
+    // Output buffers may be NULL if ports aren't connected yet.
+    if !out_l.is_null() {
+        let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
+        if !in_l.is_null() {
+            let in_slice_l = std::slice::from_raw_parts(in_l, n);
+            let eq = d.handle.load_eq();
+            let peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
+            d.handle.store_peaks(peak_l, 0.0);
+        } else {
+            out_slice_l.fill(0.0);
+        }
+    }
+    if !out_r.is_null() {
+        let out_slice_r = std::slice::from_raw_parts_mut(out_r, n);
+        if !in_r.is_null() {
+            let in_slice_r = std::slice::from_raw_parts(in_r, n);
+            let eq = d.handle.load_eq();
+            let peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
+            let (existing_l, _) = d.handle.peak();
+            d.handle.store_peaks(existing_l, peak_r);
+        } else {
+            out_slice_r.fill(0.0);
+        }
+    }
 }
