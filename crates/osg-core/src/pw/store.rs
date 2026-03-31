@@ -23,15 +23,14 @@ use super::{
     pod::{DeviceActiveRoute, NodeProps, build_node_mute_pod, build_node_volume_pod},
 };
 
-/// Wrapper to hold cell node proxies alive without requiring Debug.
+/// Legacy wrapper for old null-audio-sink cell proxies. No longer used
+/// since cells now use OsgFilter (CellFilters). Kept temporarily for
+/// any leftover references during migration.
 pub(super) struct CellProxies(Vec<(pipewire::node::Node, pipewire::proxy::ProxyListener)>);
 
 impl CellProxies {
     fn new() -> Self {
         Self(Vec::new())
-    }
-    pub(super) fn push(&mut self, item: (pipewire::node::Node, pipewire::proxy::ProxyListener)) {
-        self.0.push(item);
     }
 }
 

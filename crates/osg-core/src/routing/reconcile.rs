@@ -153,8 +153,11 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
-                    // Start peak monitoring for newly resolved channel nodes
-                    messages.push(ToPipewireMessage::StartPeakMonitor(node.id));
+                    // Only start peak streams for Sink (mix) channels — Source/Duplex
+                    // channels use OsgFilter which computes peaks internally.
+                    if channel.kind == ChannelKind::Sink {
+                        messages.push(ToPipewireMessage::StartPeakMonitor(node.id));
+                    }
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");
