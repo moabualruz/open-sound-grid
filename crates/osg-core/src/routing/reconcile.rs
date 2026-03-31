@@ -58,6 +58,8 @@ impl MixerSession {
         messages.extend(self.diff_cells(graph));
         messages.extend(self.diff_cell_links(graph));
         messages.extend(self.diff_app_routing(graph));
+        // VU: future — insert pw_filter meters on channels to compute peaks
+        // from the actual audio signal. No peak streams.
         messages.extend(self.diff_properties(&endpoint_nodes));
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages

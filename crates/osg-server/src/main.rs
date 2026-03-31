@@ -193,19 +193,10 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(40)); // 25 Hz
 
     // Auto-start peak monitors for all audio nodes (channels, mixes, and app streams)
-    {
-        // Peak streams for external app streams only.
-        // Skip osg.* nodes — peak streams on our sinks cause feedback.
-        let graph = state.core.snapshot();
-        for (&node_id, node) in &graph.nodes {
-            let name = node.identifier.node_name().unwrap_or("");
-            if name.starts_with("osg.") { continue; }
-            let has_source = node.ports.iter().any(|(_, k, _)| *k == osg_core::pw::PortKind::Source);
-            if has_source {
-                state.core.start_peak_monitor(node_id);
-            }
-        }
-    }
+    // Peak streams disabled on initial connect — app streams may not
+    // exist yet. The reconciler handles peak monitoring for app streams
+    // as they appear. We do NOT monitor hardware or osg.* nodes.
+    {}
 
     loop {
         interval.tick().await;

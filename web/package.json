@@ -25,6 +25,7 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-solid": "^0.14.5",
     "globals": "^17.4.0",
+    "playwright": "^1.58.2",
     "prettier": "^3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5.8",
