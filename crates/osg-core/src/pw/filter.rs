@@ -149,20 +149,24 @@ pub struct OsgFilter {
     filter: *mut pipewire_sys::pw_filter,
     handle: FilterHandle,
     data: *mut CallbackData,
+    // These must live as long as the filter — PW references them internally.
+    _listener: libspa_sys::spa_hook,
+    _events: pipewire_sys::pw_filter_events,
 }
 
 impl OsgFilter {
     /// Create a new stereo filter node on the PW mainloop thread.
     ///
-    /// Uses `pw_filter_new_simple` which manages the core internally.
+    /// Uses `pw_filter_new` with the existing PW core so the filter
+    /// appears in the same registry session as all other OSG nodes.
     /// The filter gets 4 mono DSP ports: in_FL, in_FR, out_FL, out_FR.
     ///
     /// # Safety
-    /// Must be called from the PW mainloop thread. The `loop_ptr` must
-    /// be a valid `*mut pw_loop` from the running PW mainloop.
+    /// Must be called from the PW mainloop thread. The `core_ptr` must
+    /// be a valid `*mut pw_core` from the running PW connection.
     #[allow(unsafe_code)]
     pub unsafe fn new(
-        loop_ptr: *mut pipewire_sys::pw_loop,
+        core_ptr: *mut pipewire_sys::pw_core,
         name: &str,
         media_class: &str,
     ) -> Result<Self, String> {
@@ -183,11 +187,6 @@ impl OsgFilter {
             out_port_r: ptr::null_mut(),
         }));
 
-        // Build events struct with process callback
-        let mut events: pipewire_sys::pw_filter_events = std::mem::zeroed();
-        events.version = pipewire_sys::PW_VERSION_FILTER_EVENTS;
-        events.process = Some(on_process);
-
         // Build properties
         let props = pipewire_sys::pw_properties_new(
             c"media.type".as_ptr().cast::<std::os::raw::c_char>(),
@@ -205,18 +204,27 @@ impl OsgFilter {
             ptr::null::<std::os::raw::c_void>(),
         );
 
-        let filter = pipewire_sys::pw_filter_new_simple(
-            loop_ptr,
-            c_name.as_ptr(),
-            props,
-            &events,
-            data as *mut std::os::raw::c_void,
-        );
+        // Create filter on the existing core (same registry session)
+        let filter = pipewire_sys::pw_filter_new(core_ptr, c_name.as_ptr(), props);
 
         if filter.is_null() {
             drop(Box::from_raw(data));
-            return Err("pw_filter_new_simple returned null".into());
+            return Err("pw_filter_new returned null".into());
         }
+
+        // Attach event listener (process callback)
+        let mut events: pipewire_sys::pw_filter_events = std::mem::zeroed();
+        events.version = pipewire_sys::PW_VERSION_FILTER_EVENTS;
+        events.process = Some(on_process);
+
+        let mut listener: libspa_sys::spa_hook = std::mem::zeroed();
+        pipewire_sys::pw_filter_add_listener(
+            filter,
+            &mut listener,
+            &events,
+            data as *mut std::os::raw::c_void,
+        );
+        // listener must stay alive as long as the filter — stored in OsgFilter
 
         // Add stereo input ports (FL, FR)
         let in_port_l = pipewire_sys::pw_filter_add_port(
@@ -315,6 +323,8 @@ impl OsgFilter {
             filter,
             handle,
             data,
+            _listener: listener,
+            _events: events,
         })
     }
 
@@ -329,6 +339,30 @@ impl OsgFilter {
     pub fn handle(&self) -> &FilterHandle {
         &self.handle
     }
+}
+
+/// Convenience: create an OsgFilter for a channel group node.
+/// Called from mainloop.rs create_group_node() for Source/Duplex kinds.
+#[allow(unsafe_code)]
+pub fn create_group_filter(
+    core_ptr: *mut pipewire_sys::pw_core,
+    name: &str,
+    id: ulid::Ulid,
+    kind: super::GroupNodeKind,
+) -> Result<OsgFilter, String> {
+    let node_name = format!("osg.group.{id}");
+    let media_class = match kind {
+        super::GroupNodeKind::Source => "Audio/Source/Virtual",
+        super::GroupNodeKind::Duplex => "Audio/Duplex",
+        super::GroupNodeKind::Sink => return Err("Sink kind should use null-audio-sink".into()),
+    };
+    let filter = unsafe { OsgFilter::new(core_ptr, &node_name, media_class) }
+        .map_err(|e| format!("filter '{name}': {e}"))?;
+    tracing::debug!(
+        "[PW] created filter '{}' ({:?}) — node_id: {:?}",
+        name, kind, filter.node_id()
+    );
+    Ok(filter)
 }
 
 impl Drop for OsgFilter {

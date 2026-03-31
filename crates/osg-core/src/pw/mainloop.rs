@@ -283,12 +283,24 @@ impl Master {
         }
     }
 
+    #[allow(unsafe_code)]
     fn create_group_node(
         &self,
         name: String,
         id: Ulid,
         kind: GroupNodeKind,
     ) -> Result<(), PwError> {
+        // Channels (Source/Duplex) use OsgFilter for inline EQ + peak metering.
+        // Mixes (Sink) stay as null-audio-sinks — they're real output destinations.
+        if kind != GroupNodeKind::Sink {
+            let filter = super::filter::create_group_filter(
+                self.pw_core.as_raw_ptr(), &name, id, kind,
+            ).map_err(|e| PwError::SinkCreationFailed(e))?;
+            self.store.borrow_mut().group_filters.0.insert(id, filter);
+            return Ok(());
+        }
+
+        // Sink kind: null-audio-sink as before
         let proxy = self
             .pw_core
             .create_object::<pipewire::node::Node>(
@@ -304,11 +316,7 @@ impl Master {
                     "icon_name" => OSG_APP_ID,
                     *APP_NAME => OSG_APP_NAME,
                     *NODE_VIRTUAL => "true",
-                    *MEDIA_CLASS => match kind {
-                        GroupNodeKind::Source => "Audio/Source/Virtual",
-                        GroupNodeKind::Duplex => "Audio/Duplex",
-                        GroupNodeKind::Sink => "Audio/Sink",
-                    },
+                    *MEDIA_CLASS => "Audio/Sink",
                     "audio.position" => "FL,FR",
                     "monitor.channel-volumes" => "true",
                     "monitor.passthrough" => "true",
@@ -348,14 +356,19 @@ impl Master {
 
     fn remove_group_node(&self, id: Ulid) -> Result<(), PwError> {
         let mut store = self.store.borrow_mut();
+        // Check filters first (Source/Duplex channels)
+        if let Some(filter) = store.group_filters.0.remove(&id) {
+            // OsgFilter::drop destroys the PW filter node
+            drop(filter);
+            return Ok(());
+        }
+        // Fallback to null-audio-sink proxy (Sink mixes)
         let group_node = store
             .group_nodes
             .remove(&id)
             .ok_or(PwError::GroupNodeNotFound(id))?;
-
         // Dropping the proxy deletes the object on the server
         drop(group_node);
-
         Ok(())
     }
 }
@@ -582,21 +595,16 @@ pub(super) fn init_mainloop(
             }
         };
 
-        // init registry listener
         let master = Master::new(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
-
         let _listener = master.registry_listener();
         let _remove_listener = master.registry_remove_listener();
         let _core_listeners = master.init_core_listeners();
 
-        // Peak monitor streams — kept alive as long as monitoring is active.
-        // Each entry holds the StreamRc + listener (dropping them stops the stream).
+        // Peak monitor streams — dropping them stops the stream.
         let peak_streams: Rc<
             RefCell<HashMap<u32, (StreamRc, pipewire::stream::StreamListener<()>)>>,
         > = Rc::new(RefCell::new(HashMap::new()));
-
         // Pending peak links: peak_stream_name → target_node_id.
-        // Resolved when the peak stream's node appears in the store with ports.
         let pending_peak_links: Rc<RefCell<HashMap<String, u32>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
@@ -767,10 +775,12 @@ pub(super) fn init_mainloop(
                         debug!("[PW] peak monitor stopped for node {node_id}");
                     }
                 }
-                ToPipewireMessage::SetFilterEq { node_id, eq: _ } => {
-                    // Phase 2: will apply EQ to the pw_filter process callback.
-                    // For now, just log that we received the command.
-                    debug!("[PW] SetFilterEq for node {node_id} (filter not yet implemented)");
+                ToPipewireMessage::SetFilterEq { node_id, ref eq } => {
+                    let applied = store.borrow().group_filters.0.values()
+                        .find(|f| f.node_id() == Some(node_id))
+                        .map(|f| f.handle().set_eq(eq))
+                        .is_some();
+                    debug!("[PW] SetFilterEq node {node_id}: {}", if applied { "applied" } else { "no filter" });
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),
             }

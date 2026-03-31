@@ -41,6 +41,21 @@ impl std::fmt::Debug for CellProxies {
     }
 }
 
+/// Wrapper to hold OsgFilter instances without requiring Debug.
+pub(super) struct GroupFilters(pub(super) HashMap<Ulid, super::filter::OsgFilter>);
+
+impl GroupFilters {
+    fn new() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl std::fmt::Debug for GroupFilters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GroupFilters({})", self.0.len())
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Store {
     pub(super) osg_client_id: Option<u32>,
@@ -48,6 +63,9 @@ pub(super) struct Store {
     /// duplicated elsewhere in the store, but to avoid overcomplicating that code, we will store
     /// them here since dropping these copies deletes the object on the server.
     pub(super) group_nodes: HashMap<Ulid, GroupNode>,
+    /// OsgFilter instances for channels that use pw_filter instead of null-audio-sink.
+    /// Keyed by the same Ulid as group_nodes. When a filter is here, group_nodes won't have it.
+    pub(super) group_filters: GroupFilters,
     pub(super) clients: HashMap<u32, Client>,
     pub(super) devices: HashMap<u32, Device>,
     pub(super) nodes: HashMap<u32, Node>,
@@ -69,6 +87,7 @@ impl Store {
         Self {
             osg_client_id: None,
             group_nodes: HashMap::new(),
+            group_filters: GroupFilters::new(),
             clients: HashMap::new(),
             devices: HashMap::new(),
             nodes: HashMap::new(),
