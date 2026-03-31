@@ -86,6 +86,8 @@ pub(super) struct Store {
     /// OsgFilter instances for channels that use pw_filter instead of null-audio-sink.
     /// Keyed by the same Ulid as group_nodes. When a filter is here, group_nodes won't have it.
     pub(super) group_filters: GroupFilters,
+    /// Filter-chain module instances (EQ). Keyed by channel/mix Ulid.
+    pub(super) filter_chains: HashMap<Ulid, super::filter_chain::EqFilterChain>,
     pub(super) clients: HashMap<u32, Client>,
     pub(super) devices: HashMap<u32, Device>,
     pub(super) nodes: HashMap<u32, Node>,
@@ -99,6 +101,8 @@ pub(super) struct Store {
     pub(super) cell_proxies: CellProxies,
     /// OsgFilter instances for cell nodes (replacing null-audio-sink cells).
     pub(super) cell_filters: CellFilters,
+    /// Filter-chain module instances for cell EQ.
+    pub(super) cell_filter_chains: Vec<super::filter_chain::EqFilterChain>,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
     pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
 }
@@ -109,6 +113,7 @@ impl Store {
             osg_client_id: None,
             group_nodes: HashMap::new(),
             group_filters: GroupFilters::new(),
+            filter_chains: HashMap::new(),
             clients: HashMap::new(),
             devices: HashMap::new(),
             nodes: HashMap::new(),
@@ -118,6 +123,7 @@ impl Store {
             default_source_name: None,
             cell_proxies: CellProxies::new(),
             cell_filters: CellFilters::new(),
+            cell_filter_chains: Vec::new(),
             cell_node_ids: HashMap::new(),
         }
     }

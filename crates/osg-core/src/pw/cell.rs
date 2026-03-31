@@ -1,31 +1,28 @@
-// Per-cell filter nodes for matrix routing.
+// Per-cell filter-chain nodes for matrix routing.
 //
-// Each cell (channel×mix intersection) gets its own PipeWire filter node
+// Each cell (channel×mix intersection) gets its own filter-chain module
 // that acts as a volume + EQ gain stage. Route: channel → cell → mix.
-// Cell volume is set via the filter's process callback.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use pipewire::registry::RegistryRc;
-use tracing::debug;
 
 use super::PwError;
-use super::filter::OsgFilter;
 use super::store::Store;
 
-/// Arguments for creating a cell filter node.
+/// Arguments for creating a cell filter-chain node.
 pub(super) struct CellNodeArgs {
     pub name: String,
     pub channel_node_id: u32,
     pub mix_node_id: u32,
 }
 
-/// Create a per-cell filter node. Route: channel → cell_filter → mix.
+/// Create a per-cell filter-chain node. Route: channel → cell_filter → mix.
 /// The cell appears in the PW graph as `osg.cell.{channel_id}.{mix_id}`.
 #[allow(unsafe_code)]
 pub(super) fn create_cell_filter(
-    core_ptr: *mut pipewire_sys::pw_core,
+    context_ptr: *mut pipewire_sys::pw_context,
     store: &Rc<RefCell<Store>>,
     args: CellNodeArgs,
 ) -> Result<(), PwError> {
@@ -35,19 +32,20 @@ pub(super) fn create_cell_filter(
         mix_node_id,
     } = args;
     let cell_name = format!("osg.cell.{channel_node_id}.{mix_node_id}");
+    let eq = crate::graph::EqConfig::default();
 
-    let filter = unsafe { OsgFilter::new(core_ptr, &cell_name, "Audio/Duplex") }
-        .map_err(|e| PwError::SinkCreationFailed(format!("cell filter '{name}': {e}")))?;
+    let chain = unsafe {
+        super::filter_chain::EqFilterChain::load(
+            context_ptr,
+            &cell_name,
+            &name,
+            "Audio/Duplex",
+            &eq,
+        )
+    }
+    .map_err(|e| PwError::SinkCreationFailed(format!("cell filter '{name}': {e}")))?;
 
-    debug!(
-        "[PW] cell filter {cell_name} created (channel={channel_node_id}, mix={mix_node_id}) \
-         — node_id: {:?}",
-        filter.node_id()
-    );
-
-    // Store the filter — the node_id will be available once PW processes it.
-    // Cell linking happens via diff_cell_links once the cell appears in the graph.
-    store.borrow_mut().cell_filters.push(filter);
+    store.borrow_mut().cell_filter_chains.push(chain);
     Ok(())
 }
 

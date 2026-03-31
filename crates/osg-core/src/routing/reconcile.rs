@@ -368,6 +368,9 @@ impl MixerSession {
 
             if endpoint.volume_pending {
                 // While a command is in-flight, just check if PW has converged.
+                // Exact f32 equality is correct here: PipeWire stores channelVolumes
+                // as SPA_TYPE_Float arrays and copies them via memcpy (spa_pod_copy_array),
+                // preserving the exact IEEE 754 bit pattern with no rounding or clamping.
                 let volumes_match = if endpoint.volume_locked_muted.is_locked() {
                     nodes
                         .iter()

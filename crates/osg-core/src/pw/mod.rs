@@ -3,6 +3,7 @@
 pub mod biquad;
 mod cell;
 pub mod filter;
+pub mod filter_chain;
 mod identifier;
 mod mainloop;
 mod object;

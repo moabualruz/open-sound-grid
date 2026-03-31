@@ -192,20 +192,19 @@ impl OsgFilter {
             out_port_r: ptr::null_mut(),
         }));
 
-        // Build properties
+        // Build properties — must match what null-audio-sink used so
+        // WirePlumber treats this as a routable audio node, not a DSP filter.
         let props = pipewire_sys::pw_properties_new(
             c"media.type".as_ptr().cast::<std::os::raw::c_char>(),
             c"Audio".as_ptr().cast::<std::os::raw::c_char>(),
-            c"media.category".as_ptr().cast::<std::os::raw::c_char>(),
-            c"Filter".as_ptr().cast::<std::os::raw::c_char>(),
-            c"media.role".as_ptr().cast::<std::os::raw::c_char>(),
-            c"DSP".as_ptr().cast::<std::os::raw::c_char>(),
             c"media.class".as_ptr().cast::<std::os::raw::c_char>(),
             c_class.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.name".as_ptr().cast::<std::os::raw::c_char>(),
             c_name.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.virtual".as_ptr().cast::<std::os::raw::c_char>(),
             c"true".as_ptr().cast::<std::os::raw::c_char>(),
+            c"audio.position".as_ptr().cast::<std::os::raw::c_char>(),
+            c"FL,FR".as_ptr().cast::<std::os::raw::c_char>(),
             ptr::null::<std::os::raw::c_void>(),
         );
 
