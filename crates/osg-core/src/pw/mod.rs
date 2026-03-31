@@ -2,6 +2,7 @@
 
 pub mod biquad;
 mod cell;
+pub mod filter;
 mod identifier;
 mod mainloop;
 mod object;
