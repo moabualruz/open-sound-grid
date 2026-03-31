@@ -179,52 +179,59 @@ impl MixerSession {
     }
 
     // -----------------------------------------------------------------------
-    // diff_cells — ensure every row×mix pair has a cell node
+    // diff_cells — create cell filters only for active routes
     // -----------------------------------------------------------------------
 
-    /// For every (source channel × sink mix) pair, ensure a cell node exists.
-    /// Cell nodes are created upfront and always linked. Volume 0 = muted.
+    /// Create cell filter nodes only for routes that have an active Link.
+    /// Unlike the old null-audio-sink approach (which pre-created all N×M
+    /// cells), filters are only created when actually needed.
     fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
-        let rows: Vec<_> = self
-            .channels
+
+        // Collect active routes: links with Connected state
+        let active_routes: Vec<_> = self
+            .links
             .iter()
-            .filter(|(_, ch)| ch.kind != ChannelKind::Sink && ch.pipewire_id.is_some())
-            .collect();
-        let mixes: Vec<_> = self
-            .channels
-            .iter()
-            .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
+            .filter(|l| matches!(l.state, LinkState::ConnectedLocked | LinkState::ConnectedUnlocked))
+            .map(|l| (l.start, l.end))
             .collect();
 
-        for (row_id, row_ch) in &rows {
-            let Some(row_pw) = row_ch.pipewire_id else {
+        for (source_desc, sink_desc) in active_routes {
+            // Resolve source channel PW ID
+            let source_pw = if let EndpointDescriptor::Channel(id) = source_desc {
+                self.channels.get(&id).and_then(|ch| ch.pipewire_id)
+            } else {
+                None
+            };
+            // Resolve sink (mix) channel PW ID
+            let sink_pw = if let EndpointDescriptor::Channel(id) = sink_desc {
+                self.channels.get(&id).and_then(|ch| ch.pipewire_id)
+            } else {
+                None
+            };
+
+            let (Some(row_pw), Some(mix_pw)) = (source_pw, sink_pw) else {
                 continue;
             };
-            for (mix_id, mix_ch) in &mixes {
-                let Some(mix_pw) = mix_ch.pipewire_id else {
-                    continue;
-                };
-                let cell_name = format!("osg.cell.{row_pw}.{mix_pw}");
-                // Check if cell already exists in graph
-                if !self.created_cells.contains(&cell_name) {
-                    self.created_cells.insert(cell_name.clone());
-                    let row_name = self
-                        .endpoints
-                        .get(&EndpointDescriptor::Channel(**row_id))
-                        .map(|e| e.display_name.as_str())
-                        .unwrap_or("?");
-                    let mix_name = self
-                        .endpoints
-                        .get(&EndpointDescriptor::Channel(**mix_id))
-                        .map(|e| e.display_name.as_str())
-                        .unwrap_or("?");
-                    messages.push(ToPipewireMessage::CreateCellNode {
-                        name: format!("{row_name}→{mix_name}"),
-                        channel_node_id: row_pw,
-                        mix_node_id: mix_pw,
-                    });
-                }
+
+            let cell_name = format!("osg.cell.{row_pw}.{mix_pw}");
+            if !self.created_cells.contains(&cell_name) {
+                self.created_cells.insert(cell_name.clone());
+                let row_name = self
+                    .endpoints
+                    .get(&source_desc)
+                    .map(|e| e.display_name.as_str())
+                    .unwrap_or("?");
+                let mix_name = self
+                    .endpoints
+                    .get(&sink_desc)
+                    .map(|e| e.display_name.as_str())
+                    .unwrap_or("?");
+                messages.push(ToPipewireMessage::CreateCellNode {
+                    name: format!("{row_name}→{mix_name}"),
+                    channel_node_id: row_pw,
+                    mix_node_id: mix_pw,
+                });
             }
         }
         messages

@@ -154,9 +154,9 @@ pub struct OsgFilter {
     filter: *mut pipewire_sys::pw_filter,
     handle: FilterHandle,
     data: *mut CallbackData,
-    // These must live as long as the filter — PW references them internally.
-    _listener: libspa_sys::spa_hook,
-    _events: pipewire_sys::pw_filter_events,
+    // Box-pinned: PW holds raw pointers into these. They must not move.
+    _listener: Box<libspa_sys::spa_hook>,
+    _events: Box<pipewire_sys::pw_filter_events>,
 }
 
 impl OsgFilter {
@@ -217,16 +217,16 @@ impl OsgFilter {
             return Err("pw_filter_new returned null".into());
         }
 
-        // Attach event listener (process callback)
-        let mut events: pipewire_sys::pw_filter_events = std::mem::zeroed();
+        // Attach event listener — Box-pinned so PW's pointers stay valid
+        let mut events = Box::new(std::mem::zeroed::<pipewire_sys::pw_filter_events>());
         events.version = pipewire_sys::PW_VERSION_FILTER_EVENTS;
         events.process = Some(on_process);
 
-        let mut listener: libspa_sys::spa_hook = std::mem::zeroed();
+        let mut listener = Box::new(std::mem::zeroed::<libspa_sys::spa_hook>());
         pipewire_sys::pw_filter_add_listener(
             filter,
-            &mut listener,
-            &events,
+            &mut *listener,
+            &*events,
             data as *mut std::os::raw::c_void,
         );
 
