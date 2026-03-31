@@ -54,9 +54,10 @@ impl MixerSession {
         let mut messages = self.diff_channels(&endpoint_nodes);
         messages.extend(self.auto_create_app_channels());
         self.ensure_default_links();
-        messages.extend(self.diff_cells(graph));
-        messages.extend(Self::diff_cell_links(graph));
+        // Cells disabled — channels link directly to mixes via diff_direct_channel_to_mix_links.
         messages.extend(self.diff_app_routing(graph));
+        messages.extend(self.diff_direct_channel_to_mix_links(graph));
+        messages.extend(self.diff_mix_to_hardware_links(graph));
         messages.extend(self.diff_properties(&endpoint_nodes));
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages
@@ -176,64 +177,6 @@ impl MixerSession {
         messages
     }
 
-    // -----------------------------------------------------------------------
-    // diff_cells — create cell filters only for active routes
-
-    /// Create cell filter nodes only for routes that have an active Link.
-    /// Unlike the old null-audio-sink approach (which pre-created all N×M
-    /// cells), filters are only created when actually needed.
-    fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
-        let mut messages = Vec::new();
-
-        // Collect active routes: links with Connected state
-        let active_routes: Vec<_> = self
-            .links
-            .iter()
-            .filter(|l| matches!(l.state, LinkState::ConnectedLocked | LinkState::ConnectedUnlocked))
-            .map(|l| (l.start, l.end))
-            .collect();
-
-        for (source_desc, sink_desc) in active_routes {
-            // Resolve source channel PW ID
-            let source_pw = if let EndpointDescriptor::Channel(id) = source_desc {
-                self.channels.get(&id).and_then(|ch| ch.pipewire_id)
-            } else {
-                None
-            };
-            // Resolve sink (mix) channel PW ID
-            let sink_pw = if let EndpointDescriptor::Channel(id) = sink_desc {
-                self.channels.get(&id).and_then(|ch| ch.pipewire_id)
-            } else {
-                None
-            };
-
-            let (Some(row_pw), Some(mix_pw)) = (source_pw, sink_pw) else {
-                continue;
-            };
-
-            let cell_name = format!("osg.cell.{row_pw}.{mix_pw}");
-            if !self.created_cells.contains(&cell_name) {
-                self.created_cells.insert(cell_name.clone());
-                let row_name = self
-                    .endpoints
-                    .get(&source_desc)
-                    .map(|e| e.display_name.as_str())
-                    .unwrap_or("?");
-                let mix_name = self
-                    .endpoints
-                    .get(&sink_desc)
-                    .map(|e| e.display_name.as_str())
-                    .unwrap_or("?");
-                messages.push(ToPipewireMessage::CreateCellNode {
-                    name: format!("{row_name}→{mix_name}"),
-                    channel_node_id: row_pw,
-                    mix_node_id: mix_pw,
-                });
-            }
-        }
-        messages
-    }
-
     // diff_app_routing — redirect assigned app streams
 
     /// For each channel with assigned apps, find matching PW stream nodes
@@ -269,75 +212,6 @@ impl MixerSession {
                         }
                     }
                 }
-            }
-        }
-        messages
-    }
-
-    // -----------------------------------------------------------------------
-    // diff_cell_links — ensure channel → cell → mix links exist
-    // -----------------------------------------------------------------------
-
-    /// For each cell node (detected by `osg.cell.{channel_id}.{mix_id}` naming),
-    /// ensure PW links exist: channel → cell → mix.
-    fn diff_cell_links(graph: &AudioGraph) -> Vec<ToPipewireMessage> {
-        let mut messages = Vec::new();
-        // Debug: count osg.cell nodes in graph
-        let osg_cells: Vec<_> = graph
-            .nodes
-            .iter()
-            .filter(|(_, n)| {
-                n.identifier
-                    .node_name()
-                    .is_some_and(|name| name.starts_with("osg.cell."))
-            })
-            .map(|(id, n)| (*id, n.identifier.node_name().unwrap_or("?").to_string()))
-            .collect();
-        if !osg_cells.is_empty() {
-            tracing::debug!(
-                "[Reconcile] diff_cell_links sees {} cells: {osg_cells:?}",
-                osg_cells.len()
-            );
-        }
-        for (&cell_pw_id, cell_node) in &graph.nodes {
-            let Some(name) = cell_node.identifier.node_name() else {
-                continue;
-            };
-            let Some(rest) = name.strip_prefix("osg.cell.") else {
-                continue;
-            };
-            let Some((ch_str, mix_str)) = rest.split_once('.') else {
-                continue;
-            };
-            let (Ok(channel_id), Ok(mix_id)) = (ch_str.parse::<u32>(), mix_str.parse::<u32>())
-            else {
-                continue;
-            };
-            // Skip if cell has no ports yet
-            if cell_node.ports.is_empty() {
-                continue;
-            }
-            // channel → cell
-            let has_ch_to_cell = graph
-                .links
-                .values()
-                .any(|l| l.start_node == channel_id && l.end_node == cell_pw_id);
-            if !has_ch_to_cell && graph.nodes.contains_key(&channel_id) {
-                messages.push(ToPipewireMessage::CreateNodeLinks {
-                    start_id: channel_id,
-                    end_id: cell_pw_id,
-                });
-            }
-            // cell → mix
-            let has_cell_to_mix = graph
-                .links
-                .values()
-                .any(|l| l.start_node == cell_pw_id && l.end_node == mix_id);
-            if !has_cell_to_mix && graph.nodes.contains_key(&mix_id) {
-                messages.push(ToPipewireMessage::CreateNodeLinks {
-                    start_id: cell_pw_id,
-                    end_id: mix_id,
-                });
             }
         }
         messages

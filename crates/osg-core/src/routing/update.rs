@@ -648,19 +648,16 @@ impl MixerSession {
                     let target_node_id = ch.pipewire_id;
                     ch.assigned_apps.push(assignment.clone());
 
-                    // Dissolve auto-channel for this app if it exists
-                    let auto_id = self.channels.iter()
+                    // Hide the app's auto-channel (don't delete — it's permanent)
+                    let auto_desc = self.channels.iter()
                         .find(|(_, c)| c.auto_app && c.assigned_apps.iter()
                             .any(|a| a.application_name == assignment.application_name
                                 && a.binary_name == assignment.binary_name))
-                        .map(|(id, _)| *id);
-                    if let Some(id) = auto_id {
-                        let desc = EndpointDescriptor::Channel(id);
-                        if self.channels.remove(&id).and_then(|c| c.pipewire_id).is_some() {
-                            pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
+                        .map(|(id, _)| EndpointDescriptor::Channel(*id));
+                    if let Some(desc) = auto_desc {
+                        if let Some(ep) = self.endpoints.get_mut(&desc) {
+                            ep.visible = false;
                         }
-                        self.endpoints.remove(&desc);
-                        self.links.retain(|l| l.start != desc && l.end != desc);
                     }
 
                     // Redirect all matching PW stream nodes to the user channel
