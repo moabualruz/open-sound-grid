@@ -229,7 +229,7 @@ export default function Mixer() {
       label: ep.customName ?? ep.displayName,
       sourceType,
       color: "var(--color-source-app)",
-      nodeId: descKey(desc),
+      endpoint: desc,
     });
   }
 
@@ -242,7 +242,8 @@ export default function Mixer() {
       label: `${srcName} → ${sinkName}`,
       sourceType: "cell",
       color: "var(--color-source-cell)",
-      nodeId: `${descKey(source)}::${descKey(sink)}`,
+      cellSource: source,
+      cellTarget: sink,
     });
   }
 
@@ -251,7 +252,7 @@ export default function Mixer() {
       label: ep.customName ?? ep.displayName,
       sourceType: "mix",
       color: getMixColor(ep.displayName),
-      nodeId: descKey(desc),
+      endpoint: desc,
     });
   }
 
@@ -411,7 +412,7 @@ export default function Mixer() {
           }}
         >
           <Show when={eqTarget()}>
-            {(target) => <EqPage target={target()} onBack={() => setEqTarget(null)} />}
+            {(target) => <EqPage target={target()} onBack={() => setEqTarget(null)} send={send} />}
           </Show>
         </div>
       </div>

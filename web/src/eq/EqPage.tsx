@@ -8,21 +8,24 @@ import { Headphones, ArrowLeft } from "lucide-solid";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
 import type { SourceType } from "./EffectsBlock";
+import type { EndpointDescriptor, EqConfig, Command } from "../types";
 
 export interface EqPageTarget {
-  /** Display name shown in the header (e.g. "Game Audio", "Game → Headphones"). */
   label: string;
-  /** Source type determines which effects are available. */
   sourceType: SourceType;
-  /** Accent color for this node. */
   color: string;
-  /** Identifier sent to backend for monitor/solo commands. */
-  nodeId?: string;
+  /** Endpoint descriptor for SetEq command. */
+  endpoint?: EndpointDescriptor;
+  /** For cell EQ: source + target descriptors for SetCellEq. */
+  cellSource?: EndpointDescriptor;
+  cellTarget?: EndpointDescriptor;
 }
 
 interface EqPageProps {
   target: EqPageTarget;
   onBack: () => void;
+  /** Send a command to the backend via WebSocket. */
+  send: (cmd: Command) => void;
 }
 
 export default function EqPage(props: EqPageProps) {
@@ -58,6 +61,15 @@ export default function EqPage(props: EqPageProps) {
   function handleBack() {
     if (monitoring()) disableMonitoring();
     props.onBack();
+  }
+
+  function handleEqChange(eq: EqConfig) {
+    const t = props.target;
+    if (t.cellSource && t.cellTarget) {
+      props.send({ type: "setCellEq", source: t.cellSource, target: t.cellTarget, eq });
+    } else if (t.endpoint) {
+      props.send({ type: "setEq", endpoint: t.endpoint, eq });
+    }
   }
 
   return (
@@ -131,9 +143,19 @@ export default function EqPage(props: EqPageProps) {
         {/* Mix gets pre/post fader toggle with two EQ instances */}
         <Show
           when={props.target.sourceType === "mix"}
-          fallback={<EqPanel label={props.target.label} color={props.target.color} />}
+          fallback={
+            <EqPanel
+              label={props.target.label}
+              color={props.target.color}
+              onEqChange={handleEqChange}
+            />
+          }
         >
-          <MixEqTabs label={props.target.label} color={props.target.color} />
+          <MixEqTabs
+            label={props.target.label}
+            color={props.target.color}
+            onEqChange={handleEqChange}
+          />
         </Show>
         <EffectsBlock sourceType={props.target.sourceType} color={props.target.color} />
       </div>
@@ -147,7 +169,7 @@ export default function EqPage(props: EqPageProps) {
 
 const MIX_EQ_TABS = ["Pre-Fader", "Post-Fader"] as const;
 
-function MixEqTabs(props: { label: string; color: string }) {
+function MixEqTabs(props: { label: string; color: string; onEqChange?: (eq: EqConfig) => void }) {
   const [activeTab, setActiveTab] = createSignal<(typeof MIX_EQ_TABS)[number]>("Post-Fader");
 
   return (
@@ -181,10 +203,18 @@ function MixEqTabs(props: { label: string; color: string }) {
 
       {/* Active EQ panel */}
       <Show when={activeTab() === "Pre-Fader"}>
-        <EqPanel label={`${props.label} — Pre-Fader`} color={props.color} />
+        <EqPanel
+          label={`${props.label} — Pre-Fader`}
+          color={props.color}
+          onEqChange={props.onEqChange}
+        />
       </Show>
       <Show when={activeTab() === "Post-Fader"}>
-        <EqPanel label={`${props.label} — Post-Fader`} color={props.color} />
+        <EqPanel
+          label={`${props.label} — Post-Fader`}
+          color={props.color}
+          onEqChange={props.onEqChange}
+        />
       </Show>
     </div>
   );

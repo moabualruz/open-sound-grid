@@ -3,9 +3,10 @@
  * Same 10-band EQ, macros, and presets everywhere.
  * No position-based feature branching.
  */
-import { createSignal, Show } from "solid-js";
+import { createSignal, createEffect, Show } from "solid-js";
 import type { EqBand } from "./math";
 import { createDefaultBands, createDefaultBand } from "./math";
+import type { EqConfig } from "../types";
 import EqGraph from "./EqGraph";
 import EqBandPopup from "./EqBandPopup";
 import EqMacroSliders from "./EqMacroSliders";
@@ -16,6 +17,19 @@ interface EqPanelProps {
   label: string;
   color?: string;
   readonly?: boolean;
+  /** Called whenever EQ config changes (bands, enabled). Debounced by the caller. */
+  onEqChange?: (eq: EqConfig) => void;
+}
+
+/** Convert internal EqBand (with id/color) to wire-format EqBand. */
+function toWireBands(bands: EqBand[]): EqConfig["bands"] {
+  return bands.map((b) => ({
+    enabled: b.enabled,
+    filterType: b.type,
+    frequency: b.frequency,
+    gain: b.gain,
+    q: b.q,
+  }));
 }
 
 export default function EqPanel(props: EqPanelProps) {
@@ -28,6 +42,12 @@ export default function EqPanel(props: EqPanelProps) {
 
   const selectedBand = () => bands().find((b) => b.id === selectedBandId());
   const canAddBand = () => bands().length < MAX_BANDS;
+
+  // Notify parent whenever EQ config changes
+  createEffect(() => {
+    const eq: EqConfig = { enabled: enabled(), bands: toWireBands(bands()) };
+    props.onEqChange?.(eq);
+  });
 
   const updateBand = (id: number, patch: Partial<EqBand>) => {
     setBands((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)));
