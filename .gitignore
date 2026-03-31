@@ -22,6 +22,9 @@ Desktop.ini
 .env.*
 !.env.example
 
+# ── Playwright MCP (browser automation artifacts) ──────────
+.playwright-mcp/
+
 # ── AI Agent Files ──────────────────────────────────────────
 .ai/
 .planning/
