@@ -1,5 +1,6 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
+pub mod biquad;
 mod cell;
 mod identifier;
 mod mainloop;
