@@ -6,6 +6,7 @@
 //   3. Corrective `ToPipewireMessage` commands are sent to PipeWire
 //   4. PipeWire graph updates are debounced (16ms) and fed back into the diff
 
+mod helpers;
 pub mod messages;
 pub mod reconcile;
 pub mod reducer;

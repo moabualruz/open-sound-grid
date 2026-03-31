@@ -9,14 +9,11 @@ use tracing::warn;
 use tracing::debug;
 
 use crate::graph::{
-    Channel, ChannelId, Endpoint, EndpointDescriptor, Link, LinkState, MixerSession,
+    Channel, ChannelId, Endpoint, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
     ReconcileSettings, average_volumes,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::{StateMsg, StateOutputMsg};
-
-/// EasyEffects processed mic source node name in PipeWire.
-const EASYEFFECTS_SOURCE: &str = "easyeffects_source";
 
 impl MixerSession {
     /// Process a single state-mutation message. Returns an optional output
@@ -386,6 +383,7 @@ impl MixerSession {
                             cell_volume: 1.0,
                             cell_volume_left: 1.0,
                             cell_volume_right: 1.0,
+                            cell_eq: EqConfig::default(),
                             cell_node_id: None,
                             pending: !msgs.is_empty(),
                         });
@@ -466,6 +464,7 @@ impl MixerSession {
                                 cell_volume: 1.0,
                                 cell_volume_left: 1.0,
                                 cell_volume_right: 1.0,
+                                cell_eq: EqConfig::default(),
                                 cell_node_id: None,
                                 pending: false,
                             });
@@ -698,6 +697,39 @@ impl MixerSession {
                     None
                 }
 
+                StateMsg::SetEq(ep_desc, eq) => {
+                    let nodes = self.resolve_endpoint(ep_desc, graph, settings);
+                    if let Some(endpoint) = self.endpoints.get_mut(&ep_desc) {
+                        endpoint.eq = eq.clone();
+                    }
+                    if let Some(nodes) = nodes {
+                        for n in &nodes {
+                            pw_messages.push(ToPipewireMessage::SetFilterEq {
+                                node_id: n.id,
+                                eq: eq.clone(),
+                            });
+                        }
+                    }
+                    None
+                }
+
+                StateMsg::SetCellEq(source, sink, eq) => {
+                    if let Some(link) = self
+                        .links
+                        .iter_mut()
+                        .find(|l| l.start == source && l.end == sink)
+                    {
+                        link.cell_eq = eq.clone();
+                    }
+                    for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+                        pw_messages.push(ToPipewireMessage::SetFilterEq {
+                            node_id: cell_id,
+                            eq: eq.clone(),
+                        });
+                    }
+                    None
+                }
+
                 StateMsg::SetDefaultOutputNode(node_id) => {
                     self.default_output_node_id = node_id;
                     None
@@ -706,47 +738,6 @@ impl MixerSession {
         };
 
         (output, pw_messages)
-    }
-
-    /// Auto-rename channels created from `easyeffects_source` before the
-    /// default source name was resolved. Called on graph updates.
-    pub fn rename_easyeffects_channels(&mut self, graph: &AudioGraph) {
-        let Some(ref source_name) = graph.default_source_name else {
-            return;
-        };
-
-        let ee_exists = graph
-            .nodes
-            .values()
-            .any(|n| n.identifier.node_name() == Some(EASYEFFECTS_SOURCE));
-        if !ee_exists {
-            return;
-        }
-
-        let source_display = graph
-            .nodes
-            .values()
-            .find(|n| n.identifier.node_name() == Some(source_name))
-            .map(|n| n.identifier.human_name(PortKind::Source).to_owned())
-            .unwrap_or_else(|| source_name.clone());
-
-        let new_name = format!("EE - {source_display}");
-
-        for ep in self.endpoints.values_mut() {
-            let is_legacy = ep.display_name == "Easy Effects Source"
-                || ep.display_name == "easyeffects_source"
-                || ep.display_name == "Mic (EasyEffects)"
-                || ep.display_name == "EE - Mic"
-                || (ep.display_name.starts_with("EE - ") && ep.display_name != new_name)
-                || (ep.display_name.ends_with("(EasyEffects)") && ep.display_name != new_name);
-            if is_legacy {
-                debug!(
-                    "[State] auto-rename EasyEffects channel: {:?} -> {new_name:?}",
-                    ep.display_name
-                );
-                ep.display_name = new_name.clone();
-            }
-        }
     }
 }
 

@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, ChannelKind, EndpointDescriptor, Link, LinkState, MixerSession, PersistentNodeId,
-    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
+    App, ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
+    PersistentNodeId, ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -524,6 +524,7 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
+                    cell_eq: EqConfig::default(),
                     cell_node_id: None,
                     pending: false,
                 }),
@@ -534,6 +535,7 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
+                    cell_eq: EqConfig::default(),
                     cell_node_id: None,
                     pending: false,
                 }),

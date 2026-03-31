@@ -767,6 +767,11 @@ pub(super) fn init_mainloop(
                         debug!("[PW] peak monitor stopped for node {node_id}");
                     }
                 }
+                ToPipewireMessage::SetFilterEq { node_id, eq: _ } => {
+                    // Phase 2: will apply EQ to the pw_filter process callback.
+                    // For now, just log that we received the command.
+                    debug!("[PW] SetFilterEq for node {node_id} (filter not yet implemented)");
+                }
                 ToPipewireMessage::Exit => mainloop.quit(),
             }
         });

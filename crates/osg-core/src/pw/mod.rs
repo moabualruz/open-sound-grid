@@ -200,6 +200,12 @@ pub enum ToPipewireMessage {
     StartPeakMonitor(u32),
     /// Stop monitoring peak levels for a node.
     StopPeakMonitor(u32),
+    /// Set EQ parameters on a filter node. The PW mainloop applies these
+    /// to the filter's process callback via atomic swap.
+    SetFilterEq {
+        node_id: u32,
+        eq: crate::graph::EqConfig,
+    },
     Exit,
 }
 

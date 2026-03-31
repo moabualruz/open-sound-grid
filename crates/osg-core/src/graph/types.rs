@@ -16,6 +16,65 @@ use crate::pw::{NodeIdentifier, PortKind};
 pub type ChannelKind = crate::pw::GroupNodeKind;
 
 // ---------------------------------------------------------------------------
+// EQ — parametric equalizer configuration
+// ---------------------------------------------------------------------------
+
+/// Biquad filter type for a single EQ band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FilterType {
+    Peaking,
+    LowShelf,
+    HighShelf,
+    LowPass,
+    HighPass,
+    Notch,
+}
+
+/// A single parametric EQ band.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EqBand {
+    pub enabled: bool,
+    pub filter_type: FilterType,
+    /// Center frequency in Hz (20–20 000).
+    pub frequency: f32,
+    /// Gain in dB (±12).
+    pub gain: f32,
+    /// Quality factor (0.1–10).
+    pub q: f32,
+}
+
+impl Default for EqBand {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            filter_type: FilterType::Peaking,
+            frequency: 1000.0,
+            gain: 0.0,
+            q: 0.707,
+        }
+    }
+}
+
+/// Full EQ configuration: enable toggle + ordered list of bands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EqConfig {
+    pub enabled: bool,
+    pub bands: Vec<EqBand>,
+}
+
+impl Default for EqConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bands: Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Identifiers
 // ---------------------------------------------------------------------------
 
@@ -151,6 +210,9 @@ pub struct Endpoint {
     /// Hidden endpoints are preserved but not shown in the UI's active lists.
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Parametric EQ configuration for this endpoint.
+    #[serde(default)]
+    pub eq: EqConfig,
     /// Transient flag: a volume/mute command is in-flight to PipeWire.
     #[serde(skip)]
     pub volume_pending: bool,
@@ -175,6 +237,7 @@ impl Endpoint {
             volume_mixed: false,
             volume_locked_muted: VolumeLockMuteState::UnmutedUnlocked,
             visible: true,
+            eq: EqConfig::default(),
             volume_pending: false,
         }
     }
@@ -232,7 +295,7 @@ impl Endpoint {
 // Link — desired connection between two endpoints
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Link {
     pub start: EndpointDescriptor,
@@ -247,6 +310,9 @@ pub struct Link {
     /// Per-route right channel volume (0.0–1.0). Equals `cell_volume` when mono.
     #[serde(default = "default_one")]
     pub cell_volume_right: f32,
+    /// Per-route parametric EQ configuration.
+    #[serde(default)]
+    pub cell_eq: EqConfig,
     /// PipeWire node ID of the cell's volume-control node (null-audio-sink).
     /// Each cell gets its own PW node so volume can be controlled per-route.
     /// Route: channel → cell_node (volume here) → mix

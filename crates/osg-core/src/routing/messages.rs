@@ -2,7 +2,7 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{AppAssignment, AppId, ChannelId, ChannelKind, EndpointDescriptor};
+use crate::graph::{AppAssignment, AppId, ChannelId, ChannelKind, EndpointDescriptor, EqConfig};
 use crate::pw::PortKind;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,10 @@ pub enum StateMsg {
     AssignApp(ChannelId, AppAssignment),
     /// Unassign an app from a channel — clear target.object, return to default sink.
     UnassignApp(ChannelId, AppAssignment),
+    /// Set parametric EQ configuration for an endpoint (channel or mix).
+    SetEq(EndpointDescriptor, EqConfig),
+    /// Set parametric EQ configuration for a per-route cell.
+    SetCellEq(EndpointDescriptor, EndpointDescriptor, EqConfig),
 }
 
 // ---------------------------------------------------------------------------
