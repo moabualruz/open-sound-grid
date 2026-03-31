@@ -5,9 +5,10 @@
 use tracing::debug;
 
 use crate::graph::{
-    ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
+    AppAssignment, Channel, ChannelId, ChannelKind, EndpointDescriptor, Endpoint,
+    EqConfig, Link, LinkState, MixerSession,
 };
-use crate::pw::{AudioGraph, PortKind};
+use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
 const EASYEFFECTS_SOURCE: &str = "easyeffects_source";
 
@@ -91,5 +92,89 @@ impl MixerSession {
                 }
             }
         }
+    }
+
+    /// Auto-create pw_filter channels for apps that don't have one yet.
+    /// Each app gets its own auto-channel (auto_app=true). Returns PW
+    /// messages to create the filter nodes.
+    pub fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+
+        // Collect apps that output audio (Sink kind = app plays audio)
+        let output_apps: Vec<_> = self
+            .apps
+            .values()
+            .filter(|app| app.kind == PortKind::Sink)
+            .map(|app| (app.name.clone(), app.binary.clone(), app.icon_name.clone()))
+            .collect();
+
+        for (app_name, binary, icon) in output_apps {
+            // Skip if already assigned to a user channel
+            let assigned = self.channels.values().any(|ch| {
+                !ch.auto_app
+                    && ch.assigned_apps.iter().any(|a| {
+                        a.application_name == app_name && a.binary_name == binary
+                    })
+            });
+            if assigned {
+                continue;
+            }
+
+            // Skip if auto-channel already exists
+            let has_auto_channel = self.channels.values().any(|ch| {
+                ch.auto_app
+                    && ch.assigned_apps.iter().any(|a| {
+                        a.application_name == app_name && a.binary_name == binary
+                    })
+            });
+            if has_auto_channel {
+                continue;
+            }
+
+            // Skip OSG's own streams and EasyEffects
+            if app_name == "open-sound-grid"
+                || app_name.starts_with("osg")
+                || binary.contains("easyeffects")
+            {
+                continue;
+            }
+
+            // Create auto-channel
+            let id = ChannelId::new();
+            let kind = ChannelKind::Duplex;
+            let descriptor = EndpointDescriptor::Channel(id);
+
+            self.channels.insert(
+                id,
+                Channel {
+                    id,
+                    kind,
+                    output_node_id: None,
+                    assigned_apps: vec![AppAssignment {
+                        application_name: app_name.clone(),
+                        binary_name: binary.clone(),
+                    }],
+                    auto_app: true,
+                    allow_app_assignment: false,
+                    pipewire_id: None,
+                    pending: true,
+                },
+            );
+            self.endpoints.insert(
+                descriptor,
+                Endpoint::new(descriptor)
+                    .with_display_name(app_name.clone())
+                    .with_icon_name(icon),
+            );
+
+            messages.push(ToPipewireMessage::CreateGroupNode(
+                app_name.clone(),
+                id.inner(),
+                kind,
+            ));
+            debug!("[State] auto-created channel for app '{app_name}'");
+        }
+
+        messages
     }
 }

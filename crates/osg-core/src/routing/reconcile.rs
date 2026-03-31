@@ -52,6 +52,7 @@ impl MixerSession {
     ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.diff_channels(&endpoint_nodes);
+        messages.extend(self.auto_create_app_channels());
         self.ensure_default_links();
         messages.extend(self.diff_cells(graph));
         messages.extend(Self::diff_cell_links(graph));

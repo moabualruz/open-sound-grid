@@ -445,19 +445,26 @@ pub struct AppAssignment {
 // Channel — user-created virtual audio bus
 // ---------------------------------------------------------------------------
 
-/// User-created virtual audio bus. PipeWire: null-audio-sink / GroupNode.
+/// Virtual audio bus — either user-created or auto-created for an app.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
     pub id: ChannelId,
     pub kind: ChannelKind,
     /// For sink channels (mixes): the assigned output device node ID.
-    /// `None` means no output assigned. Monitor uses OS default.
     pub output_node_id: Option<u32>,
-    /// Apps assigned to this channel. Their PW streams are redirected here
-    /// via `target.object` metadata. Persisted to state.toml.
+    /// Apps assigned to this channel. Their PW streams are redirected here.
     #[serde(default)]
     pub assigned_apps: Vec<AppAssignment>,
+    /// True if this channel was auto-created for a single app.
+    /// Auto-channels: no grouping, no manual app assignment from UI,
+    /// dissolved when the app is assigned to a user channel.
+    #[serde(default)]
+    pub auto_app: bool,
+    /// False for input device channels and EasyEffects channels —
+    /// prevents users from assigning apps to them.
+    #[serde(default = "default_true")]
+    pub allow_app_assignment: bool,
     /// PipeWire ID once the node is created; `None` while pending.
     #[serde(skip)]
     pub pipewire_id: Option<u32>,

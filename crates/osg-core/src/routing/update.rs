@@ -9,8 +9,8 @@ use tracing::warn;
 use tracing::debug;
 
 use crate::graph::{
-    Channel, ChannelId, Endpoint, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
-    ReconcileSettings, average_volumes,
+    Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, EqConfig, Link, LinkState,
+    MixerSession, ReconcileSettings, average_volumes,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::{StateMsg, StateOutputMsg};
@@ -82,6 +82,9 @@ impl MixerSession {
                             kind,
                             output_node_id: None,
                             assigned_apps: Vec::new(),
+                            auto_app: false,
+                            // Source channels (input devices) don't accept app assignment
+                            allow_app_assignment: kind != ChannelKind::Source,
                             pipewire_id: None,
                             pending: true,
                         },
