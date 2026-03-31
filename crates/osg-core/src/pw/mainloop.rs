@@ -654,41 +654,43 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // First disconnect the stream from wherever it's currently linked
+                    // Set target.object metadata so WirePlumber won't re-route
+                    let target_name = store.borrow().nodes.get(&target_node_id)
+                        .and_then(|n| n.identifier.node_name().map(String::from));
+                    if let Some(ref name) = target_name {
+                        if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                            let value = format!(r#"{{"name":"{name}"}}"#);
+                            metadata.set_property(
+                                stream_node_id,
+                                "target.object",
+                                Some("Spa:String:JSON"),
+                                Some(&value),
+                            );
+                        }
+                    }
+                    // Disconnect from current target
                     super::cell::remove_all_source_links(
-                        &master.store,
-                        &master.registry,
-                        stream_node_id,
+                        &master.store, &master.registry, stream_node_id,
                     );
-                    // Then create links to the target channel node
-                    if let Err(err) =
-                        master.create_node_links(stream_node_id, target_node_id)
-                    {
-                        warn!(
-                            "[PW] failed to create links {stream_node_id} -> {target_node_id}: {err:?}"
-                        );
+                    // Link to our filter
+                    if let Err(err) = master.create_node_links(stream_node_id, target_node_id) {
+                        warn!("[PW] redirect {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
-                        debug!(
-                            "[PW] redirect stream {stream_node_id} -> node {target_node_id}"
-                        );
+                        debug!("[PW] redirect stream {stream_node_id} -> {target_node_id}");
                     }
                 }
                 ToPipewireMessage::ClearRedirect {
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Remove links between stream and channel. WirePlumber will
-                    // auto-link the stream back to the default sink.
-                    if let Err(err) =
-                        master.remove_node_links(stream_node_id, target_node_id)
-                    {
-                        debug!(
-                            "[PW] no links to clear for {stream_node_id} -> {target_node_id}: {err:?}"
-                        );
+                    // Clear target.object so WP auto-routes back to default
+                    if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                        metadata.set_property(stream_node_id, "target.object", None, None);
+                    }
+                    if let Err(err) = master.remove_node_links(stream_node_id, target_node_id) {
+                        debug!("[PW] no links to clear {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
-                        debug!(
-                            "[PW] cleared redirect {stream_node_id} -> {target_node_id}"
-                        );
+                        debug!("[PW] cleared redirect {stream_node_id} -> {target_node_id}");
                     }
                 }
                 ToPipewireMessage::StartPeakMonitor(node_id) => {

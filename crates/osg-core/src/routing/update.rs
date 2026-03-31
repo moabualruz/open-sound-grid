@@ -636,8 +636,11 @@ impl MixerSession {
                         warn!("[State] cannot assign app: channel {channel_id:?} not found");
                         break 'handler None;
                     };
-
-                    // Don't add duplicates
+                    // Block assignment on protected channels
+                    if !ch.allow_app_assignment {
+                        warn!("[State] channel {channel_id:?} does not allow app assignment");
+                        break 'handler None;
+                    }
                     if ch.assigned_apps.contains(&assignment) {
                         break 'handler None;
                     }
@@ -645,7 +648,22 @@ impl MixerSession {
                     let target_node_id = ch.pipewire_id;
                     ch.assigned_apps.push(assignment.clone());
 
-                    // Find all matching PW stream nodes and redirect them
+                    // Dissolve auto-channel for this app if it exists
+                    let auto_id = self.channels.iter()
+                        .find(|(_, c)| c.auto_app && c.assigned_apps.iter()
+                            .any(|a| a.application_name == assignment.application_name
+                                && a.binary_name == assignment.binary_name))
+                        .map(|(id, _)| *id);
+                    if let Some(id) = auto_id {
+                        let desc = EndpointDescriptor::Channel(id);
+                        if self.channels.remove(&id).and_then(|c| c.pipewire_id).is_some() {
+                            pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
+                        }
+                        self.endpoints.remove(&desc);
+                        self.links.retain(|l| l.start != desc && l.end != desc);
+                    }
+
+                    // Redirect all matching PW stream nodes to the user channel
                     if let Some(target_id) = target_node_id {
                         for node in graph.nodes.values() {
                             if node.identifier.application_name.as_deref()
@@ -658,10 +676,6 @@ impl MixerSession {
                                     stream_node_id: node.id,
                                     target_node_id: target_id,
                                 });
-                                debug!(
-                                    "[State] redirect {} (node {}) -> node {target_id}",
-                                    assignment.application_name, node.id
-                                );
                             }
                         }
                     }

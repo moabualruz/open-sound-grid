@@ -132,6 +132,8 @@ export interface Channel {
   kind: GroupNodeKind;
   outputNodeId: number | null;
   assignedApps: AppAssignment[];
+  autoApp: boolean;
+  allowAppAssignment: boolean;
 }
 
 export interface App {
