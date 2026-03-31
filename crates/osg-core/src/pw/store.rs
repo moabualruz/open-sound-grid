@@ -41,8 +41,11 @@ impl std::fmt::Debug for CellProxies {
     }
 }
 
-/// Wrapper to hold OsgFilter instances without requiring Debug.
+/// Wrapper to hold OsgFilter instances keyed by Ulid without requiring Debug.
 pub(super) struct GroupFilters(pub(super) HashMap<Ulid, super::filter::OsgFilter>);
+
+/// Wrapper to hold cell OsgFilter instances without requiring Debug.
+pub(super) struct CellFilters(pub(super) Vec<super::filter::OsgFilter>);
 
 impl GroupFilters {
     fn new() -> Self {
@@ -53,6 +56,24 @@ impl GroupFilters {
 impl std::fmt::Debug for GroupFilters {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "GroupFilters({})", self.0.len())
+    }
+}
+
+impl CellFilters {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    pub(super) fn push(&mut self, filter: super::filter::OsgFilter) {
+        self.0.push(filter);
+    }
+    pub(super) fn iter(&self) -> std::slice::Iter<'_, super::filter::OsgFilter> {
+        self.0.iter()
+    }
+}
+
+impl std::fmt::Debug for CellFilters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CellFilters({})", self.0.len())
     }
 }
 
@@ -75,9 +96,10 @@ pub(super) struct Store {
     pub(super) default_sink_name: Option<String>,
     /// PipeWire node name of the OS default audio source (mic).
     pub(super) default_source_name: Option<String>,
-    /// Keep cell node proxies alive — dropping them destroys the PW objects.
-    /// Not Debug because ProxyListener doesn't implement it.
+    /// Legacy cell node proxies (null-audio-sink). Being replaced by cell_filters.
     pub(super) cell_proxies: CellProxies,
+    /// OsgFilter instances for cell nodes (replacing null-audio-sink cells).
+    pub(super) cell_filters: CellFilters,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
     pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
 }
@@ -96,6 +118,7 @@ impl Store {
             default_sink_name: None,
             default_source_name: None,
             cell_proxies: CellProxies::new(),
+            cell_filters: CellFilters::new(),
             cell_node_ids: HashMap::new(),
         }
     }

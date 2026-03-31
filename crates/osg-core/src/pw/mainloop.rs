@@ -684,8 +684,8 @@ pub(super) fn init_mainloop(
                     channel_node_id,
                     mix_node_id,
                 } => {
-                    if let Err(err) = super::cell::create_cell_node(
-                        &master.pw_core,
+                    if let Err(err) = super::cell::create_cell_filter(
+                        master.pw_core.as_raw_ptr(),
                         &master.store,
                         super::cell::CellNodeArgs {
                             name,
@@ -693,7 +693,7 @@ pub(super) fn init_mainloop(
                             mix_node_id,
                         },
                     ) {
-                        warn!("[PW] failed to create cell node: {err:?}");
+                        warn!("[PW] failed to create cell filter: {err:?}");
                     }
                 }
                 ToPipewireMessage::RemoveCellNode { cell_node_id } => {
@@ -776,7 +776,9 @@ pub(super) fn init_mainloop(
                     }
                 }
                 ToPipewireMessage::SetFilterEq { node_id, ref eq } => {
-                    let applied = store.borrow().group_filters.0.values()
+                    let s = store.borrow();
+                    let applied = s.group_filters.0.values()
+                        .chain(s.cell_filters.iter())
                         .find(|f| f.node_id() == Some(node_id))
                         .map(|f| f.handle().set_eq(eq))
                         .is_some();
@@ -785,9 +787,7 @@ pub(super) fn init_mainloop(
                 ToPipewireMessage::Exit => mainloop.quit(),
             }
         });
-
         debug!("PipeWire mainloop initialization done");
-
         mainloop.run();
     });
 
