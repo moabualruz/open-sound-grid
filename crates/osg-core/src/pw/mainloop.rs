@@ -293,35 +293,20 @@ impl Master {
         id: Ulid,
         kind: GroupNodeKind,
     ) -> Result<(), PwError> {
-        // ALL channels use filter-chain — creates a routable Audio/Sink or
-        // Audio/Duplex node with inline biquad EQ. No null-audio-sinks.
-        let node_name = format!("osg.group.{id}");
-        let media_class = match kind {
-            GroupNodeKind::Source => "Audio/Source/Virtual",
-            GroupNodeKind::Duplex => "Audio/Duplex",
-            GroupNodeKind::Sink => "Audio/Sink",
-        };
-        let eq = crate::graph::EqConfig::default(); // start flat
-        let chain = unsafe {
-            super::filter_chain::EqFilterChain::load(
-                self.context.as_raw_ptr(),
-                &node_name,
-                &name,
-                media_class,
-                &eq,
-            )
-        }
-        .map_err(|e| PwError::SinkCreationFailed(e))?;
-
-        self.store.borrow_mut().filter_chains.insert(id, chain);
+        // pw_filter with correct media.class — appears under Sinks in WirePlumber,
+        // apps can route to it, and we get a DSP process callback for EQ.
+        // No node.link-group = not classified as a Filter by WP.
+        let filter = super::filter::create_group_filter(
+            self.pw_core.as_raw_ptr(), &name, id, kind,
+        ).map_err(|e| PwError::SinkCreationFailed(e))?;
+        self.store.borrow_mut().group_filters.0.insert(id, filter);
         Ok(())
     }
 
     fn remove_group_node(&self, id: Ulid) -> Result<(), PwError> {
         let mut store = self.store.borrow_mut();
-        // EqFilterChain::drop unloads the module, destroying both nodes
-        if let Some(chain) = store.filter_chains.remove(&id) {
-            drop(chain);
+        if let Some(filter) = store.group_filters.0.remove(&id) {
+            drop(filter);
             return Ok(());
         }
         Err(PwError::GroupNodeNotFound(id))
@@ -640,7 +625,7 @@ pub(super) fn init_mainloop(
                     mix_node_id,
                 } => {
                     if let Err(err) = super::cell::create_cell_filter(
-                        master.context.as_raw_ptr(),
+                        master.pw_core.as_raw_ptr(),
                         &master.store,
                         super::cell::CellNodeArgs {
                             name,
@@ -730,11 +715,14 @@ pub(super) fn init_mainloop(
                         debug!("[PW] peak monitor stopped for node {node_id}");
                     }
                 }
-                ToPipewireMessage::SetFilterEq { node_id: _, ref eq } => {
-                    // TODO: map node_id back to Ulid and call chain.update_eq()
-                    // For now, find the filter-chain by scanning node names
-                    debug!("[PW] SetFilterEq received (filter-chain update pending)");
-                    let _ = eq; // suppress unused warning
+                ToPipewireMessage::SetFilterEq { node_id, ref eq } => {
+                    let s = store.borrow();
+                    let applied = s.group_filters.0.values()
+                        .chain(s.cell_filters.iter())
+                        .find(|f| f.node_id() == Some(node_id))
+                        .map(|f| f.handle().set_eq(eq))
+                        .is_some();
+                    debug!("[PW] SetFilterEq node {node_id}: {}", if applied { "applied" } else { "no filter" });
                 }
                 ToPipewireMessage::Exit => mainloop.quit(),
             }

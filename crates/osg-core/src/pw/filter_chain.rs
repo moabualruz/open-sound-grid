@@ -88,10 +88,12 @@ pub fn build_filter_chain_args(
         node.name   = "{node_name}"
         media.class = {media_class}
         node.virtual = true
+        filter.smart = false
     }}
     playback.props = {{
         node.name   = "{node_name}.out"
         node.passive = true
+        filter.smart = false
     }}
 }}"#
     )

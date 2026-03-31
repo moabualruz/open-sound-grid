@@ -173,12 +173,14 @@ impl OsgFilter {
     pub unsafe fn new(
         core_ptr: *mut pipewire_sys::pw_core,
         name: &str,
+        description: &str,
         media_class: &str,
     ) -> Result<Self, String> {
         use std::ffi::CString;
         use std::ptr;
 
         let c_name = CString::new(name).map_err(|e| e.to_string())?;
+        let c_desc = CString::new(description).map_err(|e| e.to_string())?;
         let c_class = CString::new(media_class).map_err(|e| e.to_string())?;
 
         let handle = FilterHandle::new();
@@ -201,6 +203,10 @@ impl OsgFilter {
             c_class.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.name".as_ptr().cast::<std::os::raw::c_char>(),
             c_name.as_ptr().cast::<std::os::raw::c_char>(),
+            c"node.nick".as_ptr().cast::<std::os::raw::c_char>(),
+            c_desc.as_ptr().cast::<std::os::raw::c_char>(),
+            c"node.description".as_ptr().cast::<std::os::raw::c_char>(),
+            c_desc.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.virtual".as_ptr().cast::<std::os::raw::c_char>(),
             c"true".as_ptr().cast::<std::os::raw::c_char>(),
             c"audio.position".as_ptr().cast::<std::os::raw::c_char>(),
@@ -357,9 +363,9 @@ pub fn create_group_filter(
     let media_class = match kind {
         super::GroupNodeKind::Source => "Audio/Source/Virtual",
         super::GroupNodeKind::Duplex => "Audio/Duplex",
-        super::GroupNodeKind::Sink => return Err("Sink kind should use null-audio-sink".into()),
+        super::GroupNodeKind::Sink => "Audio/Sink",
     };
-    let filter = unsafe { OsgFilter::new(core_ptr, &node_name, media_class) }
+    let filter = unsafe { OsgFilter::new(core_ptr, &node_name, name, media_class) }
         .map_err(|e| format!("filter '{name}': {e}"))?;
     tracing::debug!(
         "[PW] created filter '{}' ({:?}) — node_id: {:?}",
