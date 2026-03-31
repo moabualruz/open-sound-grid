@@ -10,7 +10,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::CString;
-use std::os::raw::c_void;
 
 use crate::graph::{EqBand, EqConfig, FilterType};
 
@@ -45,9 +44,7 @@ pub fn build_filter_chain_args(
 
     if enabled_bands.is_empty() {
         // Passthrough — single copy node
-        nodes.push_str(
-            "{ type = builtin name = passthrough label = copy }",
-        );
+        nodes.push_str("{ type = builtin name = passthrough label = copy }");
     } else {
         // Build biquad chain
         for (i, band) in enabled_bands.iter().enumerate() {
@@ -117,7 +114,7 @@ impl EqFilterChain {
     ///
     /// # Safety
     /// Must be called from the PW mainloop thread. `context` must be valid.
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, clippy::too_many_arguments, clippy::too_many_lines)]
     pub unsafe fn load(
         context: *mut pipewire_sys::pw_context,
         node_name: &str,
@@ -138,7 +135,9 @@ impl EqFilterChain {
         );
 
         if module.is_null() {
-            return Err(format!("pw_context_load_module returned null for '{node_name}'"));
+            return Err(format!(
+                "pw_context_load_module returned null for '{node_name}'"
+            ));
         }
 
         tracing::debug!("[PW] loaded filter-chain '{node_description}' as {node_name}");
@@ -166,8 +165,7 @@ impl EqFilterChain {
         pipewire_sys::pw_impl_module_destroy(self.module);
 
         // Load new with updated config
-        let args_str =
-            build_filter_chain_args(&self.node_name, node_description, media_class, eq);
+        let args_str = build_filter_chain_args(&self.node_name, node_description, media_class, eq);
         let c_module_name =
             CString::new("libpipewire-module-filter-chain").map_err(|e| e.to_string())?;
         let c_args = CString::new(args_str).map_err(|e| e.to_string())?;

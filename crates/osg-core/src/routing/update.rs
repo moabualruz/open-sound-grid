@@ -1,12 +1,5 @@
-// Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
-//
-// State mutation handlers: process a `StateMsg` against the `MixerSession`
-// and emit PipeWire commands + optional output notifications.
-
 use itertools::Itertools;
-use tracing::warn;
-
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::graph::{
     Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, EqConfig, Link, LinkState,
@@ -14,6 +7,9 @@ use crate::graph::{
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// EasyEffects processed mic source node name in PipeWire.
+const EASYEFFECTS_SOURCE: &str = "easyeffects_source";
 
 impl MixerSession {
     /// Process a single state-mutation message. Returns an optional output
@@ -82,11 +78,10 @@ impl MixerSession {
                             kind,
                             output_node_id: None,
                             assigned_apps: Vec::new(),
-                            auto_app: false,
-                            // Source channels (input devices) don't accept app assignment
-                            allow_app_assignment: kind != ChannelKind::Source,
                             pipewire_id: None,
                             pending: true,
+                            auto_app: false,
+                            allow_app_assignment: kind != ChannelKind::Source,
                         },
                     );
                     self.endpoints.insert(
@@ -94,7 +89,59 @@ impl MixerSession {
                         Endpoint::new(descriptor).with_display_name(name.clone()),
                     );
                     pw_messages.push(ToPipewireMessage::CreateGroupNode(name, id.inner(), kind));
-                    // Cell nodes are created by diff_cells() once the PW ID is known.
+
+                    // Auto-create active links to all existing counterparts.
+                    // New source channel → all existing sinks. New sink → all existing sources + apps.
+                    if kind == ChannelKind::Sink {
+                        // New mix: link every existing source channel + active app to it
+                        let sources: Vec<_> = self
+                            .channels
+                            .iter()
+                            .filter(|(_, ch)| ch.kind != ChannelKind::Sink)
+                            .map(|(cid, _)| EndpointDescriptor::Channel(*cid))
+                            .chain(
+                                self.active_sources
+                                    .iter()
+                                    .copied()
+                                    .filter(|d| matches!(d, EndpointDescriptor::App(..))),
+                            )
+                            .collect();
+                        for src in sources {
+                            self.links.push(Link {
+                                start: src,
+                                end: descriptor,
+                                state: LinkState::ConnectedUnlocked,
+                                cell_volume: 1.0,
+                                cell_volume_left: 1.0,
+                                cell_volume_right: 1.0,
+                                cell_eq: EqConfig::default(),
+                                cell_node_id: None,
+                                pending: true,
+                            });
+                        }
+                    } else {
+                        // New source channel: link it to every existing sink
+                        let sinks: Vec<_> = self
+                            .channels
+                            .iter()
+                            .filter(|(cid, ch)| **cid != id && ch.kind == ChannelKind::Sink)
+                            .map(|(cid, _)| EndpointDescriptor::Channel(*cid))
+                            .collect();
+                        for sink in sinks {
+                            self.links.push(Link {
+                                start: descriptor,
+                                end: sink,
+                                state: LinkState::ConnectedUnlocked,
+                                cell_volume: 1.0,
+                                cell_volume_left: 1.0,
+                                cell_volume_right: 1.0,
+                                cell_eq: EqConfig::default(),
+                                cell_node_id: None,
+                                pending: true,
+                            });
+                        }
+                    }
+
                     Some(StateOutputMsg::EndpointAdded(descriptor))
                 }
 
@@ -213,10 +260,8 @@ impl MixerSession {
                         let msgs: Vec<_> = nodes
                             .into_iter()
                             .map(|n| {
-                                ToPipewireMessage::NodeVolume(
-                                    n.id,
-                                    vec![volume; n.channel_volumes.len()],
-                                )
+                                let len = n.channel_volumes.len().max(2);
+                                ToPipewireMessage::NodeVolume(n.id, vec![volume; len])
                             })
                             .collect();
                         if !msgs.is_empty() {
@@ -351,10 +396,22 @@ impl MixerSession {
                         .get(&sink)
                         .map(|e| e.display_name.clone())
                         .unwrap_or_default();
+                    let src_ulid = if let EndpointDescriptor::Channel(id) = source {
+                        id.inner().to_string()
+                    } else {
+                        format!("{source:?}")
+                    };
+                    let snk_ulid = if let EndpointDescriptor::Channel(id) = sink {
+                        id.inner().to_string()
+                    } else {
+                        format!("{sink:?}")
+                    };
                     for s in &source_nodes {
                         for k in &sink_nodes {
+                            let cell_id = format!("osg.cell.{src_ulid}-to-{snk_ulid}");
                             msgs.push(ToPipewireMessage::CreateCellNode {
                                 name: format!("{source_name}→{sink_name}"),
+                                cell_id,
                                 channel_node_id: s.id,
                                 mix_node_id: k.id,
                             });
@@ -386,9 +443,9 @@ impl MixerSession {
                             cell_volume: 1.0,
                             cell_volume_left: 1.0,
                             cell_volume_right: 1.0,
-                            cell_eq: EqConfig::default(),
                             cell_node_id: None,
                             pending: !msgs.is_empty(),
+                            cell_eq: EqConfig::default(),
                         });
                     }
 
@@ -467,9 +524,9 @@ impl MixerSession {
                                 cell_volume: 1.0,
                                 cell_volume_left: 1.0,
                                 cell_volume_right: 1.0,
-                                cell_eq: EqConfig::default(),
                                 cell_node_id: None,
                                 pending: false,
+                                cell_eq: EqConfig::default(),
                             });
                         }
                         (_, true) => {}
@@ -636,11 +693,8 @@ impl MixerSession {
                         warn!("[State] cannot assign app: channel {channel_id:?} not found");
                         break 'handler None;
                     };
-                    // Block assignment on protected channels
-                    if !ch.allow_app_assignment {
-                        warn!("[State] channel {channel_id:?} does not allow app assignment");
-                        break 'handler None;
-                    }
+
+                    // Don't add duplicates
                     if ch.assigned_apps.contains(&assignment) {
                         break 'handler None;
                     }
@@ -648,19 +702,7 @@ impl MixerSession {
                     let target_node_id = ch.pipewire_id;
                     ch.assigned_apps.push(assignment.clone());
 
-                    // Hide the app's auto-channel (don't delete — it's permanent)
-                    let auto_desc = self.channels.iter()
-                        .find(|(_, c)| c.auto_app && c.assigned_apps.iter()
-                            .any(|a| a.application_name == assignment.application_name
-                                && a.binary_name == assignment.binary_name))
-                        .map(|(id, _)| EndpointDescriptor::Channel(*id));
-                    if let Some(desc) = auto_desc {
-                        if let Some(ep) = self.endpoints.get_mut(&desc) {
-                            ep.visible = false;
-                        }
-                    }
-
-                    // Redirect all matching PW stream nodes to the user channel
+                    // Find all matching PW stream nodes and redirect them
                     if let Some(target_id) = target_node_id {
                         for node in graph.nodes.values() {
                             if node.identifier.application_name.as_deref()
@@ -675,6 +717,27 @@ impl MixerSession {
                                 });
                             }
                         }
+                    }
+                    // Destroy the app's auto-channel — it will be recreated on unassign
+                    let auto_id = self
+                        .channels
+                        .iter()
+                        .find(|(_, c)| {
+                            c.auto_app
+                                && c.assigned_apps.iter().any(|a| {
+                                    a.application_name == assignment.application_name
+                                        && a.binary_name == assignment.binary_name
+                                })
+                        })
+                        .map(|(id, _)| *id);
+                    if let Some(id) = auto_id {
+                        self.endpoints.remove(&EndpointDescriptor::Channel(id));
+                        self.links.retain(|l| {
+                            l.start != EndpointDescriptor::Channel(id)
+                                && l.end != EndpointDescriptor::Channel(id)
+                        });
+                        self.channels.shift_remove(&id);
+                        pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
                     }
                     None
                 }
@@ -711,47 +774,72 @@ impl MixerSession {
                     None
                 }
 
-                StateMsg::SetEq(ep_desc, eq) => {
-                    let nodes = self.resolve_endpoint(ep_desc, graph, settings);
-                    if let Some(endpoint) = self.endpoints.get_mut(&ep_desc) {
-                        endpoint.eq = eq.clone();
-                    }
-                    if let Some(nodes) = nodes {
-                        for n in &nodes {
-                            pw_messages.push(ToPipewireMessage::SetFilterEq {
-                                node_id: n.id,
-                                eq: eq.clone(),
-                            });
-                        }
-                    }
+                StateMsg::SetDefaultOutputNode(node_id) => {
+                    self.default_output_node_id = node_id;
                     None
                 }
 
+                StateMsg::SetEq(ep_desc, eq) => {
+                    if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
+                        ep.eq = eq;
+                    }
+                    None
+                }
                 StateMsg::SetCellEq(source, sink, eq) => {
-                    if let Some(link) = self
+                    if let Some(l) = self
                         .links
                         .iter_mut()
                         .find(|l| l.start == source && l.end == sink)
                     {
-                        link.cell_eq = eq.clone();
+                        l.cell_eq = eq;
                     }
-                    for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-                        pw_messages.push(ToPipewireMessage::SetFilterEq {
-                            node_id: cell_id,
-                            eq: eq.clone(),
-                        });
-                    }
-                    None
-                }
-
-                StateMsg::SetDefaultOutputNode(node_id) => {
-                    self.default_output_node_id = node_id;
                     None
                 }
             }
         };
 
         (output, pw_messages)
+    }
+
+    /// Auto-rename channels created from `easyeffects_source` before the
+    /// default source name was resolved. Called on graph updates.
+    pub fn rename_easyeffects_channels(&mut self, graph: &AudioGraph) {
+        let Some(ref source_name) = graph.default_source_name else {
+            return;
+        };
+
+        let ee_exists = graph
+            .nodes
+            .values()
+            .any(|n| n.identifier.node_name() == Some(EASYEFFECTS_SOURCE));
+        if !ee_exists {
+            return;
+        }
+
+        let source_display = graph
+            .nodes
+            .values()
+            .find(|n| n.identifier.node_name() == Some(source_name))
+            .map(|n| n.identifier.human_name(PortKind::Source).to_owned())
+            .unwrap_or_else(|| source_name.clone());
+
+        let new_name = format!("EE - {source_display}");
+
+        for ep in self.endpoints.values_mut() {
+            let is_legacy = ep.display_name == "Easy Effects Source"
+                || ep.display_name == "easyeffects_source"
+                || ep.display_name == "Mic (EasyEffects)"
+                || ep.display_name == "EE - Mic"
+                || (ep.display_name.starts_with("EE - ") && ep.display_name != new_name)
+                || (ep.display_name.ends_with("(EasyEffects)") && ep.display_name != new_name);
+            if is_legacy {
+                debug!(
+                    "[State] auto-rename EasyEffects channel: {:?} -> {new_name:?}",
+                    ep.display_name
+                );
+                ep.display_name = new_name.clone();
+            }
+        }
     }
 }
 
@@ -774,12 +862,22 @@ impl MixerSession {
         let mut ids = Vec::new();
         for s in &source_nodes {
             for k in &sink_nodes {
-                let cell_name = format!("osg.cell.{}.{}", s.id, k.id);
-                if let Some((&cell_id, _)) = graph
-                    .nodes
-                    .iter()
-                    .find(|(_, n)| n.identifier.node_name() == Some(&cell_name))
-                {
+                let src_u = if let EndpointDescriptor::Channel(id) = source {
+                    id.inner().to_string()
+                } else {
+                    s.id.to_string()
+                };
+                let snk_u = if let EndpointDescriptor::Channel(id) = sink {
+                    id.inner().to_string()
+                } else {
+                    k.id.to_string()
+                };
+                let ulid_name = format!("osg.cell.{src_u}-to-{snk_u}");
+                let legacy_name = format!("osg.cell.{}.{}", s.id, k.id);
+                if let Some((&cell_id, _)) = graph.nodes.iter().find(|(_, n)| {
+                    let nn = n.identifier.node_name();
+                    nn == Some(&ulid_name) || nn == Some(&legacy_name)
+                }) {
                     ids.push(cell_id);
                 }
             }

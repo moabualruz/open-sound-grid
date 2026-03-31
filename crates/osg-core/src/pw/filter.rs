@@ -15,8 +15,8 @@
 //! - EQ params: main → RT via `ArcSwap` (lock-free).
 //! - Peak levels: RT → main via packed `AtomicU64`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
 
@@ -70,24 +70,60 @@ impl CompiledEq {
     }
 }
 
-/// Shared handle for lock-free EQ parameter passing and peak reading.
-#[derive(Clone)]
+/// Shared handle for lock-free EQ/volume/mute parameter passing and peak reading.
+#[derive(Clone, Debug)]
 pub struct FilterHandle {
     eq: Arc<ArcSwap<CompiledEq>>,
     peaks: Arc<AtomicU64>,
+    volume_left: Arc<AtomicU32>,
+    volume_right: Arc<AtomicU32>,
+    muted: Arc<AtomicBool>,
+}
+
+impl Default for FilterHandle {
+    fn default() -> Self {
+        Self {
+            eq: Arc::new(ArcSwap::new(Arc::new(CompiledEq::empty()))),
+            peaks: Arc::new(AtomicU64::new(0)),
+            volume_left: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            volume_right: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            muted: Arc::new(AtomicBool::new(false)),
+        }
+    }
 }
 
 impl FilterHandle {
     pub fn new() -> Self {
-        Self {
-            eq: Arc::new(ArcSwap::new(Arc::new(CompiledEq::empty()))),
-            peaks: Arc::new(AtomicU64::new(0)),
-        }
+        Self::default()
     }
 
     /// Update EQ parameters (lock-free, any thread).
     pub fn set_eq(&self, config: &EqConfig) {
         self.eq.store(Arc::new(CompiledEq::from_config(config)));
+    }
+
+    /// Set stereo volume (lock-free, any thread). Values 0.0–1.0.
+    pub fn set_volume(&self, left: f32, right: f32) {
+        self.volume_left.store(left.to_bits(), Ordering::Relaxed);
+        self.volume_right.store(right.to_bits(), Ordering::Relaxed);
+    }
+
+    /// Set mute state (lock-free, any thread).
+    pub fn set_mute(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
+    }
+
+    /// Read current volume (lock-free).
+    pub fn volume(&self) -> (f32, f32) {
+        (
+            f32::from_bits(self.volume_left.load(Ordering::Relaxed)),
+            f32::from_bits(self.volume_right.load(Ordering::Relaxed)),
+        )
+    }
+
+    /// Read current mute state (lock-free).
+    pub fn is_muted(&self) -> bool {
+        self.muted.load(Ordering::Relaxed)
     }
 
     /// Read latest peak levels (lock-free).
@@ -117,10 +153,8 @@ pub fn process_block(
     for (i, &sample) in input.iter().enumerate() {
         let mut s = sample;
         for (band_idx, (coeffs, enabled)) in eq.bands.iter().enumerate() {
-            if *enabled {
-                if let Some(state) = states.get_mut(band_idx) {
-                    s = state.process(s, coeffs);
-                }
+            if *enabled && let Some(state) = states.get_mut(band_idx) {
+                s = state.process(s, coeffs);
             }
         }
         let abs = s.abs();
@@ -150,6 +184,7 @@ struct CallbackData {
 
 /// A PipeWire filter node for inline stereo DSP.
 /// Must be created and used on the PW mainloop thread.
+#[allow(missing_debug_implementations)]
 pub struct OsgFilter {
     filter: *mut pipewire_sys::pw_filter,
     handle: FilterHandle,
@@ -169,7 +204,7 @@ impl OsgFilter {
     /// # Safety
     /// Must be called from the PW mainloop thread. The `core_ptr` must
     /// be a valid `*mut pw_core` from the running PW connection.
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, clippy::too_many_lines, clippy::too_many_arguments)]
     pub unsafe fn new(
         core_ptr: *mut pipewire_sys::pw_core,
         name: &str,
@@ -243,7 +278,9 @@ impl OsgFilter {
             std::mem::size_of::<*mut std::os::raw::c_void>(), // port_data_size
             pipewire_sys::pw_properties_new(
                 c"format.dsp".as_ptr().cast::<std::os::raw::c_char>(),
-                c"32 bit float mono audio".as_ptr().cast::<std::os::raw::c_char>(),
+                c"32 bit float mono audio"
+                    .as_ptr()
+                    .cast::<std::os::raw::c_char>(),
                 c"port.name".as_ptr().cast::<std::os::raw::c_char>(),
                 c"input_FL".as_ptr().cast::<std::os::raw::c_char>(),
                 c"audio.channel".as_ptr().cast::<std::os::raw::c_char>(),
@@ -261,7 +298,9 @@ impl OsgFilter {
             0,
             pipewire_sys::pw_properties_new(
                 c"format.dsp".as_ptr().cast::<std::os::raw::c_char>(),
-                c"32 bit float mono audio".as_ptr().cast::<std::os::raw::c_char>(),
+                c"32 bit float mono audio"
+                    .as_ptr()
+                    .cast::<std::os::raw::c_char>(),
                 c"port.name".as_ptr().cast::<std::os::raw::c_char>(),
                 c"input_FR".as_ptr().cast::<std::os::raw::c_char>(),
                 c"audio.channel".as_ptr().cast::<std::os::raw::c_char>(),
@@ -280,7 +319,9 @@ impl OsgFilter {
             0,
             pipewire_sys::pw_properties_new(
                 c"format.dsp".as_ptr().cast::<std::os::raw::c_char>(),
-                c"32 bit float mono audio".as_ptr().cast::<std::os::raw::c_char>(),
+                c"32 bit float mono audio"
+                    .as_ptr()
+                    .cast::<std::os::raw::c_char>(),
                 c"port.name".as_ptr().cast::<std::os::raw::c_char>(),
                 c"output_FL".as_ptr().cast::<std::os::raw::c_char>(),
                 c"audio.channel".as_ptr().cast::<std::os::raw::c_char>(),
@@ -298,7 +339,9 @@ impl OsgFilter {
             0,
             pipewire_sys::pw_properties_new(
                 c"format.dsp".as_ptr().cast::<std::os::raw::c_char>(),
-                c"32 bit float mono audio".as_ptr().cast::<std::os::raw::c_char>(),
+                c"32 bit float mono audio"
+                    .as_ptr()
+                    .cast::<std::os::raw::c_char>(),
                 c"port.name".as_ptr().cast::<std::os::raw::c_char>(),
                 c"output_FR".as_ptr().cast::<std::os::raw::c_char>(),
                 c"audio.channel".as_ptr().cast::<std::os::raw::c_char>(),
@@ -352,24 +395,28 @@ impl OsgFilter {
 
 /// Convenience: create an OsgFilter for a channel group node.
 /// Called from mainloop.rs create_group_node() for Source/Duplex kinds.
+///
+/// # Safety
+/// `core_ptr` must be a valid `*mut pw_core` from the running PW connection.
+/// Must be called from the PW mainloop thread.
 #[allow(unsafe_code)]
-pub fn create_group_filter(
+pub unsafe fn create_group_filter(
     core_ptr: *mut pipewire_sys::pw_core,
     name: &str,
     id: ulid::Ulid,
-    kind: super::GroupNodeKind,
+    _kind: super::GroupNodeKind,
 ) -> Result<OsgFilter, String> {
     let node_name = format!("osg.group.{id}");
-    let media_class = match kind {
-        super::GroupNodeKind::Source => "Audio/Source/Virtual",
-        super::GroupNodeKind::Duplex => "Audio/Duplex",
-        super::GroupNodeKind::Sink => "Audio/Sink",
-    };
+    // All channel filters use Source/Virtual — we route audio manually via
+    // RedirectStream links. Duplex causes WirePlumber to auto-route monitor
+    // sources into our input ports, creating feedback loops.
+    let media_class = "Audio/Source/Virtual";
     let filter = unsafe { OsgFilter::new(core_ptr, &node_name, name, media_class) }
         .map_err(|e| format!("filter '{name}': {e}"))?;
     tracing::debug!(
-        "[PW] created filter '{}' ({:?}) — node_id: {:?}",
-        name, kind, filter.node_id()
+        "[PW] created filter '{}' — node_id: {:?}",
+        name,
+        filter.node_id()
     );
     Ok(filter)
 }
@@ -389,7 +436,7 @@ impl Drop for OsgFilter {
 // ---------------------------------------------------------------------------
 
 /// Process callback — runs on PW real-time thread.
-/// Reads stereo input, applies EQ cascade, computes peaks, writes output.
+/// Reads stereo input, applies EQ cascade, volume gain, mute, computes peaks, writes output.
 #[allow(unsafe_code)]
 unsafe extern "C" fn on_process(
     data: *mut std::os::raw::c_void,
@@ -411,30 +458,46 @@ unsafe extern "C" fn on_process(
     let out_r = pipewire_sys::pw_filter_get_dsp_buffer(d.out_port_r, n_samples) as *mut f32;
 
     let n = n_samples as usize;
+    let muted = d.handle.is_muted();
+    let (vol_l, vol_r) = d.handle.volume();
 
-    // Always write output — silence if no input, to prevent graph stalls.
-    // Output buffers may be NULL if ports aren't connected yet.
+    let mut peak_l: f32 = 0.0;
+    let mut peak_r: f32 = 0.0;
+
+    // Always write output — silence if no input or muted, to prevent graph stalls.
     if !out_l.is_null() {
         let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
-        if !in_l.is_null() {
+        if muted || in_l.is_null() {
+            out_slice_l.fill(0.0);
+        } else {
             let in_slice_l = std::slice::from_raw_parts(in_l, n);
             let eq = d.handle.load_eq();
-            let peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
-            d.handle.store_peaks(peak_l, 0.0);
-        } else {
-            out_slice_l.fill(0.0);
+            peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
+            // Apply volume gain
+            if (vol_l - 1.0).abs() > f32::EPSILON {
+                for s in out_slice_l.iter_mut() {
+                    *s *= vol_l;
+                }
+                peak_l *= vol_l;
+            }
         }
     }
     if !out_r.is_null() {
         let out_slice_r = std::slice::from_raw_parts_mut(out_r, n);
-        if !in_r.is_null() {
+        if muted || in_r.is_null() {
+            out_slice_r.fill(0.0);
+        } else {
             let in_slice_r = std::slice::from_raw_parts(in_r, n);
             let eq = d.handle.load_eq();
-            let peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
-            let (existing_l, _) = d.handle.peak();
-            d.handle.store_peaks(existing_l, peak_r);
-        } else {
-            out_slice_r.fill(0.0);
+            peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
+            // Apply volume gain
+            if (vol_r - 1.0).abs() > f32::EPSILON {
+                for s in out_slice_r.iter_mut() {
+                    *s *= vol_r;
+                }
+                peak_r *= vol_r;
+            }
         }
     }
+    d.handle.store_peaks(peak_l, peak_r);
 }

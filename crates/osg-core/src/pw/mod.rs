@@ -180,6 +180,8 @@ pub enum ToPipewireMessage {
     /// Route: channel → cell_node (volume) → mix.
     CreateCellNode {
         name: String,
+        /// Deterministic cell ID: `osg.cell.{channel_ulid}-to-{mix_ulid}`
+        cell_id: String,
         channel_node_id: u32,
         mix_node_id: u32,
     },
@@ -203,12 +205,6 @@ pub enum ToPipewireMessage {
     StartPeakMonitor(u32),
     /// Stop monitoring peak levels for a node.
     StopPeakMonitor(u32),
-    /// Set EQ parameters on a filter node. The PW mainloop applies these
-    /// to the filter's process callback via atomic swap.
-    SetFilterEq {
-        node_id: u32,
-        eq: crate::graph::EqConfig,
-    },
     Exit,
 }
 

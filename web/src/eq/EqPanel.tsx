@@ -21,8 +21,8 @@ interface EqPanelProps {
   onEqChange?: (eq: EqConfig) => void;
 }
 
-/** Convert internal EqBand (with id/color) to wire-format EqBand. */
-function toWireBands(bands: EqBand[]): EqConfig["bands"] {
+/** Convert internal EqBand (with id/color) to serialized EqBand. */
+function toSerializedBands(bands: EqBand[]): EqConfig["bands"] {
   return bands.map((b) => ({
     enabled: b.enabled,
     filterType: b.type,
@@ -45,7 +45,7 @@ export default function EqPanel(props: EqPanelProps) {
 
   // Notify parent whenever EQ config changes
   createEffect(() => {
-    const eq: EqConfig = { enabled: enabled(), bands: toWireBands(bands()) };
+    const eq: EqConfig = { enabled: enabled(), bands: toSerializedBands(bands()) };
     props.onEqChange?.(eq);
   });
 

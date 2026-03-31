@@ -25,7 +25,6 @@ use super::{
 struct Master {
     store: Rc<RefCell<Store>>,
     pw_core: CoreRc,
-    context: ContextRc,
     registry: RegistryRc,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
     /// PipeWire "default" metadata proxy — used to set default.configured.audio.sink.
@@ -36,14 +35,12 @@ impl Master {
     fn new(
         store: Rc<RefCell<Store>>,
         pw_core: CoreRc,
-        context: ContextRc,
         registry: RegistryRc,
         sender: pipewire::channel::Sender<ToPipewireMessage>,
     ) -> Self {
         Master {
             store,
             pw_core,
-            context,
             registry,
             sender,
             settings_metadata: Rc::new(RefCell::new(None)),
@@ -286,30 +283,82 @@ impl Master {
         }
     }
 
-    #[allow(unsafe_code)]
     fn create_group_node(
         &self,
         name: String,
         id: Ulid,
         kind: GroupNodeKind,
     ) -> Result<(), PwError> {
-        // pw_filter with correct media.class — appears under Sinks in WirePlumber,
-        // apps can route to it, and we get a DSP process callback for EQ.
-        // No node.link-group = not classified as a Filter by WP.
-        let filter = super::filter::create_group_filter(
-            self.pw_core.as_raw_ptr(), &name, id, kind,
-        ).map_err(|e| PwError::SinkCreationFailed(e))?;
-        self.store.borrow_mut().group_filters.0.insert(id, filter);
+        let proxy = self
+            .pw_core
+            .create_object::<pipewire::node::Node>(
+                "adapter",
+                &properties! {
+                    *FACTORY_NAME => "support.null-audio-sink",
+                    *NODE_NAME => format!("osg.group.{id}"),
+                    *NODE_NICK => &*name,
+                    *NODE_DESCRIPTION => &*name,
+                    *APP_ICON_NAME => OSG_APP_ID,
+                    *MEDIA_ICON_NAME => OSG_APP_ID,
+                    *DEVICE_ICON_NAME => OSG_APP_ID,
+                    "icon_name" => OSG_APP_ID,
+                    *APP_NAME => OSG_APP_NAME,
+                    *NODE_VIRTUAL => "true",
+                    // All nodes use Audio/Sink — Duplex causes WP to route
+                    // capture streams (OS volume panel) into our nodes = noise.
+                    *MEDIA_CLASS => "Audio/Sink",
+                    "audio.position" => "FL,FR",
+                    "monitor.channel-volumes" => "true",
+                    "monitor.passthrough" => "true",
+                    "channelmix.upmix" => "false",
+                    "channelmix.normalize" => "false",
+                    // Hide from PulseAudio clients to prevent KDE noise
+                    "pulse.disable" => "true",
+                },
+            )
+            .map_err(|e| PwError::SinkCreationFailed(format!("group node '{name}': {e}")))?;
+        let listener = proxy
+            .upcast_ref()
+            .add_listener_local()
+            .bound({
+                let store = self.store.clone();
+                move |global_id| {
+                    if let Some(group_node) = store.borrow_mut().group_nodes.get_mut(&id) {
+                        group_node.id = Some(global_id);
+                    }
+                }
+            })
+            .removed({
+                let store = self.store.clone();
+                move || {
+                    store.borrow_mut().group_nodes.remove(&id);
+                }
+            })
+            .register();
+        self.store.borrow_mut().group_nodes.insert(
+            id,
+            super::object::GroupNode {
+                id: None,
+                name,
+                kind,
+                proxy,
+                _listener: listener,
+            },
+        );
         Ok(())
     }
 
     fn remove_group_node(&self, id: Ulid) -> Result<(), PwError> {
         let mut store = self.store.borrow_mut();
-        if let Some(filter) = store.group_filters.0.remove(&id) {
-            drop(filter);
-            return Ok(());
-        }
-        Err(PwError::GroupNodeNotFound(id))
+        let group_node = store
+            .group_nodes
+            .remove(&id)
+            .ok_or(PwError::GroupNodeNotFound(id))?;
+
+        // Dropping the proxy deletes the object on the server
+        drop(group_node);
+
+        Ok(())
     }
 }
 
@@ -523,7 +572,7 @@ pub(super) fn init_mainloop(
             Ok((mainloop, context, pw_core, registry))
         })();
         // If there was an error, report it and exit
-        let (mainloop, context, pw_core, registry) = match init_result {
+        let (mainloop, _context, pw_core, registry) = match init_result {
             Ok(result) => {
                 // Receiver dropped means caller already gave up — nothing we can do
                 let _ = init_status_tx.send(Ok(()));
@@ -535,16 +584,24 @@ pub(super) fn init_mainloop(
             }
         };
 
-        let master = Master::new(store.clone(), pw_core.clone(), context, registry, to_pw_tx_clone);
+        // init registry listener
+        let master = Master::new(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
+
         let _listener = master.registry_listener();
         let _remove_listener = master.registry_remove_listener();
         let _core_listeners = master.init_core_listeners();
 
-        // Peak monitor streams — dropping them stops the stream.
+        // Flag: cleanup orphaned osg nodes on the first Update after startup
+        let startup_cleanup_done = Rc::new(RefCell::new(false));
+
+        // Peak monitor streams — kept alive as long as monitoring is active.
+        // Each entry holds the StreamRc + listener (dropping them stops the stream).
         let peak_streams: Rc<
             RefCell<HashMap<u32, (StreamRc, pipewire::stream::StreamListener<()>)>>,
         > = Rc::new(RefCell::new(HashMap::new()));
+
         // Pending peak links: peak_stream_name → target_node_id.
+        // Resolved when the peak stream's node appears in the store with ports.
         let pending_peak_links: Rc<RefCell<HashMap<String, u32>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
@@ -555,11 +612,31 @@ pub(super) fn init_mainloop(
             let peak_streams = peak_streams.clone();
             let peak_store = peak_store.clone();
             let pending_peak_links = pending_peak_links.clone();
+            let startup_cleanup_done = startup_cleanup_done.clone();
             move |message| match message {
                 ToPipewireMessage::Update => {
+                    // On first update, destroy orphaned osg nodes from previous runs
+                    if !*startup_cleanup_done.borrow() {
+                        *startup_cleanup_done.borrow_mut() = true;
+                        let s = store.borrow();
+                        let orphans: Vec<u32> = s.nodes.iter()
+                            .filter(|(_, n)| n.identifier.node_name()
+                                .is_some_and(|name| name.starts_with("osg.")))
+                            .map(|(id, _)| *id)
+                            .collect();
+                        drop(s);
+                        for id in &orphans {
+                            master.registry.destroy_global(*id);
+                        }
+                        if !orphans.is_empty() {
+                            debug!("[PW] cleaned {} orphaned osg nodes on startup", orphans.len());
+                        }
+                    }
                     if !pending_peak_links.borrow().is_empty() {
                         master.resolve_peak_links(&mut pending_peak_links.borrow_mut());
                     }
+                    // VU disabled — channel_volumes is volume setting, not peak level.
+                    // Real peaks need peak streams (feedback risk) or pw_filter.
                     update_fn(Box::new(store.borrow().dump_graph()));
                 }
                 ToPipewireMessage::NodeVolume(id, volume) => {
@@ -621,19 +698,21 @@ pub(super) fn init_mainloop(
                 }
                 ToPipewireMessage::CreateCellNode {
                     name,
+                    cell_id,
                     channel_node_id,
                     mix_node_id,
                 } => {
-                    if let Err(err) = super::cell::create_cell_filter(
-                        master.pw_core.as_raw_ptr(),
+                    if let Err(err) = super::cell::create_cell_node(
+                        &master.pw_core,
                         &master.store,
                         super::cell::CellNodeArgs {
                             name,
+                            cell_id,
                             channel_node_id,
                             mix_node_id,
                         },
                     ) {
-                        warn!("[PW] failed to create cell filter: {err:?}");
+                        warn!("[PW] failed to create cell node: {err:?}");
                     }
                 }
                 ToPipewireMessage::RemoveCellNode { cell_node_id } => {
@@ -654,29 +733,24 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Set target.object metadata so WirePlumber won't re-route
+                    // Set target.object so WP routes the stream to our channel.
+                    // This avoids tearing links (which pauses the app).
                     let target_name = store.borrow().nodes.get(&target_node_id)
                         .and_then(|n| n.identifier.node_name().map(String::from));
-                    if let Some(ref name) = target_name {
-                        if let Some(ref metadata) = *master.settings_metadata.borrow() {
-                            let value = format!(r#"{{"name":"{name}"}}"#);
-                            metadata.set_property(
-                                stream_node_id,
-                                "target.object",
-                                Some("Spa:String:JSON"),
-                                Some(&value),
-                            );
-                        }
+                    if let Some(ref name) = target_name
+                        && let Some(ref metadata) = *master.settings_metadata.borrow()
+                    {
+                        let value = format!(r#"{{"name":"{name}"}}"#);
+                        metadata.set_property(
+                            stream_node_id, "target.object",
+                            Some("Spa:String:JSON"), Some(&value),
+                        );
                     }
-                    // Disconnect from current target
-                    super::cell::remove_all_source_links(
-                        &master.store, &master.registry, stream_node_id,
-                    );
-                    // Link to our filter
+                    // Also create direct links as fallback
                     if let Err(err) = master.create_node_links(stream_node_id, target_node_id) {
                         warn!("[PW] redirect {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
-                        debug!("[PW] redirect stream {stream_node_id} -> {target_node_id}");
+                        debug!("[PW] redirect stream {stream_node_id} -> node {target_node_id}");
                     }
                 }
                 ToPipewireMessage::ClearRedirect {
@@ -687,10 +761,16 @@ pub(super) fn init_mainloop(
                     if let Some(ref metadata) = *master.settings_metadata.borrow() {
                         metadata.set_property(stream_node_id, "target.object", None, None);
                     }
-                    if let Err(err) = master.remove_node_links(stream_node_id, target_node_id) {
-                        debug!("[PW] no links to clear {stream_node_id} -> {target_node_id}: {err:?}");
+                    if let Err(err) =
+                        master.remove_node_links(stream_node_id, target_node_id)
+                    {
+                        debug!(
+                            "[PW] no links to clear for {stream_node_id} -> {target_node_id}: {err:?}"
+                        );
                     } else {
-                        debug!("[PW] cleared redirect {stream_node_id} -> {target_node_id}");
+                        debug!(
+                            "[PW] cleared redirect {stream_node_id} -> {target_node_id}"
+                        );
                     }
                 }
                 ToPipewireMessage::StartPeakMonitor(node_id) => {
@@ -717,19 +797,26 @@ pub(super) fn init_mainloop(
                         debug!("[PW] peak monitor stopped for node {node_id}");
                     }
                 }
-                ToPipewireMessage::SetFilterEq { node_id, ref eq } => {
+                ToPipewireMessage::Exit => {
+                    // Cleanup: destroy all lingering osg nodes
                     let s = store.borrow();
-                    let applied = s.group_filters.0.values()
-                        .chain(s.cell_filters.iter())
-                        .find(|f| f.node_id() == Some(node_id))
-                        .map(|f| f.handle().set_eq(eq))
-                        .is_some();
-                    debug!("[PW] SetFilterEq node {node_id}: {}", if applied { "applied" } else { "no filter" });
+                    for (&node_id, _) in &s.nodes {
+                        if s.nodes.get(&node_id)
+                            .and_then(|n| n.identifier.node_name())
+                            .is_some_and(|n| n.starts_with("osg."))
+                        {
+                            master.registry.destroy_global(node_id);
+                        }
+                    }
+                    drop(s);
+                    debug!("[PW] cleaned up osg nodes on shutdown");
+                    mainloop.quit();
                 }
-                ToPipewireMessage::Exit => mainloop.quit(),
             }
         });
+
         debug!("PipeWire mainloop initialization done");
+
         mainloop.run();
     });
 

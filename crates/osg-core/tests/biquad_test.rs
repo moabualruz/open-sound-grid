@@ -152,11 +152,7 @@ fn biquad_state_reset_clears_history() {
 // Helper: evaluate magnitude response in dB at a given frequency
 // ---------------------------------------------------------------------------
 
-fn magnitude_db_at(
-    c: &osg_core::pw::biquad::Coefficients,
-    freq: f32,
-    sample_rate: f32,
-) -> f32 {
+fn magnitude_db_at(c: &osg_core::pw::biquad::Coefficients, freq: f32, sample_rate: f32) -> f32 {
     let w = std::f32::consts::TAU * freq / sample_rate;
     let cos_w = w.cos();
     let cos_2w = (2.0 * w).cos();

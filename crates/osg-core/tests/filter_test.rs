@@ -123,12 +123,10 @@ fn process_block_with_peaking_boost_increases_signal() {
     let _peak = process_block(&input, &mut output, &eq, &mut states);
 
     // After settling, the output should be louder than input (12dB boost ≈ 4x)
-    let input_rms: f32 = (input[512..].iter().map(|s| s * s).sum::<f32>()
-        / (input.len() - 512) as f32)
-        .sqrt();
-    let output_rms: f32 = (output[512..].iter().map(|s| s * s).sum::<f32>()
-        / (output.len() - 512) as f32)
-        .sqrt();
+    let input_rms: f32 =
+        (input[512..].iter().map(|s| s * s).sum::<f32>() / (input.len() - 512) as f32).sqrt();
+    let output_rms: f32 =
+        (output[512..].iter().map(|s| s * s).sum::<f32>() / (output.len() - 512) as f32).sqrt();
     assert!(
         output_rms > input_rms * 2.0,
         "12dB boost should significantly increase signal: input_rms={input_rms:.4}, output_rms={output_rms:.4}"

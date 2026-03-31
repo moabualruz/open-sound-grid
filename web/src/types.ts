@@ -210,13 +210,7 @@ export type Command =
 // EQ types (matching osg-core graph::types)
 // ---------------------------------------------------------------------------
 
-export type FilterType =
-  | "peaking"
-  | "lowShelf"
-  | "highShelf"
-  | "lowPass"
-  | "highPass"
-  | "notch";
+export type FilterType = "peaking" | "lowShelf" | "highShelf" | "lowPass" | "highPass" | "notch";
 
 export interface EqBand {
   enabled: boolean;

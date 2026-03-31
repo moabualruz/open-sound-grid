@@ -194,27 +194,14 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
 
     // Auto-start peak monitors for all audio nodes (channels, mixes, and app streams)
     {
+        // Peak streams for external app streams only.
+        // Skip osg.* nodes — peak streams on our sinks cause feedback.
         let graph = state.core.snapshot();
-        // Monitor OSG group nodes (channels/mixes)
-        for group_node in graph.group_nodes.values() {
-            if let Some(pw_id) = group_node.id {
-                state.core.start_peak_monitor(pw_id);
-            }
-        }
-        // Monitor all nodes with audio ports (app streams, hardware),
-        // but skip our own peak-monitor streams to avoid infinite recursion
         for (&node_id, node) in &graph.nodes {
-            if node
-                .identifier
-                .node_name()
-                .is_some_and(|n: &str| n.starts_with("osg.peak."))
-            {
-                continue;
-            }
-            let has_audio = node.ports.iter().any(|(_, kind, _)| {
-                *kind == osg_core::pw::PortKind::Source || *kind == osg_core::pw::PortKind::Sink
-            });
-            if has_audio {
+            let name = node.identifier.node_name().unwrap_or("");
+            if name.starts_with("osg.") { continue; }
+            let has_source = node.ports.iter().any(|(_, k, _)| *k == osg_core::pw::PortKind::Source);
+            if has_source {
                 state.core.start_peak_monitor(node_id);
             }
         }

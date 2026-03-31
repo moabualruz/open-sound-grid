@@ -1,47 +1,87 @@
-// Per-cell filter nodes for matrix routing.
+// Per-cell volume nodes for matrix routing.
 //
-// Each cell (channel×mix intersection) gets its own pw_filter node
-// for volume + EQ processing. Route: channel → cell → mix.
+// Each cell (channel×mix intersection) gets its own PipeWire null-audio-sink
+// node that acts as a volume gain stage. Route: channel → cell → mix.
+// Cell volume is set via channelVolumes on the cell's PW node.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use pipewire::core::CoreRc;
+use pipewire::keys::*;
+use pipewire::properties::properties;
+use pipewire::proxy::ProxyT;
 use pipewire::registry::RegistryRc;
+use tracing::debug;
 
 use super::PwError;
-use super::filter::OsgFilter;
 use super::store::Store;
 
-/// Arguments for creating a cell filter node.
+const OSG_APP_NAME: &str = "open-sound-grid";
+
+/// Arguments for creating a cell node.
 pub(super) struct CellNodeArgs {
     pub name: String,
+    pub cell_id: String,
     pub channel_node_id: u32,
     pub mix_node_id: u32,
 }
 
-/// Create a per-cell pw_filter node. Route: channel → cell_filter → mix.
-#[allow(unsafe_code)]
-pub(super) fn create_cell_filter(
-    core_ptr: *mut pipewire_sys::pw_core,
+/// Create a per-cell volume node and link it: channel → cell → mix.
+/// The `pw_sender` is used to schedule link creation after the cell's ports appear.
+pub(super) fn create_cell_node(
+    pw_core: &CoreRc,
     store: &Rc<RefCell<Store>>,
     args: CellNodeArgs,
 ) -> Result<(), PwError> {
     let CellNodeArgs {
         name,
+        cell_id,
         channel_node_id,
         mix_node_id,
     } = args;
-    let cell_name = format!("osg.cell.{channel_node_id}.{mix_node_id}");
+    let cell_name = cell_id;
+    let proxy = pw_core
+        .create_object::<pipewire::node::Node>(
+            "adapter",
+            &properties! {
+                *FACTORY_NAME => "support.null-audio-sink",
+                *NODE_NAME => &*cell_name,
+                *NODE_NICK => &*name,
+                *NODE_DESCRIPTION => &*name,
+                *APP_NAME => OSG_APP_NAME,
+                *NODE_VIRTUAL => "true",
+                *MEDIA_CLASS => "Audio/Sink",
+                "audio.position" => "FL,FR",
+                "monitor.channel-volumes" => "true",
+                "monitor.passthrough" => "true",
+                "channelmix.upmix" => "false",
+                "channelmix.normalize" => "false",
+                // Hide from PulseAudio clients (KDE volume panel) to prevent noise
+                "pulse.disable" => "true",
+                *OBJECT_LINGER => "true",
+            },
+        )
+        .map_err(|e| PwError::SinkCreationFailed(format!("cell node '{name}': {e}")))?;
 
-    let filter = unsafe { OsgFilter::new(core_ptr, &cell_name, &name, "Audio/Duplex") }
-        .map_err(|e| PwError::SinkCreationFailed(format!("cell filter '{name}': {e}")))?;
+    let store_clone = store.clone();
+    let listener = proxy
+        .upcast_ref()
+        .add_listener_local()
+        .bound(move |cell_id| {
+            debug!(
+                "[PW] cell node {cell_name} bound as {cell_id} \
+                 (channel={channel_node_id}, mix={mix_node_id})"
+            );
+            store_clone
+                .borrow_mut()
+                .cell_node_ids
+                .insert((channel_node_id, mix_node_id), cell_id);
+            // Linking happens via diff_cell_links once the cell appears in the graph.
+        })
+        .register();
 
-    tracing::debug!(
-        "[PW] cell filter {cell_name} created — node_id: {:?}",
-        filter.node_id()
-    );
-
-    store.borrow_mut().cell_filters.push(filter);
+    store.borrow_mut().cell_proxies.push((proxy, listener));
     Ok(())
 }
 

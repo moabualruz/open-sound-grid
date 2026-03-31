@@ -23,56 +23,21 @@ use super::{
     pod::{DeviceActiveRoute, NodeProps, build_node_mute_pod, build_node_volume_pod},
 };
 
-/// Legacy wrapper for old null-audio-sink cell proxies. No longer used
-/// since cells now use OsgFilter (CellFilters). Kept temporarily for
-/// any leftover references during migration.
+/// Wrapper to hold cell node proxies alive without requiring Debug.
 pub(super) struct CellProxies(Vec<(pipewire::node::Node, pipewire::proxy::ProxyListener)>);
 
 impl CellProxies {
     fn new() -> Self {
         Self(Vec::new())
     }
+    pub(super) fn push(&mut self, item: (pipewire::node::Node, pipewire::proxy::ProxyListener)) {
+        self.0.push(item);
+    }
 }
 
 impl std::fmt::Debug for CellProxies {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "CellProxies({})", self.0.len())
-    }
-}
-
-/// Wrapper to hold OsgFilter instances keyed by Ulid without requiring Debug.
-pub(super) struct GroupFilters(pub(super) HashMap<Ulid, super::filter::OsgFilter>);
-
-/// Wrapper to hold cell OsgFilter instances without requiring Debug.
-pub(super) struct CellFilters(pub(super) Vec<super::filter::OsgFilter>);
-
-impl GroupFilters {
-    fn new() -> Self {
-        Self(HashMap::new())
-    }
-}
-
-impl std::fmt::Debug for GroupFilters {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GroupFilters({})", self.0.len())
-    }
-}
-
-impl CellFilters {
-    fn new() -> Self {
-        Self(Vec::new())
-    }
-    pub(super) fn push(&mut self, filter: super::filter::OsgFilter) {
-        self.0.push(filter);
-    }
-    pub(super) fn iter(&self) -> std::slice::Iter<'_, super::filter::OsgFilter> {
-        self.0.iter()
-    }
-}
-
-impl std::fmt::Debug for CellFilters {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CellFilters({})", self.0.len())
     }
 }
 
@@ -83,11 +48,6 @@ pub(super) struct Store {
     /// duplicated elsewhere in the store, but to avoid overcomplicating that code, we will store
     /// them here since dropping these copies deletes the object on the server.
     pub(super) group_nodes: HashMap<Ulid, GroupNode>,
-    /// OsgFilter instances for channels that use pw_filter instead of null-audio-sink.
-    /// Keyed by the same Ulid as group_nodes. When a filter is here, group_nodes won't have it.
-    pub(super) group_filters: GroupFilters,
-    /// Filter-chain module instances (EQ). Keyed by channel/mix Ulid.
-    pub(super) filter_chains: HashMap<Ulid, super::filter_chain::EqFilterChain>,
     pub(super) clients: HashMap<u32, Client>,
     pub(super) devices: HashMap<u32, Device>,
     pub(super) nodes: HashMap<u32, Node>,
@@ -97,12 +57,9 @@ pub(super) struct Store {
     pub(super) default_sink_name: Option<String>,
     /// PipeWire node name of the OS default audio source (mic).
     pub(super) default_source_name: Option<String>,
-    /// Legacy cell node proxies (null-audio-sink). Being replaced by cell_filters.
+    /// Keep cell node proxies alive — dropping them destroys the PW objects.
+    /// Not Debug because ProxyListener doesn't implement it.
     pub(super) cell_proxies: CellProxies,
-    /// OsgFilter instances for cell nodes (replacing null-audio-sink cells).
-    pub(super) cell_filters: CellFilters,
-    /// Filter-chain module instances for cell EQ.
-    pub(super) cell_filter_chains: Vec<super::filter_chain::EqFilterChain>,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
     pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
 }
@@ -112,8 +69,6 @@ impl Store {
         Self {
             osg_client_id: None,
             group_nodes: HashMap::new(),
-            group_filters: GroupFilters::new(),
-            filter_chains: HashMap::new(),
             clients: HashMap::new(),
             devices: HashMap::new(),
             nodes: HashMap::new(),
@@ -122,8 +77,6 @@ impl Store {
             default_sink_name: None,
             default_source_name: None,
             cell_proxies: CellProxies::new(),
-            cell_filters: CellFilters::new(),
-            cell_filter_chains: Vec::new(),
             cell_node_ids: HashMap::new(),
         }
     }

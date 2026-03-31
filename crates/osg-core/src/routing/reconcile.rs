@@ -13,8 +13,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
-    PersistentNodeId, ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
+    App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, EqConfig,
+    Link, LinkState, MixerSession, PersistentNodeId, ReconcileSettings, VolumeLockMuteState,
+    average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -51,13 +52,12 @@ impl MixerSession {
         settings: &ReconcileSettings,
     ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
-        let mut messages = self.diff_channels(&endpoint_nodes);
-        messages.extend(self.auto_create_app_channels());
+        let mut messages = self.auto_create_app_channels();
         self.ensure_default_links();
-        // Cells disabled — channels link directly to mixes via diff_direct_channel_to_mix_links.
+        messages.extend(self.diff_channels(&endpoint_nodes));
+        messages.extend(self.diff_cells(graph));
+        messages.extend(self.diff_cell_links(graph));
         messages.extend(self.diff_app_routing(graph));
-        messages.extend(self.diff_direct_channel_to_mix_links(graph));
-        messages.extend(self.diff_mix_to_hardware_links(graph));
         messages.extend(self.diff_properties(&endpoint_nodes));
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages
@@ -128,13 +128,17 @@ impl MixerSession {
             })
             .collect();
 
+        // Discover new apps from the graph.
         self.discover_apps(graph);
+
         endpoint_nodes
     }
 
+    // -----------------------------------------------------------------------
     // diff_channels — ensure virtual channels exist in PipeWire
+    // -----------------------------------------------------------------------
 
-    #[allow(clippy::expect_used)]
+    #[allow(clippy::expect_used)] // channel keys come from self.channels iteration
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
@@ -152,11 +156,7 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
-                    // Only start peak streams for Sink (mix) channels — Source/Duplex
-                    // channels use OsgFilter which computes peaks internally.
-                    if channel.kind == ChannelKind::Sink {
-                        messages.push(ToPipewireMessage::StartPeakMonitor(node.id));
-                    }
+                    // Peak streams disabled — they cause WP feedback loops
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");
@@ -177,7 +177,59 @@ impl MixerSession {
         messages
     }
 
-    // diff_app_routing — redirect assigned app streams
+    // -----------------------------------------------------------------------
+    // diff_cells — ensure every row×mix pair has a cell node
+    // -----------------------------------------------------------------------
+
+    /// For every (source channel × sink mix) pair, ensure a cell node exists.
+    fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        let rows: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind != ChannelKind::Sink && ch.pipewire_id.is_some())
+            .collect();
+        let mixes: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
+            .collect();
+        for (row_id, row_ch) in &rows {
+            let Some(row_pw) = row_ch.pipewire_id else {
+                continue;
+            };
+            for (mix_id, mix_ch) in &mixes {
+                let Some(mix_pw) = mix_ch.pipewire_id else {
+                    continue;
+                };
+                let cell_id = format!("osg.cell.{}-to-{}", row_id.inner(), mix_id.inner());
+                if !self.created_cells.contains(&cell_id) {
+                    self.created_cells.insert(cell_id.clone());
+                    let rn = self
+                        .endpoints
+                        .get(&EndpointDescriptor::Channel(**row_id))
+                        .map(|e| e.display_name.as_str())
+                        .unwrap_or("?");
+                    let mn = self
+                        .endpoints
+                        .get(&EndpointDescriptor::Channel(**mix_id))
+                        .map(|e| e.display_name.as_str())
+                        .unwrap_or("?");
+                    messages.push(ToPipewireMessage::CreateCellNode {
+                        name: format!("{rn}→{mn}"),
+                        cell_id,
+                        channel_node_id: row_pw,
+                        mix_node_id: mix_pw,
+                    });
+                }
+            }
+        }
+        messages
+    }
+
+    // -----------------------------------------------------------------------
+    // diff_app_routing — redirect assigned app streams via target.object
+    // -----------------------------------------------------------------------
 
     /// For each channel with assigned apps, find matching PW stream nodes
     /// and create direct links if not already routed to the channel.
@@ -218,6 +270,96 @@ impl MixerSession {
     }
 
     // -----------------------------------------------------------------------
+    // diff_cell_links — ensure channel → cell → mix links exist
+    // -----------------------------------------------------------------------
+
+    /// For each cell node (detected by `osg.cell.{channel_id}.{mix_id}` naming),
+    /// ensure PW links exist: channel → cell → mix.
+    fn diff_cell_links(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        // Build ULID → PW ID map from channels
+        let ulid_to_pw: HashMap<String, u32> = self
+            .channels
+            .iter()
+            .filter_map(|(id, ch)| ch.pipewire_id.map(|pw| (id.inner().to_string(), pw)))
+            .collect();
+
+        for (&cell_pw_id, cell_node) in &graph.nodes {
+            let Some(name) = cell_node.identifier.node_name() else {
+                continue;
+            };
+            let Some(rest) = name.strip_prefix("osg.cell.") else {
+                continue;
+            };
+            let Some((ch_ulid, mix_ulid)) = rest.split_once("-to-") else {
+                // Legacy format: osg.cell.{pw_id}.{pw_id}
+                if let Some((a, b)) = rest.split_once('.') {
+                    if let (Ok(ch), Ok(mx)) = (a.parse::<u32>(), b.parse::<u32>()) {
+                        if cell_node.ports.is_empty() {
+                            continue;
+                        }
+                        if !graph
+                            .links
+                            .values()
+                            .any(|l| l.start_node == ch && l.end_node == cell_pw_id)
+                            && graph.nodes.contains_key(&ch)
+                        {
+                            messages.push(ToPipewireMessage::CreateNodeLinks {
+                                start_id: ch,
+                                end_id: cell_pw_id,
+                            });
+                        }
+                        if !graph
+                            .links
+                            .values()
+                            .any(|l| l.start_node == cell_pw_id && l.end_node == mx)
+                            && graph.nodes.contains_key(&mx)
+                        {
+                            messages.push(ToPipewireMessage::CreateNodeLinks {
+                                start_id: cell_pw_id,
+                                end_id: mx,
+                            });
+                        }
+                    }
+                }
+                continue;
+            };
+            if cell_node.ports.is_empty() {
+                continue;
+            }
+            let Some(&channel_pw) = ulid_to_pw.get(ch_ulid) else {
+                continue;
+            };
+            let Some(&mix_pw) = ulid_to_pw.get(mix_ulid) else {
+                continue;
+            };
+            if !graph
+                .links
+                .values()
+                .any(|l| l.start_node == channel_pw && l.end_node == cell_pw_id)
+                && graph.nodes.contains_key(&channel_pw)
+            {
+                messages.push(ToPipewireMessage::CreateNodeLinks {
+                    start_id: channel_pw,
+                    end_id: cell_pw_id,
+                });
+            }
+            if !graph
+                .links
+                .values()
+                .any(|l| l.start_node == cell_pw_id && l.end_node == mix_pw)
+                && graph.nodes.contains_key(&mix_pw)
+            {
+                messages.push(ToPipewireMessage::CreateNodeLinks {
+                    start_id: cell_pw_id,
+                    end_id: mix_pw,
+                });
+            }
+        }
+        messages
+    }
+
+    // -----------------------------------------------------------------------
     // diff_properties — volume / mute reconciliation
     // -----------------------------------------------------------------------
 
@@ -237,9 +379,6 @@ impl MixerSession {
 
             if endpoint.volume_pending {
                 // While a command is in-flight, just check if PW has converged.
-                // Exact f32 equality is correct here: PipeWire stores channelVolumes
-                // as SPA_TYPE_Float arrays and copies them via memcpy (spa_pod_copy_array),
-                // preserving the exact IEEE 754 bit pattern with no rounding or clamping.
                 let volumes_match = if endpoint.volume_locked_muted.is_locked() {
                     nodes
                         .iter()
@@ -406,9 +545,9 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
-                    cell_eq: EqConfig::default(),
                     cell_node_id: None,
                     pending: false,
+                    cell_eq: EqConfig::default(),
                 }),
                 None => self.links.push(Link {
                     start: source_desc,
@@ -417,9 +556,9 @@ impl MixerSession {
                     cell_volume: 1.0,
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
-                    cell_eq: EqConfig::default(),
                     cell_node_id: None,
                     pending: false,
+                    cell_eq: EqConfig::default(),
                 }),
                 Some(false) => {}
             }
@@ -451,16 +590,13 @@ impl MixerSession {
                 None
             }
 
-            EndpointDescriptor::Channel(id) => {
-                let name = format!("osg.group.{}", id.inner());
-                // Resolve by group_nodes map (legacy) or by node name scan (pw_filter)
-                let node = graph.group_nodes.get(&id.inner())
-                    .and_then(|gn| gn.id)
-                    .and_then(|nid| graph.nodes.get(&nid))
-                    .or_else(|| graph.nodes.values()
-                        .find(|n| n.identifier.node_name() == Some(&name)));
-                node.filter(|n| !n.ports.is_empty()).map(|n| vec![n])
-            }
+            EndpointDescriptor::Channel(id) => graph
+                .group_nodes
+                .get(&id.inner())
+                .and_then(|gn| gn.id)
+                .and_then(|nid| graph.nodes.get(&nid))
+                .filter(|node| !node.ports.is_empty())
+                .map(|node| vec![node]),
 
             EndpointDescriptor::App(id, kind) => {
                 let app = self.apps.get(&id)?;
@@ -571,12 +707,151 @@ impl MixerSession {
     }
 
     /// Discover new apps from the PipeWire graph.
+    /// Auto-create ConnectedLocked links for every source × sink pair
+    /// that doesn't already have one. New channels and mixes get cells
+    /// by default — user can disconnect later.
+    fn ensure_default_links(&mut self) {
+        let sources: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind != ChannelKind::Sink)
+            .map(|(id, _)| EndpointDescriptor::Channel(*id))
+            .collect();
+        let sinks: Vec<_> = self
+            .channels
+            .iter()
+            .filter(|(_, ch)| ch.kind == ChannelKind::Sink)
+            .map(|(id, _)| EndpointDescriptor::Channel(*id))
+            .collect();
+        if !sources.is_empty() || !sinks.is_empty() {
+            tracing::debug!(
+                "[State] ensure_default_links: {} sources × {} sinks, {} existing links",
+                sources.len(),
+                sinks.len(),
+                self.links.len()
+            );
+        }
+        for source in &sources {
+            for sink in &sinks {
+                let exists = self
+                    .links
+                    .iter()
+                    .any(|l| l.start == *source && l.end == *sink);
+                if !exists {
+                    tracing::debug!("[State] default link: {source:?} → {sink:?}");
+                    self.links.push(Link {
+                        start: *source,
+                        end: *sink,
+                        state: LinkState::ConnectedUnlocked,
+                        cell_volume: 1.0,
+                        cell_volume_left: 1.0,
+                        cell_volume_right: 1.0,
+                        cell_eq: EqConfig::default(),
+                        cell_node_id: None,
+                        pending: false,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Auto-activate discovered apps so they appear in the mixer grid.
+    /// Auto-create a real null-audio-sink channel for each discovered app.
+    /// The app's audio gets redirected to the channel via target.object.
+    /// When the user assigns the app to a different channel, this one hides.
+    fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
+        let mut messages = Vec::new();
+        let output_apps: Vec<_> = self
+            .apps
+            .values()
+            .filter(|app| app.kind == PortKind::Source)
+            .map(|app| (app.name.clone(), app.binary.clone(), app.icon_name.clone()))
+            .collect();
+        for (app_name, binary, icon) in output_apps {
+            let assigned = self.channels.values().any(|ch| {
+                !ch.auto_app
+                    && ch
+                        .assigned_apps
+                        .iter()
+                        .any(|a| a.application_name == app_name && a.binary_name == binary)
+            });
+            if assigned {
+                continue;
+            }
+            let has_auto = self.channels.values().any(|ch| {
+                ch.auto_app
+                    && ch
+                        .assigned_apps
+                        .iter()
+                        .any(|a| a.application_name == app_name && a.binary_name == binary)
+            });
+            if has_auto {
+                continue;
+            }
+            if app_name.is_empty()
+                || binary.is_empty()
+                || app_name == "open-sound-grid"
+                || app_name.starts_with("osg")
+                || binary.contains("easyeffects")
+                || binary.contains("kwin")
+                || binary.contains("pipewire")
+                || binary.contains("wireplumber")
+                || binary.contains("xdg-desktop-portal")
+                || binary.contains("gnome-shell")
+                || binary.contains("pulseaudio")
+                || binary.contains("speech-dispatcher")
+                || app_name == "kwin_wayland"
+                || app_name == "GNOME Shell"
+            {
+                continue;
+            }
+            let id = ChannelId::new();
+            let kind = ChannelKind::Duplex;
+            let descriptor = EndpointDescriptor::Channel(id);
+            self.channels.insert(
+                id,
+                Channel {
+                    id,
+                    kind,
+                    output_node_id: None,
+                    assigned_apps: vec![AppAssignment {
+                        application_name: app_name.clone(),
+                        binary_name: binary.clone(),
+                    }],
+                    auto_app: true,
+                    allow_app_assignment: false,
+                    pipewire_id: None,
+                    pending: true,
+                },
+            );
+            self.endpoints.insert(
+                descriptor,
+                Endpoint::new(descriptor)
+                    .with_display_name(app_name.clone())
+                    .with_icon_name(icon),
+            );
+            messages.push(ToPipewireMessage::CreateGroupNode(
+                app_name.clone(),
+                id.inner(),
+                kind,
+            ));
+            tracing::debug!("[State] auto-created channel for app '{app_name}'");
+        }
+        messages
+    }
+
     fn discover_apps(&mut self, graph: &AudioGraph) {
         let mut discovered = HashMap::<(String, String, PortKind), String>::new();
         for node in graph.nodes.values() {
             if let (Some(app_name), Some(binary)) = (
-                node.identifier.application_name.as_ref(),
-                node.identifier.binary_name.as_ref(),
+                node.identifier
+                    .application_name
+                    .as_ref()
+                    .filter(|n| !n.is_empty()),
+                node.identifier
+                    .binary_name
+                    .as_ref()
+                    .filter(|n| !n.is_empty()),
             ) {
                 if node.has_port_kind(PortKind::Source) {
                     discovered.insert(
@@ -598,6 +873,7 @@ impl MixerSession {
         }
         // Add new inactive apps.
         for ((name, binary, kind), icon) in discovered {
+            tracing::debug!("[State] discovered app '{name}' ({binary}, {kind:?})");
             let app = App::new_inactive(name, binary, icon, kind);
             self.apps.insert(app.id, app);
         }
