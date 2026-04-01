@@ -332,46 +332,61 @@ impl MixerSession {
                     None
                 }
                 StateMsg::SetMute(ep_desc, muted) => {
-                    let nodes = self.resolve_endpoint(ep_desc, graph, settings);
-                    let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
-                        break 'handler None;
-                    };
-                    endpoint.volume_locked_muted = endpoint.volume_locked_muted.with_mute(muted);
+                    // Update endpoint state
+                    {
+                        let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
+                            break 'handler None;
+                        };
+                        endpoint.volume_locked_muted =
+                            endpoint.volume_locked_muted.with_mute(muted);
+                        if muted {
+                            endpoint.pre_mute_volume =
+                                Some((endpoint.volume_left, endpoint.volume_right));
+                            endpoint.volume_left = 0.0;
+                            endpoint.volume_right = 0.0;
+                            endpoint.volume = 0.0;
+                        } else if let Some((left, right)) = endpoint.pre_mute_volume.take() {
+                            endpoint.volume_left = left;
+                            endpoint.volume_right = right;
+                            endpoint.volume = (left + right) / 2.0;
+                        }
+                    }
+                    // Read back volumes after dropping mutable borrow
+                    let (vol_l, vol_r) = self
+                        .endpoints
+                        .get(&ep_desc)
+                        .map(|ep| (ep.volume_left, ep.volume_right))
+                        .unwrap_or((0.0, 0.0));
 
-                    if let Some(nodes) = nodes {
-                        let is_device = matches!(ep_desc, EndpointDescriptor::Device(..));
-                        if is_device {
-                            // Hardware devices honor SPA_PROP_mute
-                            let msgs: Vec<_> = nodes
-                                .into_iter()
-                                .map(|n| ToPipewireMessage::NodeMute(n.id, muted))
-                                .collect();
-                            if !msgs.is_empty() {
-                                endpoint.volume_pending = true;
+                    // Push to PW
+                    let is_device = matches!(ep_desc, EndpointDescriptor::Device(..));
+                    if is_device {
+                        if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
+                            pw_messages.extend(
+                                nodes.into_iter().map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
+                            );
+                        }
+                    } else if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
+                        // Mix: set volume on PW node directly
+                        let vols = vec![vol_l, vol_r];
+                        pw_messages.extend(nodes.into_iter().map(|n| {
+                            ToPipewireMessage::NodeVolume(n.id, vols.clone())
+                        }));
+                    } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
+                        // Source channel: fan out effective to cells
+                        for link in &self.links {
+                            if link.start == ep_desc {
+                                let eff_l = vol_l * link.cell_volume_left;
+                                let eff_r = vol_r * link.cell_volume_right;
+                                for cell_id in
+                                    self.find_cell_node_ids(ep_desc, link.end, graph, settings)
+                                {
+                                    pw_messages.push(ToPipewireMessage::NodeVolume(
+                                        cell_id,
+                                        vec![eff_l, eff_r],
+                                    ));
+                                }
                             }
-                            pw_messages.extend(msgs);
-                        } else {
-                            // Null-audio-sinks ignore mute — use volume 0 instead
-                            if muted {
-                                endpoint.pre_mute_volume =
-                                    Some((endpoint.volume_left, endpoint.volume_right));
-                                endpoint.volume_left = 0.0;
-                                endpoint.volume_right = 0.0;
-                                endpoint.volume = 0.0;
-                            } else if let Some((left, right)) = endpoint.pre_mute_volume.take() {
-                                endpoint.volume_left = left;
-                                endpoint.volume_right = right;
-                                endpoint.volume = (left + right) / 2.0;
-                            }
-                            let vols = vec![endpoint.volume_left, endpoint.volume_right];
-                            let msgs: Vec<_> = nodes
-                                .into_iter()
-                                .map(|n| ToPipewireMessage::NodeVolume(n.id, vols.clone()))
-                                .collect();
-                            if !msgs.is_empty() {
-                                endpoint.volume_pending = true;
-                            }
-                            pw_messages.extend(msgs);
                         }
                     }
                     None
