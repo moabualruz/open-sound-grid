@@ -57,7 +57,7 @@ impl MixerSession {
 
     /// Auto-create a real null-audio-sink channel for each discovered app.
     pub(super) fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
-        let mut messages = Vec::new();
+        let messages = Vec::new();
         let output_apps: Vec<_> = self
             .apps
             .values()

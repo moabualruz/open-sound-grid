@@ -61,7 +61,7 @@ pub(super) struct Store {
     /// Not Debug because ProxyListener doesn't implement it.
     pub(super) cell_proxies: CellProxies,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
-    pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
+    pub(super) cell_node_ids: HashMap<(String, String), u32>,
 }
 
 impl Store {

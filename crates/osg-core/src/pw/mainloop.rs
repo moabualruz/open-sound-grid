@@ -633,8 +633,8 @@ pub(super) fn init_mainloop(
                 ToPipewireMessage::CreateCellNode {
                     name,
                     cell_id,
-                    channel_node_id,
-                    mix_node_id,
+                    channel_ulid,
+                    mix_ulid,
                 } => {
                     if let Err(err) = super::cell::create_cell_node(
                         &master.pw_core,
@@ -642,8 +642,8 @@ pub(super) fn init_mainloop(
                         super::cell::CellNodeArgs {
                             name,
                             cell_id,
-                            channel_node_id,
-                            mix_node_id,
+                            channel_ulid,
+                            mix_ulid,
                         },
                     ) {
                         warn!("[PW] failed to create cell node: {err:?}");

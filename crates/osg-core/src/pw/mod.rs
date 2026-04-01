@@ -196,7 +196,7 @@ pub struct AudioGraph {
     pub default_source_name: Option<String>,
     /// Map (channel_node_id, mix_node_id) → cell PW node ID for per-route volume.
     #[serde(skip)]
-    pub cell_node_ids: HashMap<(u32, u32), u32>,
+    pub cell_node_ids: HashMap<(String, String), u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -219,14 +219,14 @@ pub enum ToPipewireMessage {
     /// Set the OS default audio sink via PipeWire metadata.
     /// (node_name, pipewire_node_id) — tries metadata first, falls back to wpctl.
     SetDefaultSink(String, u32),
-    /// Create a per-cell volume node (null-audio-sink) for matrix routing.
-    /// Route: channel → cell_node (volume) → mix.
+    /// Create a per-cell null-audio-sink for matrix routing (ADR-007).
+    /// App streams link directly to this sink. Monitor → [filter] → mix.
     CreateCellNode {
         name: String,
-        /// Deterministic cell ID: `osg.cell.{channel_ulid}-to-{mix_ulid}`
+        /// Full node name: `osg.cell.{channel_ulid}-to-{mix_ulid}`
         cell_id: String,
-        channel_node_id: u32,
-        mix_node_id: u32,
+        channel_ulid: String,
+        mix_ulid: String,
     },
     /// Remove a per-cell volume node and its links.
     RemoveCellNode {

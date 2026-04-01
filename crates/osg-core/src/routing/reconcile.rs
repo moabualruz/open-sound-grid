@@ -183,21 +183,16 @@ impl MixerSession {
         let rows: Vec<_> = self
             .channels
             .iter()
-            .filter(|(_, ch)| ch.kind != ChannelKind::Sink && ch.pipewire_id.is_some())
+            .filter(|(_, ch)| ch.kind != ChannelKind::Sink)
             .collect();
         let mixes: Vec<_> = self
             .channels
             .iter()
             .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
             .collect();
-        for (row_id, row_ch) in &rows {
-            let Some(row_pw) = row_ch.pipewire_id else {
-                continue;
-            };
-            for (mix_id, mix_ch) in &mixes {
-                let Some(mix_pw) = mix_ch.pipewire_id else {
-                    continue;
-                };
+        // ADR-007: Source channels are logical. Cell sinks keyed by (ch_ulid, mx_ulid).
+        for (row_id, _row_ch) in &rows {
+            for (mix_id, _mix_ch) in &mixes {
                 let cell_id = format!("osg.cell.{}-to-{}", row_id.inner(), mix_id.inner());
                 if !self.created_cells.contains(&cell_id) {
                     self.created_cells.insert(cell_id.clone());
@@ -214,8 +209,8 @@ impl MixerSession {
                     messages.push(ToPipewireMessage::CreateCellNode {
                         name: format!("{rn}→{mn}"),
                         cell_id,
-                        channel_node_id: row_pw,
-                        mix_node_id: mix_pw,
+                        channel_ulid: row_id.inner().to_string(),
+                        mix_ulid: mix_id.inner().to_string(),
                     });
                 }
             }

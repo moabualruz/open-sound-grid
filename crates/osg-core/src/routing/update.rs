@@ -387,10 +387,10 @@ impl MixerSession {
                         break 'handler None;
                     }
 
-                    let source_nodes = self
+                    let _source_nodes = self
                         .resolve_endpoint(source, graph, settings)
                         .unwrap_or_default();
-                    let sink_nodes = self
+                    let _sink_nodes = self
                         .resolve_endpoint(sink, graph, settings)
                         .unwrap_or_default();
 
@@ -417,17 +417,14 @@ impl MixerSession {
                     } else {
                         format!("{sink:?}")
                     };
-                    for s in &source_nodes {
-                        for k in &sink_nodes {
-                            let cell_id = format!("osg.cell.{src_ulid}-to-{snk_ulid}");
-                            msgs.push(ToPipewireMessage::CreateCellNode {
-                                name: format!("{source_name}→{sink_name}"),
-                                cell_id,
-                                channel_node_id: s.id,
-                                mix_node_id: k.id,
-                            });
-                        }
-                    }
+                    // ADR-007: cell sinks keyed by ULID, not PW node ID
+                    let cell_id = format!("osg.cell.{src_ulid}-to-{snk_ulid}");
+                    msgs.push(ToPipewireMessage::CreateCellNode {
+                        name: format!("{source_name}→{sink_name}"),
+                        cell_id,
+                        channel_ulid: src_ulid.clone(),
+                        mix_ulid: snk_ulid.clone(),
+                    });
 
                     if let Some(link) = self
                         .links

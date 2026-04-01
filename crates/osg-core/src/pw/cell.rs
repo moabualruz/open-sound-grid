@@ -22,13 +22,16 @@ const OSG_APP_NAME: &str = "open-sound-grid";
 /// Arguments for creating a cell node.
 pub(super) struct CellNodeArgs {
     pub name: String,
+    /// Full cell name: `osg.cell.{channel_ulid}-to-{mix_ulid}`
     pub cell_id: String,
-    pub channel_node_id: u32,
-    pub mix_node_id: u32,
+    /// Channel ULID string (for cell_node_ids key).
+    pub channel_ulid: String,
+    /// Mix ULID string (for cell_node_ids key).
+    pub mix_ulid: String,
 }
 
-/// Create a per-cell volume node and link it: channel → cell → mix.
-/// The `pw_sender` is used to schedule link creation after the cell's ports appear.
+/// Create a per-cell null-audio-sink. ADR-007: apps link directly here.
+/// Chain: app_stream → cell_sink → [EQ filter] → mix_sink
 pub(super) fn create_cell_node(
     pw_core: &CoreRc,
     store: &Rc<RefCell<Store>>,
@@ -37,8 +40,8 @@ pub(super) fn create_cell_node(
     let CellNodeArgs {
         name,
         cell_id,
-        channel_node_id,
-        mix_node_id,
+        channel_ulid,
+        mix_ulid,
     } = args;
     let cell_name = cell_id;
     let proxy = pw_core
@@ -57,7 +60,7 @@ pub(super) fn create_cell_node(
                 "monitor.passthrough" => "true",
                 "channelmix.upmix" => "false",
                 "channelmix.normalize" => "false",
-                // Hide from PulseAudio clients (KDE volume panel) to prevent noise
+                "session.suspend-timeout-seconds" => "0",
                 "pulse.disable" => "true",
                 *OBJECT_LINGER => "true",
             },
@@ -65,19 +68,20 @@ pub(super) fn create_cell_node(
         .map_err(|e| PwError::SinkCreationFailed(format!("cell node '{name}': {e}")))?;
 
     let store_clone = store.clone();
+    let ch_key = channel_ulid.clone();
+    let mx_key = mix_ulid.clone();
     let listener = proxy
         .upcast_ref()
         .add_listener_local()
-        .bound(move |cell_id| {
+        .bound(move |cell_pw_id| {
             debug!(
-                "[PW] cell node {cell_name} bound as {cell_id} \
-                 (channel={channel_node_id}, mix={mix_node_id})"
+                "[PW] cell sink {cell_name} bound as {cell_pw_id} \
+                 (channel={ch_key}, mix={mx_key})"
             );
             store_clone
                 .borrow_mut()
                 .cell_node_ids
-                .insert((channel_node_id, mix_node_id), cell_id);
-            // Linking happens via diff_cell_links once the cell appears in the graph.
+                .insert((ch_key.clone(), mx_key.clone()), cell_pw_id);
         })
         .register();
 
