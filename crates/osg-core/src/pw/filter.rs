@@ -146,6 +146,8 @@ pub struct EffectsParams {
     pub gate: GateParams,
     pub de_esser: DeEsserParams,
     pub limiter: LimiterParams,
+    /// Volume boost in dB (0–12). Applied as linear gain after limiter.
+    pub boost: f32,
 }
 
 /// Per-channel envelope state for compressor/gate (lives in CallbackData, not shared).
@@ -341,6 +343,34 @@ fn apply_gate(buf: &mut [f32], params: &GateParams, env: &mut EnvelopeState, sam
             env.gate_env *= coeff;
         }
         *s *= env.gate_env;
+    }
+}
+
+/// Apply de-esser to a buffer in-place (simplified: threshold-based gain reduction).
+fn apply_de_esser(buf: &mut [f32], params: &DeEsserParams) {
+    if !params.enabled {
+        return;
+    }
+    let threshold_lin = 10.0_f32.powf(params.threshold / 20.0);
+    let max_reduction = 10.0_f32.powf(-params.reduction / 20.0);
+    for s in buf.iter_mut() {
+        let abs = s.abs();
+        if abs > threshold_lin {
+            let over = abs / threshold_lin;
+            let reduction = (1.0 / over).max(max_reduction);
+            *s *= reduction;
+        }
+    }
+}
+
+/// Apply volume boost (dB) to a buffer in-place.
+fn apply_boost(buf: &mut [f32], boost_db: f32) {
+    if boost_db.abs() < 0.01 {
+        return;
+    }
+    let gain = 10.0_f32.powf(boost_db / 20.0);
+    for s in buf.iter_mut() {
+        *s *= gain;
     }
 }
 
@@ -687,10 +717,12 @@ unsafe extern "C" fn on_process(
                 let eq = d.handle.load_eq();
                 process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
             }
-            // Effects chain: gate → compressor → limiter
+            // Effects chain: gate → compressor → de-esser → limiter → boost
             apply_gate(out_slice_l, &fx.gate, &mut d.env_l, SAMPLE_RATE);
             apply_compressor(out_slice_l, &fx.compressor, &mut d.env_l, SAMPLE_RATE);
+            apply_de_esser(out_slice_l, &fx.de_esser);
             apply_limiter(out_slice_l, &fx.limiter);
+            apply_boost(out_slice_l, fx.boost);
             // Volume gain
             if (vol_l - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_l.iter_mut() {
@@ -713,10 +745,12 @@ unsafe extern "C" fn on_process(
                 let eq = d.handle.load_eq();
                 process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
             }
-            // Effects chain: gate → compressor → limiter
+            // Effects chain: gate → compressor → de-esser → limiter → boost
             apply_gate(out_slice_r, &fx.gate, &mut d.env_r, SAMPLE_RATE);
             apply_compressor(out_slice_r, &fx.compressor, &mut d.env_r, SAMPLE_RATE);
+            apply_de_esser(out_slice_r, &fx.de_esser);
             apply_limiter(out_slice_r, &fx.limiter);
+            apply_boost(out_slice_r, fx.boost);
             // Volume gain
             if (vol_r - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_r.iter_mut() {

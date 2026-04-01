@@ -63,36 +63,60 @@ export default function EqPage(props: EqPageProps) {
   function enableMonitoring() {
     const t = props.target;
     const sinkDesc = t.sinkDescriptor;
-    const sourceDesc = t.cellSource ?? t.endpoint;
-    if (!sinkDesc || !sourceDesc) return;
+    if (!sinkDesc) return;
 
     setMonitoring(true);
     mutedLinks = [];
 
-    // Save and set monitored cell to 100% volume
-    const thisLink = state.session.links.find(
-      (l) => descriptorsEqual(l.start, sourceDesc) && descriptorsEqual(l.end, sinkDesc),
-    );
-    if (thisLink) {
-      mutedLinks.push({
-        source: sourceDesc,
-        target: sinkDesc,
-        prevVolume: thisLink.cellVolume,
-        wasMonitored: true,
-      });
-      props.send({ type: "setLinkVolume", source: sourceDesc, target: sinkDesc, volume: 1 });
-    }
-
-    // Mute all OTHER links going to the same mix
-    for (const link of state.session.links) {
-      if (descriptorsEqual(link.end, sinkDesc) && !descriptorsEqual(link.start, sourceDesc)) {
+    if (t.cellSource) {
+      // Cell monitoring: mute other cells going to the same mix, force this cell to 100%
+      const sourceDesc = t.cellSource;
+      const thisLink = state.session.links.find(
+        (l) => descriptorsEqual(l.start, sourceDesc) && descriptorsEqual(l.end, sinkDesc),
+      );
+      if (thisLink) {
         mutedLinks.push({
-          source: link.start,
-          target: link.end,
-          prevVolume: link.cellVolume,
-          wasMonitored: false,
+          source: sourceDesc,
+          target: sinkDesc,
+          prevVolume: thisLink.cellVolume,
+          wasMonitored: true,
         });
-        props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
+        props.send({ type: "setLinkVolume", source: sourceDesc, target: sinkDesc, volume: 1 });
+      }
+      for (const link of state.session.links) {
+        if (descriptorsEqual(link.end, sinkDesc) && !descriptorsEqual(link.start, sourceDesc)) {
+          mutedLinks.push({
+            source: link.start,
+            target: link.end,
+            prevVolume: link.cellVolume,
+            wasMonitored: false,
+          });
+          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
+        }
+      }
+    } else if (t.endpoint) {
+      // Mix monitoring: mute all links to ALL OTHER mixes, set links to THIS mix to 100%
+      const thisMixDesc = sinkDesc;
+      for (const link of state.session.links) {
+        if (descriptorsEqual(link.end, thisMixDesc)) {
+          // Link goes to THIS mix — set to 100%
+          mutedLinks.push({
+            source: link.start,
+            target: link.end,
+            prevVolume: link.cellVolume,
+            wasMonitored: true,
+          });
+          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 1 });
+        } else {
+          // Link goes to another mix — mute it
+          mutedLinks.push({
+            source: link.start,
+            target: link.end,
+            prevVolume: link.cellVolume,
+            wasMonitored: false,
+          });
+          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
+        }
       }
     }
   }

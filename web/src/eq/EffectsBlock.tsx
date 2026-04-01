@@ -42,6 +42,8 @@ interface EffectDef {
   controls: ControlDef[];
   options?: OptionDef[];
   hasTestSound?: boolean;
+  /** True for effects without backend DSP — toggle is disabled. */
+  comingSoon?: boolean;
 }
 
 const EFFECTS: EffectDef[] = [
@@ -111,6 +113,7 @@ const EFFECTS: EffectDef[] = [
     id: "smartVolume",
     label: "Smart Volume",
     description: "Loudness normalization — keeps all sources at similar perceived volume",
+    comingSoon: true,
     availableOn: ["app", "mix"],
     controls: [
       {
@@ -137,6 +140,7 @@ const EFFECTS: EffectDef[] = [
     id: "spatialAudio",
     label: "Spatial Audio",
     description: "HRTF virtual 7.1 surround for headphones",
+    comingSoon: true,
     availableOn: ["mix"],
     controls: [
       { id: "distance", label: "Distance", min: 0, max: 100, step: 1, defaultValue: 50, unit: "" },
@@ -181,10 +185,11 @@ function defaultEffectsConfig(): EffectsConfig {
     gate: { enabled: false, threshold: -60, hold: 100, attack: 0.5, release: 50 },
     deEsser: { enabled: false, frequency: 6000, threshold: -20, reduction: -6 },
     limiter: { enabled: false, ceiling: -0.3, release: 50 },
+    boost: 0,
   };
 }
 
-/** Build an EffectsConfig from the current card states (only compressor + limiter mapped). */
+/** Build an EffectsConfig from the current card states. */
 function buildEffectsConfig(
   cardStates: Map<string, { enabled: boolean; values: Record<string, number> }>,
   base: EffectsConfig,
@@ -212,6 +217,21 @@ function buildEffectsConfig(
     };
   }
 
+  const deEsser = cardStates.get("deEsser");
+  if (deEsser) {
+    config.deEsser = {
+      enabled: deEsser.enabled,
+      frequency: deEsser.values.frequency ?? base.deEsser.frequency,
+      threshold: deEsser.values.threshold ?? base.deEsser.threshold,
+      reduction: deEsser.values.reduction ?? base.deEsser.reduction,
+    };
+  }
+
+  const boost = cardStates.get("volumeBoost");
+  if (boost) {
+    config.boost = boost.enabled ? (boost.values.boost ?? 0) : 0;
+  }
+
   return config;
 }
 
@@ -220,10 +240,12 @@ export default function EffectsBlock(props: EffectsBlockProps) {
   const cardStates = new Map<string, { enabled: boolean; values: Record<string, number> }>();
   const baseConfig = () => props.initialEffects ?? defaultEffectsConfig();
 
+  /** Effect IDs that have backend DSP mapping. */
+  const MAPPED_EFFECTS = new Set(["compressor", "limiter", "deEsser", "volumeBoost"]);
+
   function handleCardChange(effectId: string, enabled: boolean, values: Record<string, number>) {
     cardStates.set(effectId, { enabled, values });
-    // Only fire for effects that have backend mapping
-    if (effectId === "compressor" || effectId === "limiter") {
+    if (MAPPED_EFFECTS.has(effectId)) {
       props.onEffectsChange?.(buildEffectsConfig(cardStates, baseConfig()));
     }
   }
@@ -267,12 +289,21 @@ function getInitialFromConfig(
     const l = config.limiter;
     return { enabled: l.enabled, values: { ceiling: l.ceiling, release: l.release } };
   }
+  if (effectId === "deEsser") {
+    const d = config.deEsser;
+    return { enabled: d.enabled, values: { frequency: d.frequency, threshold: d.threshold, reduction: d.reduction } };
+  }
+  if (effectId === "volumeBoost") {
+    const b = config.boost ?? 0;
+    return { enabled: b > 0, values: { boost: b } };
+  }
   return null;
 }
 
 function EffectCard(props: EffectCardProps) {
+  const isComingSoon = () => props.effect.comingSoon === true;
   const initial = untrack(() => getInitialFromConfig(props.effect.id, props.initialEffects));
-  const [enabled, setEnabled] = createSignal(initial?.enabled ?? false);
+  const [enabled, setEnabled] = createSignal(isComingSoon() ? false : (initial?.enabled ?? false));
   const [values, setValues] = createSignal<Record<string, number>>(
     untrack(() => {
       const defaults = Object.fromEntries(props.effect.controls.map((c) => [c.id, c.defaultValue]));
@@ -318,8 +349,12 @@ function EffectCard(props: EffectCardProps) {
               "background-color": enabled()
                 ? (props.color ?? "var(--color-accent)")
                 : "var(--color-bg-hover)",
+              opacity: isComingSoon() ? 0.4 : 1,
+              cursor: isComingSoon() ? "not-allowed" : "pointer",
             }}
+            disabled={isComingSoon()}
             onClick={() => {
+              if (isComingSoon()) return;
               const next = !enabled();
               setEnabled(next);
               props.onChange?.(next, values());
@@ -340,6 +375,9 @@ function EffectCard(props: EffectCardProps) {
             }}
           >
             {props.effect.label}
+            <Show when={isComingSoon()}>
+              <span class="ml-1 text-[8px] normal-case" style={{ color: "var(--color-text-muted)" }}>(Coming Soon)</span>
+            </Show>
           </span>
         </div>
         <span

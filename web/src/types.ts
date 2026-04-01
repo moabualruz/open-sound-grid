@@ -256,6 +256,8 @@ export interface EffectsConfig {
   gate: GateConfig;
   deEsser: DeEsserConfig;
   limiter: LimiterConfig;
+  /** Volume boost in dB (0-12). Applied as linear gain after limiter. */
+  boost: number;
 }
 
 // ---------------------------------------------------------------------------

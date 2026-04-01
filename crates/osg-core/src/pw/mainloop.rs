@@ -790,6 +790,7 @@ pub(super) fn init_mainloop(
                                 ceiling: effects.limiter.ceiling,
                                 release: ms_to_s(effects.limiter.release),
                             },
+                            boost: effects.boost,
                         };
                         handle.set_effects(params);
                         debug!("[PW] updated effects on filter '{filter_key}'");

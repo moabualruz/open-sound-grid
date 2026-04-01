@@ -184,6 +184,9 @@ pub struct EffectsConfig {
     pub gate: GateConfig,
     pub de_esser: DeEsserConfig,
     pub limiter: LimiterConfig,
+    /// Volume boost in dB (0–12). Applied as linear gain after limiter.
+    #[serde(default)]
+    pub boost: f32,
 }
 
 // ---------------------------------------------------------------------------
