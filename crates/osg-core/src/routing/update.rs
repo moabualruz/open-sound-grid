@@ -903,9 +903,16 @@ impl MixerSession {
                     if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
                         ep.eq = eq.clone();
                     }
-                    // Dispatch EQ to PW filter if one exists for this endpoint
+                    // Dispatch EQ to PW filter — mix filters keyed as "mix.{ulid}"
                     let filter_key = match ep_desc {
-                        EndpointDescriptor::Channel(id) => id.inner().to_string(),
+                        EndpointDescriptor::Channel(id) => {
+                            let ch = self.channels.get(&id);
+                            if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
+                                format!("mix.{}", id.inner())
+                            } else {
+                                String::new() // source channels have no direct filter
+                            }
+                        }
                         _ => String::new(),
                     };
                     if !filter_key.is_empty() {
@@ -937,9 +944,16 @@ impl MixerSession {
                     if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
                         ep.effects = effects.clone();
                     }
-                    // Dispatch effects to PW filter if one exists for this endpoint
+                    // Dispatch effects to PW filter — mix filters keyed as "mix.{ulid}"
                     let filter_key = match ep_desc {
-                        EndpointDescriptor::Channel(id) => id.inner().to_string(),
+                        EndpointDescriptor::Channel(id) => {
+                            let ch = self.channels.get(&id);
+                            if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
+                                format!("mix.{}", id.inner())
+                            } else {
+                                String::new()
+                            }
+                        }
                         _ => String::new(),
                     };
                     if !filter_key.is_empty() {

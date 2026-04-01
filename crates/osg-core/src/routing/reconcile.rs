@@ -157,6 +157,15 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
+                    // Create resident mix-level EQ filter
+                    let ep = self
+                        .endpoints
+                        .get(&endpoint_desc)
+                        .expect("endpoint must exist");
+                    messages.push(ToPipewireMessage::CreateFilter {
+                        filter_key: format!("mix.{}", id.inner()),
+                        name: format!("EQ: {}", ep.display_name),
+                    });
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");
@@ -368,6 +377,25 @@ impl MixerSession {
                 messages.extend(Self::ensure_link(graph, cell_pw_id, mix_pw));
             }
         }
+
+        // Link mix filters between mix monitor and hardware output
+        for (ch_id, ch) in &self.channels {
+            if ch.kind != ChannelKind::Sink {
+                continue;
+            }
+            let Some(mix_pw) = ch.pipewire_id else { continue };
+            let mix_filter_key = format!("mix.{}", ch_id.inner());
+            if let Some(&filter_id) = filter_pw.get(&mix_filter_key) {
+                // Find hardware output for this mix
+                let hw_id = ch.output_node_id.or(self.default_output_node_id);
+                if let Some(hw) = hw_id {
+                    // mix_sink → mix_filter → hardware
+                    messages.extend(Self::ensure_link(graph, mix_pw, filter_id));
+                    messages.extend(Self::ensure_link(graph, filter_id, hw));
+                }
+            }
+        }
+
         messages
     }
 

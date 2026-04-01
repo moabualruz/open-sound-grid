@@ -43,7 +43,7 @@ export default function EqPage(props: EqPageProps) {
   const { state } = useSession();
   const [monitoring, setMonitoring] = createSignal(false);
   /** Links muted by monitor — stores [source, target, previousVolume]. */
-  let mutedLinks: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number }[] = [];
+  let mutedLinks: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number; wasMonitored: boolean }[] = [];
 
   // Auto-disable monitoring when leaving the page
   onCleanup(() => {
@@ -69,10 +69,29 @@ export default function EqPage(props: EqPageProps) {
     setMonitoring(true);
     mutedLinks = [];
 
-    // Find all other links going to the same sink, mute them
+    // Save and set monitored cell to 100% volume
+    const thisLink = state.session.links.find(
+      (l) => descriptorsEqual(l.start, sourceDesc) && descriptorsEqual(l.end, sinkDesc),
+    );
+    if (thisLink) {
+      mutedLinks.push({
+        source: sourceDesc,
+        target: sinkDesc,
+        prevVolume: thisLink.cellVolume,
+        wasMonitored: true,
+      });
+      props.send({ type: "setLinkVolume", source: sourceDesc, target: sinkDesc, volume: 1 });
+    }
+
+    // Mute all OTHER links going to the same mix
     for (const link of state.session.links) {
       if (descriptorsEqual(link.end, sinkDesc) && !descriptorsEqual(link.start, sourceDesc)) {
-        mutedLinks.push({ source: link.start, target: link.end, prevVolume: link.cellVolume });
+        mutedLinks.push({
+          source: link.start,
+          target: link.end,
+          prevVolume: link.cellVolume,
+          wasMonitored: false,
+        });
         props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
       }
     }
@@ -81,9 +100,9 @@ export default function EqPage(props: EqPageProps) {
   function disableMonitoring() {
     setMonitoring(false);
 
-    // Restore all muted links to their previous volume
+    // Restore ALL links (including monitored cell) to their previous volume
     for (const { source, target, prevVolume } of mutedLinks) {
-      props.send({ type: "setLinkVolume", source, target, volume: prevVolume > 0 ? prevVolume : 1 });
+      props.send({ type: "setLinkVolume", source, target, volume: prevVolume });
     }
     mutedLinks = [];
   }
