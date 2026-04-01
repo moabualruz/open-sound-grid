@@ -267,9 +267,10 @@ impl MixerSession {
                             link.start_node == app_node.id && link.end_node == cell_id
                         });
                         if !already_linked {
-                            messages.push(ToPipewireMessage::CreateNodeLinks {
-                                start_id: app_node.id,
-                                end_id: cell_id,
+                            // RedirectStream removes WP's default links + creates ours
+                            messages.push(ToPipewireMessage::RedirectStream {
+                                stream_node_id: app_node.id,
+                                target_node_id: cell_id,
                             });
                         }
                     }
