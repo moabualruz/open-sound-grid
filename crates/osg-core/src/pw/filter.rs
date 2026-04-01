@@ -78,6 +78,9 @@ pub struct FilterHandle {
     volume_left: Arc<AtomicU32>,
     volume_right: Arc<AtomicU32>,
     muted: Arc<AtomicBool>,
+    /// When true, filter passes audio through without EQ processing.
+    /// Always-resident filters start bypassed; enabling EQ clears this flag.
+    bypassed: Arc<AtomicBool>,
 }
 
 impl Default for FilterHandle {
@@ -88,6 +91,7 @@ impl Default for FilterHandle {
             volume_left: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             volume_right: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             muted: Arc::new(AtomicBool::new(false)),
+            bypassed: Arc::new(AtomicBool::new(true)),
         }
     }
 }
@@ -97,9 +101,23 @@ impl FilterHandle {
         Self::default()
     }
 
-    /// Update EQ parameters (lock-free, any thread).
+    /// Set bypass state (lock-free, any thread). Bypassed = passthrough.
+    pub fn set_bypassed(&self, bypassed: bool) {
+        self.bypassed.store(bypassed, Ordering::Relaxed);
+    }
+
+    /// Read bypass state (lock-free).
+    pub fn is_bypassed(&self) -> bool {
+        self.bypassed.load(Ordering::Relaxed)
+    }
+
+    /// Update EQ parameters and clear bypass (lock-free, any thread).
     pub fn set_eq(&self, config: &EqConfig) {
         self.eq.store(Arc::new(CompiledEq::from_config(config)));
+        // Enabling EQ implicitly clears bypass
+        if !config.bands.is_empty() {
+            self.bypassed.store(false, Ordering::Relaxed);
+        }
     }
 
     /// Set stereo volume (lock-free, any thread). Values 0.0–1.0.
@@ -471,6 +489,7 @@ unsafe extern "C" fn on_process(
 
     let n = n_samples as usize;
     let muted = d.handle.is_muted();
+    let bypassed = d.handle.is_bypassed();
     let (vol_l, vol_r) = d.handle.volume();
 
     let mut peak_l: f32 = 0.0;
@@ -483,8 +502,14 @@ unsafe extern "C" fn on_process(
             out_slice_l.fill(0.0);
         } else {
             let in_slice_l = std::slice::from_raw_parts(in_l, n);
-            let eq = d.handle.load_eq();
-            peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
+            if bypassed {
+                // Passthrough — copy input to output, compute peak only
+                out_slice_l.copy_from_slice(in_slice_l);
+                peak_l = in_slice_l.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+            } else {
+                let eq = d.handle.load_eq();
+                peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
+            }
             // Apply volume gain
             if (vol_l - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_l.iter_mut() {
@@ -500,8 +525,13 @@ unsafe extern "C" fn on_process(
             out_slice_r.fill(0.0);
         } else {
             let in_slice_r = std::slice::from_raw_parts(in_r, n);
-            let eq = d.handle.load_eq();
-            peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
+            if bypassed {
+                out_slice_r.copy_from_slice(in_slice_r);
+                peak_r = in_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+            } else {
+                let eq = d.handle.load_eq();
+                peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
+            }
             // Apply volume gain
             if (vol_r - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_r.iter_mut() {
