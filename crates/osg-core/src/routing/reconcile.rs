@@ -139,6 +139,12 @@ impl MixerSession {
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
+            let channel_kind = self.channels.get(&id).expect("channel must exist").kind;
+            // ADR-007: Source channels are logical-only — no PW node.
+            // Only Sink (mix) channels get PW group nodes.
+            if channel_kind != ChannelKind::Sink {
+                continue;
+            }
             let endpoint_desc = EndpointDescriptor::Channel(id);
             if let Some(node) = endpoint_nodes
                 .get(&endpoint_desc)
@@ -150,15 +156,6 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
-                    // Create inline pw_filter for EQ + VU metering
-                    let ep = self
-                        .endpoints
-                        .get(&endpoint_desc)
-                        .expect("endpoint must exist");
-                    messages.push(ToPipewireMessage::CreateFilter {
-                        filter_key: id.inner().to_string(),
-                        name: format!("EQ: {}", ep.display_name),
-                    });
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");

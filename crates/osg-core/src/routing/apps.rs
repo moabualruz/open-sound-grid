@@ -74,6 +74,7 @@ impl MixerSession {
             let id = ChannelId::new();
             let kind = ChannelKind::Duplex;
             let descriptor = EndpointDescriptor::Channel(id);
+            // ADR-007: App channels are logical-only — no PW node.
             self.channels.insert(
                 id,
                 Channel {
@@ -87,7 +88,7 @@ impl MixerSession {
                     auto_app: true,
                     allow_app_assignment: false,
                     pipewire_id: None,
-                    pending: true,
+                    pending: false,
                 },
             );
             self.endpoints.insert(
@@ -96,11 +97,6 @@ impl MixerSession {
                     .with_display_name(app_name.clone())
                     .with_icon_name(icon),
             );
-            messages.push(ToPipewireMessage::CreateGroupNode(
-                app_name.clone(),
-                id.inner(),
-                kind,
-            ));
             tracing::debug!("[State] auto-created channel for app '{app_name}'");
         }
         messages

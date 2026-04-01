@@ -69,7 +69,7 @@ impl MixerSession {
                             output_node_id: None,
                             assigned_apps: Vec::new(),
                             pipewire_id: None,
-                            pending: true,
+                            pending: kind == ChannelKind::Sink,
                             auto_app: false,
                             allow_app_assignment: kind != ChannelKind::Source,
                         },
@@ -78,7 +78,11 @@ impl MixerSession {
                         descriptor,
                         Endpoint::new(descriptor).with_display_name(name.clone()),
                     );
-                    pw_messages.push(ToPipewireMessage::CreateGroupNode(name, id.inner(), kind));
+                    // ADR-007: Only mixes get PW nodes. Source channels are logical.
+                    if kind == ChannelKind::Sink {
+                        pw_messages
+                            .push(ToPipewireMessage::CreateGroupNode(name, id.inner(), kind));
+                    }
                     // Auto-create active links to all existing counterparts.
                     // New source channel → all existing sinks. New sink → all existing sources + apps.
                     if kind == ChannelKind::Sink {

@@ -470,10 +470,11 @@ pub struct Channel {
     /// prevents users from assigning apps to them.
     #[serde(default = "default_true")]
     pub allow_app_assignment: bool,
-    /// PipeWire ID once the node is created; `None` while pending.
+    /// PipeWire ID — only used for Sink (mix) channels. Source channels
+    /// are logical-only and do not have a PW node (ADR-007).
     #[serde(skip)]
     pub pipewire_id: Option<u32>,
-    /// True while a create request is in-flight.
+    /// True while a create request is in-flight (mixes only).
     #[serde(skip)]
     pub pending: bool,
 }
