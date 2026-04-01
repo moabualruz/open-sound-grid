@@ -277,15 +277,27 @@ impl MixerSession {
                     {
                         continue;
                     }
+                    // Check which cells need linking
+                    let mut missing: Vec<u32> = Vec::new();
                     for &cell_id in &cell_sink_ids {
                         let already_linked = graph.links.values().any(|link| {
                             link.start_node == app_node.id && link.end_node == cell_id
                         });
                         if !already_linked {
-                            // RedirectStream removes WP's default links + creates ours
-                            messages.push(ToPipewireMessage::RedirectStream {
-                                stream_node_id: app_node.id,
-                                target_node_id: cell_id,
+                            missing.push(cell_id);
+                        }
+                    }
+                    if !missing.is_empty() {
+                        // First: redirect to cell[0] which removes WP stale links
+                        messages.push(ToPipewireMessage::RedirectStream {
+                            stream_node_id: app_node.id,
+                            target_node_id: missing[0],
+                        });
+                        // Then: create links to remaining cells (RedirectStream already handles [0])
+                        for &cell_id in &missing[1..] {
+                            messages.push(ToPipewireMessage::CreateNodeLinks {
+                                start_id: app_node.id,
+                                end_id: cell_id,
                             });
                         }
                     }
