@@ -25,6 +25,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const [cellVol, setCellVol] = createSignal(1);
   const [cellL, setCellL] = createSignal(1);
   const [cellR, setCellR] = createSignal(1);
+  const [cellMuted, setCellMuted] = createSignal(false);
+  let preMuteVol: { vol: number; left: number; right: number } | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let userDragging = false;
 
@@ -38,13 +40,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     setCellR(props.link?.cellVolumeRight ?? 1);
   });
 
-  // Cell is "muted" when no link exists (unrouted) or channel is muted
+  // Cell is "muted" when no link exists, channel is muted, or cell is muted
   const isLinked = () => props.link !== null;
   const channelMuted = () => {
     const s = props.sourceEndpoint?.volumeLockedMuted;
     return s === "mutedLocked" || s === "mutedUnlocked" || s === "muteMixed";
   };
-  const isMuted = () => !isLinked() || channelMuted();
+  const isMuted = () => !isLinked() || channelMuted() || cellMuted();
 
   const masterVol = () => props.sourceEndpoint?.volume ?? 1;
   const masterL = () => props.sourceEndpoint?.volumeLeft ?? 1;
@@ -106,11 +108,36 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     handleInput(next);
   }
 
-  function toggleRoute() {
-    if (isLinked()) {
-      send({ type: "removeLink", source: props.sourceDescriptor, target: props.sinkDescriptor });
+  function toggleCellMute() {
+    if (!isLinked()) return;
+    if (cellMuted()) {
+      // Unmute: restore cached volume
+      setCellMuted(false);
+      const v = preMuteVol ?? { vol: 1, left: 1, right: 1 };
+      preMuteVol = null;
+      setCellVol(v.vol);
+      setCellL(v.left);
+      setCellR(v.right);
+      send({
+        type: "setLinkStereoVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        left: v.left,
+        right: v.right,
+      });
     } else {
-      send({ type: "link", source: props.sourceDescriptor, target: props.sinkDescriptor });
+      // Mute: cache current volume, set 0
+      preMuteVol = { vol: cellVol(), left: cellL(), right: cellR() };
+      setCellMuted(true);
+      setCellVol(0);
+      setCellL(0);
+      setCellR(0);
+      send({
+        type: "setLinkVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        volume: 0,
+      });
     }
   }
 
@@ -133,13 +160,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
         {/* Per-cell route toggle */}
         <button
           type="button"
-          onClick={toggleRoute}
-          title={isLinked() ? "Disconnect route" : "Connect route"}
-          aria-label={isLinked() ? "Disconnect route" : "Connect route"}
+          onClick={toggleCellMute}
+          title={cellMuted() ? "Unmute cell" : "Mute cell"}
+          aria-label={cellMuted() ? "Unmute cell" : "Mute cell"}
           class={`shrink-0 transition-colors duration-150 ${
             !isLinked()
               ? "text-text-muted/30 hover:text-text-muted"
-              : channelMuted()
+              : isMuted()
                 ? "text-vu-hot"
                 : "text-text-muted hover:text-text-primary"
           }`}
