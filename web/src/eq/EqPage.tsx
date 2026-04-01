@@ -44,6 +44,7 @@ export default function EqPage(props: EqPageProps) {
   const [monitoring, setMonitoring] = createSignal(false);
   /** Links muted by monitor — stores [source, target, previousVolume]. */
   let mutedLinks: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number; wasMonitored: boolean }[] = [];
+  let mutedEndpoints: { endpoint: EndpointDescriptor; wasMuted: boolean }[] = [];
 
   // Auto-disable monitoring when leaving the page
   onCleanup(() => {
@@ -95,27 +96,28 @@ export default function EqPage(props: EqPageProps) {
         }
       }
     } else if (t.endpoint) {
-      // Mix monitoring: mute all links to ALL OTHER mixes, set links to THIS mix to 100%
+      // Mix monitoring: mute ALL OTHER mix endpoints, unmute this one
       const thisMixDesc = sinkDesc;
-      for (const link of state.session.links) {
-        if (descriptorsEqual(link.end, thisMixDesc)) {
-          // Link goes to THIS mix — set to 100%
-          mutedLinks.push({
-            source: link.start,
-            target: link.end,
-            prevVolume: link.cellVolume,
-            wasMonitored: true,
-          });
-          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 1 });
+      mutedEndpoints = [];
+      // Find all mix endpoints (kind === Sink)
+      for (const [desc, ep] of state.session.endpoints) {
+        if (!("channel" in desc)) continue;
+        // Check if this is a sink/mix channel
+        const ch = state.session.channels[desc.channel];
+        if (!ch || ch.kind !== "sink") continue;
+        const isMuted = ep.volumeLockedMuted === "mutedLocked" || ep.volumeLockedMuted === "mutedUnlocked";
+        if (descriptorsEqual(desc, thisMixDesc)) {
+          // This mix: ensure unmuted
+          if (isMuted) {
+            mutedEndpoints.push({ endpoint: desc, wasMuted: true });
+            props.send({ type: "setMute", endpoint: desc, muted: false });
+          }
         } else {
-          // Link goes to another mix — mute it
-          mutedLinks.push({
-            source: link.start,
-            target: link.end,
-            prevVolume: link.cellVolume,
-            wasMonitored: false,
-          });
-          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
+          // Other mix: mute it
+          mutedEndpoints.push({ endpoint: desc, wasMuted: isMuted });
+          if (!isMuted) {
+            props.send({ type: "setMute", endpoint: desc, muted: true });
+          }
         }
       }
     }
@@ -124,11 +126,17 @@ export default function EqPage(props: EqPageProps) {
   function disableMonitoring() {
     setMonitoring(false);
 
-    // Restore ALL links (including monitored cell) to their previous volume
+    // Restore cell link volumes
     for (const { source, target, prevVolume } of mutedLinks) {
       props.send({ type: "setLinkVolume", source, target, volume: prevVolume });
     }
     mutedLinks = [];
+
+    // Restore mix mute states
+    for (const { endpoint, wasMuted } of mutedEndpoints) {
+      props.send({ type: "setMute", endpoint, muted: wasMuted });
+    }
+    mutedEndpoints = [];
   }
 
   function handleBack() {
