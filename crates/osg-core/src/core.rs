@@ -72,6 +72,13 @@ impl OsgCore {
             filter_store.clone(),
         )?;
 
+        // ADR-007: Create staging sink — always-alive, vol=0, for glitch-free rerouting
+        let _ = pw_sender.send(ToPipewireMessage::CreateGroupNode(
+            "Staging".to_owned(),
+            ulid::Ulid::nil(),
+            crate::pw::GroupNodeKind::Sink,
+        ));
+
         debug!("OsgCore initialized, PipeWire connected, reducer started");
 
         Ok(Self {

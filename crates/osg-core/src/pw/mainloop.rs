@@ -640,13 +640,32 @@ pub(super) fn init_mainloop(
                         &master.pw_core,
                         &master.store,
                         super::cell::CellNodeArgs {
-                            name,
+                            name: name.clone(),
                             cell_id,
-                            channel_ulid,
-                            mix_ulid,
+                            channel_ulid: channel_ulid.clone(),
+                            mix_ulid: mix_ulid.clone(),
                         },
                     ) {
                         warn!("[PW] failed to create cell node: {err:?}");
+                    }
+                    // ADR-007: Create resident EQ filter alongside cell (bypassed by default)
+                    let filter_key = format!("{channel_ulid}-to-{mix_ulid}");
+                    let filter_name = format!("osg.filter.{filter_key}");
+                    #[allow(unsafe_code)]
+                    let filter_result = unsafe {
+                        super::filter::OsgFilter::new(
+                            pw_core.as_raw_ptr(),
+                            &filter_name,
+                            &format!("EQ: {name}"),
+                        )
+                    };
+                    match filter_result {
+                        Ok(osg_filter) => {
+                            filter_store.insert(filter_key.clone(), osg_filter.handle().clone());
+                            active_filters.borrow_mut().insert(filter_key.clone(), osg_filter);
+                            debug!("[PW] created resident cell filter '{filter_key}'");
+                        }
+                        Err(e) => warn!("[PW] failed to create cell filter '{filter_key}': {e}"),
                     }
                 }
                 ToPipewireMessage::RemoveCellNode { cell_node_id } => {
