@@ -53,7 +53,7 @@ impl MixerSession {
         let endpoint_nodes = self.diff_nodes(graph, settings);
         let mut messages = self.auto_create_app_channels();
         self.ensure_default_links();
-        messages.extend(self.diff_channels(&endpoint_nodes));
+        messages.extend(self.diff_channels(&endpoint_nodes, graph));
         messages.extend(self.diff_cells(graph));
         messages.extend(self.diff_cell_links(graph));
         messages.extend(self.diff_app_routing(graph));
@@ -136,6 +136,7 @@ impl MixerSession {
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
+        graph: &AudioGraph,
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
@@ -178,7 +179,7 @@ impl MixerSession {
     // diff_cells — ensure every row×mix pair has a cell node
 
     /// For every (source channel × sink mix) pair, ensure a cell node exists.
-    fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+    fn diff_cells(&mut self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         let rows: Vec<_> = self
             .channels
@@ -191,10 +192,19 @@ impl MixerSession {
             .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
             .collect();
         // ADR-007: Source channels are logical. Cell sinks keyed by (ch_ulid, mx_ulid).
+        // Collect existing cell names from the graph to avoid duplicates.
+        let existing_cells: HashSet<&str> = graph
+            .nodes
+            .values()
+            .filter_map(|n| n.identifier.node_name())
+            .filter(|name| name.starts_with("osg.cell."))
+            .collect();
         for (row_id, _row_ch) in &rows {
             for (mix_id, _mix_ch) in &mixes {
                 let cell_id = format!("osg.cell.{}-to-{}", row_id.inner(), mix_id.inner());
-                if !self.created_cells.contains(&cell_id) {
+                if !self.created_cells.contains(&cell_id)
+                    && !existing_cells.contains(cell_id.as_str())
+                {
                     self.created_cells.insert(cell_id.clone());
                     let rn = self
                         .endpoints
