@@ -770,16 +770,43 @@ impl MixerSession {
                         })
                         .map(|(id, _)| *id);
                     if let Some(id) = auto_id {
+                        // ADR-007: Destroy auto-channel's cell sinks + filters
+                        let prefix = format!("osg.cell.{}-to-", id.inner());
+                        let filter_prefix = format!("osg.filter.{}-to-", id.inner());
+                        for (&nid, n) in &graph.nodes {
+                            let name = n.identifier.node_name().unwrap_or("");
+                            if name.starts_with(&prefix) {
+                                // Clear app links to this cell first
+                                for app_node in graph.nodes.values() {
+                                    if graph.links.values().any(|l| {
+                                        l.start_node == app_node.id && l.end_node == nid
+                                    }) {
+                                        pw_messages.push(ToPipewireMessage::ClearRedirect {
+                                            stream_node_id: app_node.id,
+                                            target_node_id: nid,
+                                        });
+                                    }
+                                }
+                                pw_messages.push(ToPipewireMessage::RemoveCellNode {
+                                    cell_node_id: nid,
+                                });
+                            } else if name.starts_with(&filter_prefix) {
+                                pw_messages.push(ToPipewireMessage::RemoveFilter {
+                                    filter_key: name
+                                        .strip_prefix("osg.filter.")
+                                        .unwrap_or("")
+                                        .to_owned(),
+                                });
+                            }
+                        }
+                        self.created_cells
+                            .retain(|c| !c.starts_with(&prefix.replace("osg.", "")));
                         self.endpoints.remove(&EndpointDescriptor::Channel(id));
                         self.links.retain(|l| {
                             l.start != EndpointDescriptor::Channel(id)
                                 && l.end != EndpointDescriptor::Channel(id)
                         });
                         self.channels.shift_remove(&id);
-                        pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
-                        pw_messages.push(ToPipewireMessage::RemoveFilter {
-                            filter_key: id.inner().to_string(),
-                        });
                     }
                     None
                 }
