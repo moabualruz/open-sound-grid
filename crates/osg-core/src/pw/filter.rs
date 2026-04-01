@@ -25,6 +25,9 @@ use crate::pw::biquad::{BiquadState, Coefficients, compute_coefficients};
 
 const SAMPLE_RATE: f32 = 48000.0;
 const MAX_BANDS: usize = 10;
+/// Max macro bands (Bass, Voice, Treble) — separate from user's 10 bands.
+#[allow(dead_code)]
+const MAX_MACRO_BANDS: usize = 3;
 
 // ---------------------------------------------------------------------------
 // RT-safe shared state
@@ -70,10 +73,94 @@ impl CompiledEq {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Effects DSP params (shared main→RT via ArcSwap)
+// ---------------------------------------------------------------------------
+
+/// Compressor parameters. Operates on per-sample envelope.
+#[derive(Debug, Clone)]
+pub struct CompressorParams {
+    pub enabled: bool,
+    pub threshold: f32,  // dB (negative, e.g., -18.0)
+    pub ratio: f32,      // e.g., 3.0 for 3:1
+    pub attack: f32,     // seconds
+    pub release: f32,    // seconds
+    pub makeup: f32,     // dB
+}
+
+impl Default for CompressorParams {
+    fn default() -> Self {
+        Self { enabled: false, threshold: -18.0, ratio: 3.0, attack: 0.008, release: 0.15, makeup: 4.0 }
+    }
+}
+
+/// Noise gate parameters.
+#[derive(Debug, Clone)]
+pub struct GateParams {
+    pub enabled: bool,
+    pub threshold: f32,  // dB (e.g., -45.0)
+    pub hold: f32,       // seconds
+    pub attack: f32,     // seconds
+    pub release: f32,    // seconds
+}
+
+impl Default for GateParams {
+    fn default() -> Self {
+        Self { enabled: false, threshold: -45.0, hold: 0.15, attack: 0.001, release: 0.05 }
+    }
+}
+
+/// De-esser parameters — simple sidechain bandpass + gain reduction.
+#[derive(Debug, Clone)]
+pub struct DeEsserParams {
+    pub enabled: bool,
+    pub frequency: f32,  // center Hz (5000-8000)
+    pub threshold: f32,  // dB
+    pub reduction: f32,  // max reduction in dB (positive, e.g., 6.0)
+}
+
+impl Default for DeEsserParams {
+    fn default() -> Self {
+        Self { enabled: false, frequency: 6000.0, threshold: -20.0, reduction: 6.0 }
+    }
+}
+
+/// Limiter parameters — brickwall peak limiter.
+#[derive(Debug, Clone)]
+pub struct LimiterParams {
+    pub enabled: bool,
+    pub ceiling: f32,    // dBFS (e.g., -1.0)
+    pub release: f32,    // seconds
+}
+
+impl Default for LimiterParams {
+    fn default() -> Self {
+        Self { enabled: false, ceiling: -1.0, release: 0.05 }
+    }
+}
+
+/// All effects params bundled for ArcSwap sharing.
+#[derive(Debug, Clone, Default)]
+pub struct EffectsParams {
+    pub compressor: CompressorParams,
+    pub gate: GateParams,
+    pub de_esser: DeEsserParams,
+    pub limiter: LimiterParams,
+}
+
+/// Per-channel envelope state for compressor/gate (lives in CallbackData, not shared).
+#[derive(Debug, Default)]
+struct EnvelopeState {
+    compressor_env: f32,  // current envelope level (linear)
+    gate_env: f32,        // gate envelope (0.0 = closed, 1.0 = open)
+    gate_hold_counter: f32, // samples remaining in hold phase
+}
+
 /// Shared handle for lock-free EQ/volume/mute parameter passing and peak reading.
 #[derive(Clone, Debug)]
 pub struct FilterHandle {
     eq: Arc<ArcSwap<CompiledEq>>,
+    effects: Arc<ArcSwap<EffectsParams>>,
     peaks: Arc<AtomicU64>,
     volume_left: Arc<AtomicU32>,
     volume_right: Arc<AtomicU32>,
@@ -87,6 +174,7 @@ impl Default for FilterHandle {
     fn default() -> Self {
         Self {
             eq: Arc::new(ArcSwap::new(Arc::new(CompiledEq::empty()))),
+            effects: Arc::new(ArcSwap::new(Arc::new(EffectsParams::default()))),
             peaks: Arc::new(AtomicU64::new(0)),
             volume_left: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             volume_right: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
@@ -118,6 +206,16 @@ impl FilterHandle {
         if !config.bands.is_empty() {
             self.bypassed.store(false, Ordering::Relaxed);
         }
+    }
+
+    /// Update effects parameters (lock-free, any thread).
+    pub fn set_effects(&self, params: EffectsParams) {
+        self.effects.store(Arc::new(params));
+    }
+
+    /// Load current effects params (for RT callback).
+    pub fn load_effects(&self) -> arc_swap::Guard<Arc<EffectsParams>> {
+        self.effects.load()
     }
 
     /// Set stereo volume (lock-free, any thread). Values 0.0–1.0.
@@ -185,6 +283,81 @@ pub fn process_block(
 }
 
 // ---------------------------------------------------------------------------
+// Effects DSP processing functions (called from on_process)
+// ---------------------------------------------------------------------------
+
+/// Apply compressor to a buffer in-place. Returns peak after compression.
+fn apply_compressor(
+    buf: &mut [f32],
+    params: &CompressorParams,
+    env: &mut EnvelopeState,
+    sample_rate: f32,
+) {
+    if !params.enabled {
+        return;
+    }
+    let threshold_lin = 10.0_f32.powf(params.threshold / 20.0);
+    let makeup_lin = 10.0_f32.powf(params.makeup / 20.0);
+    let attack_coeff = (-1.0 / (params.attack * sample_rate)).exp();
+    let release_coeff = (-1.0 / (params.release * sample_rate)).exp();
+
+    for s in buf.iter_mut() {
+        let abs = s.abs();
+        // Envelope follower
+        let coeff = if abs > env.compressor_env { attack_coeff } else { release_coeff };
+        env.compressor_env = coeff * env.compressor_env + (1.0 - coeff) * abs;
+
+        // Gain computation
+        if env.compressor_env > threshold_lin {
+            let over_db = 20.0 * (env.compressor_env / threshold_lin).log10();
+            let reduction_db = over_db * (1.0 - 1.0 / params.ratio);
+            let gain = 10.0_f32.powf(-reduction_db / 20.0) * makeup_lin;
+            *s *= gain;
+        } else {
+            *s *= makeup_lin;
+        }
+    }
+}
+
+/// Apply noise gate to a buffer in-place.
+fn apply_gate(buf: &mut [f32], params: &GateParams, env: &mut EnvelopeState, sample_rate: f32) {
+    if !params.enabled {
+        return;
+    }
+    let threshold_lin = 10.0_f32.powf(params.threshold / 20.0);
+    let hold_samples = params.hold * sample_rate;
+    let release_coeff = (-1.0 / (params.release * sample_rate)).exp();
+
+    for s in buf.iter_mut() {
+        let abs = s.abs();
+        if abs > threshold_lin {
+            env.gate_hold_counter = hold_samples;
+            env.gate_env = 1.0; // open instantly (attack is very fast for gates)
+        } else if env.gate_hold_counter > 0.0 {
+            env.gate_hold_counter -= 1.0;
+        } else {
+            // Release phase
+            let coeff = release_coeff;
+            env.gate_env = coeff * env.gate_env;
+        }
+        *s *= env.gate_env;
+    }
+}
+
+/// Apply brickwall limiter to a buffer in-place.
+fn apply_limiter(buf: &mut [f32], params: &LimiterParams) {
+    if !params.enabled {
+        return;
+    }
+    let ceiling_lin = 10.0_f32.powf(params.ceiling / 20.0);
+    for s in buf.iter_mut() {
+        if s.abs() > ceiling_lin {
+            *s = s.signum() * ceiling_lin;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OsgFilter — the actual pw_filter wrapper (requires PW mainloop thread)
 // ---------------------------------------------------------------------------
 
@@ -194,6 +367,8 @@ struct CallbackData {
     handle: FilterHandle,
     states_l: Vec<BiquadState>,
     states_r: Vec<BiquadState>,
+    env_l: EnvelopeState,
+    env_r: EnvelopeState,
     in_port_l: *mut std::os::raw::c_void,
     in_port_r: *mut std::os::raw::c_void,
     out_port_l: *mut std::os::raw::c_void,
@@ -239,6 +414,8 @@ impl OsgFilter {
             handle: handle.clone(),
             states_l: vec![BiquadState::default(); MAX_BANDS],
             states_r: vec![BiquadState::default(); MAX_BANDS],
+            env_l: EnvelopeState::default(),
+            env_r: EnvelopeState::default(),
             in_port_l: ptr::null_mut(),
             in_port_r: ptr::null_mut(),
             out_port_l: ptr::null_mut(),
@@ -502,21 +679,25 @@ unsafe extern "C" fn on_process(
             out_slice_l.fill(0.0);
         } else {
             let in_slice_l = std::slice::from_raw_parts(in_l, n);
+            let fx = d.handle.load_effects();
             if bypassed {
-                // Passthrough — copy input to output, compute peak only
+                // Passthrough — copy input, apply effects only (no EQ)
                 out_slice_l.copy_from_slice(in_slice_l);
-                peak_l = in_slice_l.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
             } else {
                 let eq = d.handle.load_eq();
-                peak_l = process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
+                process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
             }
-            // Apply volume gain
+            // Effects chain: gate → compressor → limiter
+            apply_gate(out_slice_l, &fx.gate, &mut d.env_l, SAMPLE_RATE);
+            apply_compressor(out_slice_l, &fx.compressor, &mut d.env_l, SAMPLE_RATE);
+            apply_limiter(out_slice_l, &fx.limiter);
+            // Volume gain
             if (vol_l - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_l.iter_mut() {
                     *s *= vol_l;
                 }
-                peak_l *= vol_l;
             }
+            peak_l = out_slice_l.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
         }
     }
     if !out_r.is_null() {
@@ -525,20 +706,24 @@ unsafe extern "C" fn on_process(
             out_slice_r.fill(0.0);
         } else {
             let in_slice_r = std::slice::from_raw_parts(in_r, n);
+            let fx = d.handle.load_effects();
             if bypassed {
                 out_slice_r.copy_from_slice(in_slice_r);
-                peak_r = in_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
             } else {
                 let eq = d.handle.load_eq();
-                peak_r = process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
+                process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
             }
-            // Apply volume gain
+            // Effects chain: gate → compressor → limiter
+            apply_gate(out_slice_r, &fx.gate, &mut d.env_r, SAMPLE_RATE);
+            apply_compressor(out_slice_r, &fx.compressor, &mut d.env_r, SAMPLE_RATE);
+            apply_limiter(out_slice_r, &fx.limiter);
+            // Volume gain
             if (vol_r - 1.0).abs() > f32::EPSILON {
                 for s in out_slice_r.iter_mut() {
                     *s *= vol_r;
                 }
-                peak_r *= vol_r;
             }
+            peak_r = out_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
         }
     }
     d.handle.store_peaks(peak_l, peak_r);
