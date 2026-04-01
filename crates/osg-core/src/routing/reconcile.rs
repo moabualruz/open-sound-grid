@@ -611,18 +611,11 @@ impl MixerSession {
                         .filter(|node| !node.ports.is_empty())
                         .map(|node| vec![node])
                 } else {
-                    // ADR-007: source channels are logical. Resolve to cell sinks.
-                    let prefix = format!("osg.cell.{}-to-", id.inner());
-                    let cells: Vec<&PwNode> = graph
-                        .nodes
-                        .values()
-                        .filter(|n| {
-                            n.identifier
-                                .node_name()
-                                .is_some_and(|name| name.starts_with(&prefix))
-                        })
-                        .collect();
-                    if cells.is_empty() { None } else { Some(cells) }
+                    // ADR-007: source channels are logical-only.
+                    // Channel volume is a model-only multiplier — not applied to PW nodes.
+                    // The effective volume (channel × cell) is applied by diff_properties
+                    // on the cell sinks. resolve_endpoint returns None for source channels.
+                    None
                 }
             }
 

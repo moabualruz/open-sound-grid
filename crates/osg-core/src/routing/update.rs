@@ -254,6 +254,7 @@ impl MixerSession {
                     endpoint.volume_mixed = false;
 
                     if let Some(nodes) = nodes {
+                        // Mix channels: set volume directly on PW node
                         let msgs: Vec<_> = nodes
                             .into_iter()
                             .map(|n| {
@@ -265,6 +266,23 @@ impl MixerSession {
                             endpoint.volume_pending = true;
                         }
                         pw_messages.extend(msgs);
+                    } else if let EndpointDescriptor::Channel(ch_id) = ep_desc {
+                        // ADR-007: Source channel volume → fan out effective to all cells
+                        for link in &self.links {
+                            if link.start == ep_desc {
+                                let eff_l = volume * link.cell_volume_left;
+                                let eff_r = volume * link.cell_volume_right;
+                                for cell_id in
+                                    self.find_cell_node_ids(ep_desc, link.end, graph, settings)
+                                {
+                                    pw_messages.push(ToPipewireMessage::NodeVolume(
+                                        cell_id,
+                                        vec![eff_l, eff_r],
+                                    ));
+                                }
+                            }
+                        }
+                        let _ = ch_id; // used in ep_desc match
                     }
                     None
                 }
@@ -294,6 +312,22 @@ impl MixerSession {
                             endpoint.volume_pending = true;
                         }
                         pw_messages.extend(msgs);
+                    } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
+                        // ADR-007: Source channel stereo volume → fan out to cells
+                        for link in &self.links {
+                            if link.start == ep_desc {
+                                let eff_l = left * link.cell_volume_left;
+                                let eff_r = right * link.cell_volume_right;
+                                for cell_id in
+                                    self.find_cell_node_ids(ep_desc, link.end, graph, settings)
+                                {
+                                    pw_messages.push(ToPipewireMessage::NodeVolume(
+                                        cell_id,
+                                        vec![eff_l, eff_r],
+                                    ));
+                                }
+                            }
+                        }
                     }
                     None
                 }
@@ -595,19 +629,23 @@ impl MixerSession {
                     None
                 }
                 StateMsg::SetLinkVolume(source, sink, volume) => {
+                    let v = volume.clamp(0.0, 1.0);
                     if let Some(link) = self
                         .links
                         .iter_mut()
                         .find(|l| l.start == source && l.end == sink)
                     {
-                        let v = volume.clamp(0.0, 1.0);
                         link.cell_volume = v;
                         link.cell_volume_left = v;
                         link.cell_volume_right = v;
                     }
-                    let v = volume.clamp(0.0, 1.0);
+                    // ADR-007: effective = channel_vol × cell_vol
+                    let ch_vol = self.endpoints.get(&source)
+                        .map(|ep| ep.volume)
+                        .unwrap_or(1.0);
+                    let eff = v * ch_vol;
                     for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-                        pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![v, v]));
+                        pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![eff, eff]));
                     }
                     None
                 }
@@ -625,8 +663,15 @@ impl MixerSession {
                     }
                     let l = left.clamp(0.0, 1.0);
                     let r = right.clamp(0.0, 1.0);
+                    // ADR-007: effective = channel_vol × cell_vol
+                    let ch_ep = self.endpoints.get(&source);
+                    let ch_l = ch_ep.map(|ep| ep.volume_left).unwrap_or(1.0);
+                    let ch_r = ch_ep.map(|ep| ep.volume_right).unwrap_or(1.0);
                     for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-                        pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![l, r]));
+                        pw_messages.push(ToPipewireMessage::NodeVolume(
+                            cell_id,
+                            vec![l * ch_l, r * ch_r],
+                        ));
                     }
                     None
                 }
