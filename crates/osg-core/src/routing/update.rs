@@ -770,43 +770,36 @@ impl MixerSession {
                         })
                         .map(|(id, _)| *id);
                     if let Some(id) = auto_id {
-                        // ADR-007: Destroy auto-channel's cell sinks + filters
+                        // ADR-007: Don't destroy the auto-channel's cells/filters —
+                        // just unlink apps from them. Cells keep their volume/EQ state
+                        // and get relinked when the app is ungrouped.
                         let prefix = format!("osg.cell.{}-to-", id.inner());
-                        let filter_prefix = format!("osg.filter.{}-to-", id.inner());
                         for (&nid, n) in &graph.nodes {
-                            let name = n.identifier.node_name().unwrap_or("");
-                            if name.starts_with(&prefix) {
-                                // Clear app links to this cell first
+                            if n.identifier
+                                .node_name()
+                                .is_some_and(|name| name.starts_with(&prefix))
+                            {
                                 for app_node in graph.nodes.values() {
                                     if graph.links.values().any(|l| {
                                         l.start_node == app_node.id && l.end_node == nid
                                     }) {
-                                        pw_messages.push(ToPipewireMessage::ClearRedirect {
-                                            stream_node_id: app_node.id,
-                                            target_node_id: nid,
+                                        pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+                                            start_id: app_node.id,
+                                            end_id: nid,
                                         });
                                     }
                                 }
-                                pw_messages.push(ToPipewireMessage::RemoveCellNode {
-                                    cell_node_id: nid,
-                                });
-                            } else if name.starts_with(&filter_prefix) {
-                                pw_messages.push(ToPipewireMessage::RemoveFilter {
-                                    filter_key: name
-                                        .strip_prefix("osg.filter.")
-                                        .unwrap_or("")
-                                        .to_owned(),
-                                });
+                                // Set cell volume to 0 so it's silent while parked
+                                pw_messages.push(ToPipewireMessage::NodeVolume(nid, vec![0.0, 0.0]));
                             }
                         }
-                        self.created_cells
-                            .retain(|c| !c.starts_with(&prefix.replace("osg.", "")));
-                        self.endpoints.remove(&EndpointDescriptor::Channel(id));
-                        self.links.retain(|l| {
-                            l.start != EndpointDescriptor::Channel(id)
-                                && l.end != EndpointDescriptor::Channel(id)
-                        });
-                        self.channels.shift_remove(&id);
+                        // Hide the auto-channel but keep it in the model
+                        if let Some(ep) = self
+                            .endpoints
+                            .get_mut(&EndpointDescriptor::Channel(id))
+                        {
+                            ep.visible = false;
+                        }
                     }
                     None
                 }
@@ -846,7 +839,39 @@ impl MixerSession {
                             );
                         }
                     }
-                    // Force graph update so reconciler creates new auto-channel
+                    // Restore hidden auto-channel if it exists
+                    let auto_id = self.channels.iter().find(|(_, c)| {
+                        c.auto_app
+                            && !c.assigned_apps.is_empty()
+                            && c.assigned_apps.iter().any(|a| {
+                                a.application_name == assignment.application_name
+                                    && a.binary_name == assignment.binary_name
+                            })
+                    }).map(|(id, _)| *id);
+                    if let Some(id) = auto_id {
+                        if let Some(ep) = self
+                            .endpoints
+                            .get_mut(&EndpointDescriptor::Channel(id))
+                        {
+                            ep.visible = true;
+                        }
+                        // Restore cell volumes from endpoint state
+                        let vol = self.endpoints
+                            .get(&EndpointDescriptor::Channel(id))
+                            .map(|ep| (ep.volume_left, ep.volume_right))
+                            .unwrap_or((1.0, 1.0));
+                        let auto_prefix = format!("osg.cell.{}-to-", id.inner());
+                        for (&nid, n) in &graph.nodes {
+                            if n.identifier.node_name()
+                                .is_some_and(|name| name.starts_with(&auto_prefix))
+                            {
+                                pw_messages.push(ToPipewireMessage::NodeVolume(
+                                    nid, vec![vol.0, vol.1],
+                                ));
+                            }
+                        }
+                    }
+                    // Force graph update so reconciler relinks
                     pw_messages.push(ToPipewireMessage::Update);
                     None
                 }
