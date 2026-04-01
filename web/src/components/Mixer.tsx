@@ -222,18 +222,6 @@ export default function Mixer() {
   };
 
   // --- EQ page navigation ---
-  function openChannelEq(ep: Endpoint, desc: EndpointDescriptor) {
-    const kind = channelKind(desc);
-    const sourceType = kind === "source" ? "mic" : "app";
-    setEqTarget({
-      label: ep.customName ?? ep.displayName,
-      sourceType,
-      color: "var(--color-source-app)",
-      endpoint: desc,
-      initialEq: ep.eq,
-    });
-  }
-
   function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {
     const srcEp = findEndpoint(state.session.endpoints, source);
     const sinkEp = findEndpoint(state.session.endpoints, sink);
@@ -371,7 +359,6 @@ export default function Mixer() {
                       dragHandle={dragHandle}
                       peakLeft={getPeaks(ch.desc).left}
                       peakRight={getPeaks(ch.desc).right}
-                      onOpenEq={() => openChannelEq(ch.ep, ch.desc)}
                     />
                     <For each={mixes()}>
                       {({ desc: sinkDesc, ep: sinkEp }) => (

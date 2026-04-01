@@ -3,7 +3,7 @@
  * Contains: back button, monitor toggle, EQ panel, effects blocks.
  * Monitor mode: solo this audio path, muting everything else.
  */
-import { createSignal, onCleanup, Show, For } from "solid-js";
+import { createSignal, onCleanup, Show } from "solid-js";
 import { Headphones, ArrowLeft } from "lucide-solid";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
@@ -142,83 +142,14 @@ export default function EqPage(props: EqPageProps) {
 
       {/* Content */}
       <div class="flex-1 p-4 max-w-4xl mx-auto w-full flex flex-col gap-3">
-        {/* Mix gets pre/post fader toggle with two EQ instances */}
-        <Show
-          when={props.target.sourceType === "mix"}
-          fallback={
-            <EqPanel
-              label={props.target.label}
-              color={props.target.color}
-              initialEq={props.target.initialEq}
-              onEqChange={handleEqChange}
-            />
-          }
-        >
-          <MixEqTabs
-            label={props.target.label}
-            color={props.target.color}
-            onEqChange={handleEqChange}
-          />
-        </Show>
+        <EqPanel
+          label={props.target.label}
+          color={props.target.color}
+          initialEq={props.target.initialEq}
+          onEqChange={handleEqChange}
+        />
         <EffectsBlock sourceType={props.target.sourceType} color={props.target.color} />
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Mix EQ: pre-fader / post-fader tab switcher with two independent EQ panels
-// ---------------------------------------------------------------------------
-
-const MIX_EQ_TABS = ["Pre-Fader", "Post-Fader"] as const;
-
-function MixEqTabs(props: { label: string; color: string; onEqChange?: (eq: EqConfig) => void }) {
-  const [activeTab, setActiveTab] = createSignal<(typeof MIX_EQ_TABS)[number]>("Post-Fader");
-
-  return (
-    <div>
-      {/* Tab bar */}
-      <div
-        class="flex rounded-t-lg overflow-hidden border-b"
-        style={{
-          "background-color": "var(--color-bg-elevated)",
-          "border-color": "var(--color-border)",
-        }}
-      >
-        <For each={[...MIX_EQ_TABS]}>
-          {(tab) => (
-            <button
-              class="flex-1 px-4 py-2 text-xs font-medium uppercase tracking-wide transition-colors duration-150"
-              style={{
-                "background-color": activeTab() === tab ? "var(--color-bg-primary)" : "transparent",
-                color:
-                  activeTab() === tab ? "var(--color-text-primary)" : "var(--color-text-muted)",
-                "border-bottom":
-                  activeTab() === tab ? `2px solid ${props.color}` : "2px solid transparent",
-              }}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab} EQ
-            </button>
-          )}
-        </For>
-      </div>
-
-      {/* Active EQ panel */}
-      <Show when={activeTab() === "Pre-Fader"}>
-        <EqPanel
-          label={`${props.label} — Pre-Fader`}
-          color={props.color}
-          onEqChange={props.onEqChange}
-        />
-      </Show>
-      <Show when={activeTab() === "Post-Fader"}>
-        <EqPanel
-          label={`${props.label} — Post-Fader`}
-          color={props.color}
-          onEqChange={props.onEqChange}
-        />
-      </Show>
     </div>
   );
 }

@@ -568,6 +568,7 @@ impl MixerSession {
     // Endpoint resolution
 
     /// Resolve an endpoint descriptor to actual PipeWire nodes.
+    #[allow(clippy::too_many_lines)]
     pub fn resolve_endpoint<'g>(
         &self,
         endpoint: EndpointDescriptor,

@@ -467,7 +467,7 @@ impl Drop for OsgFilter {
 
 /// Process callback — runs on PW real-time thread.
 /// Reads stereo input, applies EQ cascade, volume gain, mute, computes peaks, writes output.
-#[allow(unsafe_code)]
+#[allow(unsafe_code, clippy::too_many_lines)]
 unsafe extern "C" fn on_process(
     data: *mut std::os::raw::c_void,
     position: *mut libspa_sys::spa_io_position,

@@ -4,7 +4,6 @@
  *
  * All nodes get the same EQ (10-band, macros, presets).
  * Effects blocks vary by source type:
- *   Mic:    Noise Suppression + Noise Gate + Compressor
  *   App:    Compressor + Smart Volume
  *   Cell:   Compressor
  *   Mix:    Compressor + Limiter + Smart Volume
@@ -28,13 +27,6 @@ function cssVar(name: string): string {
 }
 
 const SOURCES: SourceDemo[] = [
-  {
-    type: "mic",
-    title: "Microphone / Input Device",
-    subtitle: "Real hardware input — gets noise processing",
-    color: cssVar("--color-source-mic"),
-    label: "RodeCaster Duo",
-  },
   {
     type: "app",
     title: "Application / Channel",

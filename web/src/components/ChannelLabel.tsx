@@ -6,7 +6,6 @@ import {
   Volume2,
   VolumeX,
   X,
-  SlidersVertical,
   Music,
   Globe,
   Bell,
@@ -28,7 +27,6 @@ interface ChannelLabelProps {
   dragHandle?: () => JSX.Element;
   peakLeft?: number;
   peakRight?: number;
-  onOpenEq?: () => void;
 }
 
 const DEBOUNCE_MS = 16;
@@ -173,15 +171,6 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           aria-label={isMuted() ? "Unmute channel" : "Mute channel"}
         >
           {isMuted() ? <VolumeX size={14} /> : <Volume2 size={14} />}
-        </button>
-
-        <button
-          class="text-text-muted/60 transition-colors duration-150 hover:text-accent"
-          title="EQ & Effects"
-          aria-label="EQ & Effects"
-          onClick={() => props.onOpenEq?.()}
-        >
-          <SlidersVertical size={12} />
         </button>
 
         <Show when={!props.channel?.autoApp && !("app" in props.descriptor)}>

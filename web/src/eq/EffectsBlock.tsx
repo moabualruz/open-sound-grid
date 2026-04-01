@@ -2,23 +2,19 @@
  * Effects blocks — non-EQ processing that varies by source type.
  *
  * Source type determines which effects are available:
- * ┌───────────────────────┬──────┬────────────┬───────┬──────┐
- * │ Effect                │ Mic  │ App/Device │ Cell  │ Mix  │
- * ├───────────────────────┼──────┼────────────┼───────┼──────┤
- * │ Background Noise      │ YES  │ —          │ —     │ —    │
- * │ Impact Noise          │ YES  │ —          │ —     │ —    │
- * │ AI Noise Cancellation │ YES  │ —          │ —     │ —    │
- * │ Noise Gate            │ YES  │ —          │ —     │ —    │
- * │ Compressor            │ YES  │ YES        │ YES   │ YES  │
- * │ Limiter               │ —    │ —          │ —     │ YES  │
- * │ Smart Volume          │ —    │ YES        │ —     │ YES  │
- * │ Volume Boost          │ —    │ YES        │ YES   │ YES  │
- * │ Spatial Audio         │ —    │ —          │ —     │ YES  │
- * └───────────────────────┴──────┴────────────┴───────┴──────┘
+ * ┌───────────────┬────────────┬───────┬──────┐
+ * │ Effect        │ App/Device │ Cell  │ Mix  │
+ * ├───────────────┼────────────┼───────┼──────┤
+ * │ Compressor    │ YES        │ YES   │ YES  │
+ * │ Limiter       │ —          │ —     │ YES  │
+ * │ Smart Volume  │ YES        │ —     │ YES  │
+ * │ Volume Boost  │ YES        │ YES   │ YES  │
+ * │ Spatial Audio │ —          │ —     │ YES  │
+ * └───────────────┴────────────┴───────┴──────┘
  */
 import { createSignal, Show, For, untrack } from "solid-js";
 
-export type SourceType = "mic" | "app" | "cell" | "mix";
+export type SourceType = "app" | "cell" | "mix";
 
 interface ControlDef {
   id: string;
@@ -49,55 +45,10 @@ interface EffectDef {
 
 const EFFECTS: EffectDef[] = [
   {
-    id: "bgNoise",
-    label: "Background Noise",
-    description: "Reduces constant ambient noise — fans, AC, hum",
-    availableOn: ["mic"],
-    controls: [
-      { id: "level", label: "Level", min: 0, max: 100, step: 1, defaultValue: 0, unit: "%" },
-    ],
-  },
-  {
-    id: "impactNoise",
-    label: "Impact Noise",
-    description: "Reduces keyboard clicks, mouse taps, bumps",
-    availableOn: ["mic"],
-    controls: [
-      { id: "level", label: "Level", min: 0, max: 100, step: 1, defaultValue: 50, unit: "%" },
-    ],
-  },
-  {
-    id: "aiNoiseCancellation",
-    label: "AI Noise Cancellation",
-    description: "Deep learning noise removal — replaces manual controls with one smart slider",
-    availableOn: ["mic"],
-    controls: [
-      { id: "level", label: "Intensity", min: 0, max: 100, step: 1, defaultValue: 70, unit: "%" },
-    ],
-  },
-  {
-    id: "noiseGate",
-    label: "Noise Gate",
-    description: "Silences input below threshold — cuts dead-air noise",
-    availableOn: ["mic"],
-    controls: [
-      {
-        id: "threshold",
-        label: "Threshold",
-        min: -60,
-        max: 0,
-        step: 1,
-        defaultValue: -40,
-        unit: "dB",
-      },
-      { id: "hold", label: "Hold", min: 0, max: 500, step: 10, defaultValue: 100, unit: "ms" },
-    ],
-  },
-  {
     id: "compressor",
     label: "Compressor",
     description: "Reduces dynamic range — evens out loud and quiet",
-    availableOn: ["mic", "app", "cell", "mix"],
+    availableOn: ["app", "cell", "mix"],
     controls: [
       {
         id: "threshold",
