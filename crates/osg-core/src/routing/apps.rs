@@ -197,42 +197,29 @@ impl MixerSession {
 
     /// Find PipeWire cell node IDs for a route by scanning for `osg.cell.{ch}.{mix}` names.
     #[allow(clippy::too_many_arguments)]
+    /// Find PW node IDs of cell sinks for a (source, sink) endpoint pair.
+    /// ADR-007: Uses ULID-based naming, no resolve_endpoint needed.
     pub(super) fn find_cell_node_ids(
         &self,
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         graph: &AudioGraph,
-        settings: &ReconcileSettings,
+        _settings: &ReconcileSettings,
     ) -> Vec<u32> {
-        let source_nodes = self
-            .resolve_endpoint(source, graph, settings)
-            .unwrap_or_default();
-        let sink_nodes = self
-            .resolve_endpoint(sink, graph, settings)
-            .unwrap_or_default();
-        let mut ids = Vec::new();
-        for s in &source_nodes {
-            for k in &sink_nodes {
-                let src_u = if let EndpointDescriptor::Channel(id) = source {
-                    id.inner().to_string()
-                } else {
-                    s.id.to_string()
-                };
-                let snk_u = if let EndpointDescriptor::Channel(id) = sink {
-                    id.inner().to_string()
-                } else {
-                    k.id.to_string()
-                };
-                let ulid_name = format!("osg.cell.{src_u}-to-{snk_u}");
-                let legacy_name = format!("osg.cell.{}.{}", s.id, k.id);
-                if let Some((&cell_id, _)) = graph.nodes.iter().find(|(_, n)| {
-                    let nn = n.identifier.node_name();
-                    nn == Some(&ulid_name) || nn == Some(&legacy_name)
-                }) {
-                    ids.push(cell_id);
-                }
-            }
-        }
-        ids
+        let src_u = match source {
+            EndpointDescriptor::Channel(id) => id.inner().to_string(),
+            _ => return Vec::new(),
+        };
+        let snk_u = match sink {
+            EndpointDescriptor::Channel(id) => id.inner().to_string(),
+            _ => return Vec::new(),
+        };
+        let cell_name = format!("osg.cell.{src_u}-to-{snk_u}");
+        graph
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.identifier.node_name() == Some(&cell_name))
+            .map(|(&id, _)| id)
+            .collect()
     }
 }
