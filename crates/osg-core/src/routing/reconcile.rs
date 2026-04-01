@@ -245,6 +245,11 @@ impl MixerSession {
             if channel.assigned_apps.is_empty() {
                 continue;
             }
+            // Skip hidden auto-channels (parked while app is grouped)
+            let ep_desc = EndpointDescriptor::Channel(*channel_id);
+            if self.endpoints.get(&ep_desc).is_some_and(|ep| !ep.visible) {
+                continue;
+            }
 
             // Collect all cell sink PW node IDs for this channel.
             let channel_ulid = channel_id.inner().to_string();
