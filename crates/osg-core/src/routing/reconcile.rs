@@ -136,7 +136,7 @@ impl MixerSession {
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
-        graph: &AudioGraph,
+        _graph: &AudioGraph,
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
@@ -759,14 +759,6 @@ impl MixerSession {
             .filter(|(_, ch)| ch.kind == ChannelKind::Sink)
             .map(|(id, _)| EndpointDescriptor::Channel(*id))
             .collect();
-        if !sources.is_empty() || !sinks.is_empty() {
-            tracing::debug!(
-                "[State] ensure_default_links: {} sources × {} sinks, {} existing links",
-                sources.len(),
-                sinks.len(),
-                self.links.len()
-            );
-        }
         for source in &sources {
             for sink in &sinks {
                 let exists = self
@@ -774,7 +766,7 @@ impl MixerSession {
                     .iter()
                     .any(|l| l.start == *source && l.end == *sink);
                 if !exists {
-                    tracing::debug!("[State] default link: {source:?} → {sink:?}");
+                    tracing::debug!("[State] ensure_default_links: adding {source:?} → {sink:?}");
                     self.links.push(Link {
                         start: *source,
                         end: *sink,

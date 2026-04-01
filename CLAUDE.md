@@ -32,10 +32,23 @@ Phone/Browser → Web UI (SolidJS + Tailwind v4)
                     ├── AudioGraph (read model — PipeWire reality)
                     ├── ReconciliationService (stateless diff → corrective events)
                     ├── EventBus (typed channels per command category)
-                    └── Handlers (infrastructure: PW API, config, EasyEffects socket)
+                    └── Handlers (infrastructure: PW API, config)
                          ↕ pipewire-rs 0.9
                     PipeWire daemon
 ```
+
+### Signal chain (ADR-007)
+
+```
+App → Cell Sink (null-audio-sink) → EQ Filter (pw_filter, bypassed) → Mix Sink (null-audio-sink) → EQ Filter → Hardware
+```
+
+- **Source channels are logical-only.** A source channel has NO PipeWire node. It is a named group in the UI. Channel volume/mute fans out as a model-only multiplier to all cell sinks in that channel.
+- **Cell sinks are real.** One `null-audio-sink` per (channel x mix) pair. Apps link directly to cell sinks via `link-factory`. Properties: `monitor.channel-volumes=true`, `monitor.passthrough=true`.
+- **Mix sinks are real.** One `null-audio-sink` per mix. Aggregates all cell sinks for that mix, then routes to hardware.
+- **EQ filters are always-resident.** Created alongside their cell/mix sink at startup. Bypass-toggled via atomic flag — no hot graph mutations. Post-cell and post-mix positions only. No channel-level EQ.
+- **Volume authority:** Cell sink = per-route gain. Mix sink = mix-bus gain. Channel volume = model-only multiplier (effective = channel% x cell%). App stream volume is left to the app.
+- **Routing uses `link-factory` only.** No `target.object` metadata. Managed streams get `node.dont-move=true`.
 
 ### Crate boundaries (ADR-003)
 
@@ -60,7 +73,7 @@ Each command category has its own typed channel with independent backpressure an
 | VolumeCommands | High (60Hz slider) | 16ms | VolumeHandler → PW `set_param` |
 | LinkCommands | Medium | None | LinkHandler → PW `create_object`/`destroy` |
 | NodeCommands | Low | None | NodeHandler → PW adapter factory |
-| MetadataCommands | Low | None | MetadataHandler → PW metadata API |
+| FilterCommands | Low | None | FilterHandler → PW `pw_filter` bypass toggle |
 | ConfigEvents | Low | 3s | ConfigHandler → TOML disk |
 | WebSocketBroadcast | All events | None | Subscribes to all channels → broadcasts to UI |
 
@@ -165,12 +178,14 @@ All state is immutable by default. Every mutation produces a new snapshot publis
 
 | Term | Definition | Rejected synonyms |
 |------|-----------|-------------------|
-| **Channel** | User-created virtual audio bus (PW null-audio-sink) | GroupNode, Endpoint, VirtualSink |
-| **Mix** | Output destination (headphones, stream, VOD) | Output, Bus, Destination |
+| **Channel** | Logical-only named group in the UI. No PipeWire node. Volume/mute fans out to cell sinks. | GroupNode, Endpoint, VirtualSink |
+| **Mix** | Output destination (headphones, stream, VOD). Has a real PW null-audio-sink. | Output, Bus, Destination |
+| **CellSink** | Real PW null-audio-sink per (channel x mix) pair. Apps link here via link-factory. | Cell, MatrixNode, Intersection |
 | **Node** | PipeWire node in the graph (low-level) | Stream, SinkInput |
 | **Route** | Connection between a channel and a mix | Link, Connection, Wire |
 | **App** | Running application emitting audio | Application, Client, Stream |
-| **CellVolume** | Per-route volume (L/R stereo) | RouteVolume, FaderLevel |
+| **CellVolume** | Per-route gain on a cell sink (L/R stereo) | RouteVolume, FaderLevel |
+| **EqFilter** | Always-resident pw_filter on a cell sink or mix sink, bypass-toggled via atomic flag | FilterChain, Effect |
 | **Preset** | Saved routing configuration | Scene, Snapshot, Profile |
 
 ### Frontend stack
@@ -202,18 +217,19 @@ PR template (recommended, not enforced):
 ## Test plan
 ```
 
-### Effects architecture
+### Effects architecture (ADR-007)
 
-Channels are pure signal (volume only). Effects belong on mixes — each mix processes each channel independently. Current per-channel effects in POC are convenience only. Target: per-mix effects via PipeWire filter-chain. Input pre-processing (mic gate, de-essing) = separate inputs page, not mixer matrix.
+Effects are post-cell and post-mix only. No per-channel effects. Each cell sink and each mix sink has an always-resident `pw_filter` EQ created at startup. Filters are bypass-toggled via atomic flag — no graph mutations at runtime. Input pre-processing (mic gate, de-essing) = separate inputs page, not mixer matrix.
 
 ### PipeWire integration
 
 OSG targets PipeWire exclusively (ADR-002). JACK apps work transparently via `pipewire-jack`. No `libjack` or `libpulse` dependencies. Integration via `pipewire-rs` 0.9 (adapted from Sonusmix, MPL-2.0).
 
 Key patterns:
-- Virtual sinks via `support.null-audio-sink` factory with ULID naming (`osg.group.{ulid}`)
-- Stream routing via PipeWire metadata API (`target.object`)
-- Per-channel L/R volume via SPA POD `channelVolumes` array
+- Cell sinks and mix sinks via `support.null-audio-sink` factory with ULID naming (`osg.cell.{ulid}`, `osg.mix.{ulid}`), properties: `monitor.channel-volumes=true`, `monitor.passthrough=true`
+- Stream routing via `link-factory` only — no `target.object` metadata. Managed streams get `node.dont-move=true`.
+- Per-route L/R volume via SPA POD `channelVolumes` array on cell sinks
+- Always-resident `pw_filter` EQ on each cell sink and mix sink, bypass-toggled via atomic flag
 - Graph events via registry listeners, debounced at 16ms
 - Correction loop: desired state vs PipeWire reality → corrective commands
 - Dedicated PipeWire thread (blocking mainloop) + adapter thread (prevents async/PW deadlocks)

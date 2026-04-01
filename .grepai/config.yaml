@@ -4,7 +4,7 @@ embedder:
     model: nomic-embed-text
     endpoint: http://localhost:11434
     dimensions: 768
-    parallelism: 0
+    parallelism: 4
 store:
     backend: gob
 chunking:
@@ -25,7 +25,7 @@ framework_processing:
             enabled: false
 watch:
     debounce_ms: 500
-    last_index_time: 2026-03-31T14:13:55.256371515+02:00
+    last_index_time: 2026-03-31T21:51:15.31596112+02:00
     rpg_persist_interval_ms: 1000
     rpg_derived_debounce_ms: 300
     rpg_full_reconcile_interval_sec: 300
