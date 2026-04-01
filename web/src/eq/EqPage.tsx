@@ -8,7 +8,8 @@ import { Headphones, ArrowLeft } from "lucide-solid";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
 import type { SourceType } from "./EffectsBlock";
-import type { EndpointDescriptor, EqConfig, Command } from "../types";
+import type { EndpointDescriptor, EqConfig, EffectsConfig, Command } from "../types";
+import { useSession } from "../stores/sessionStore";
 
 export interface EqPageTarget {
   label: string;
@@ -21,6 +22,10 @@ export interface EqPageTarget {
   cellTarget?: EndpointDescriptor;
   /** Current EQ config from backend (for restoring state). */
   initialEq?: EqConfig;
+  /** Current effects config from backend (for restoring state). */
+  initialEffects?: EffectsConfig;
+  /** Sink descriptor for monitor (solo) functionality. */
+  sinkDescriptor?: EndpointDescriptor;
 }
 
 interface EqPageProps {
@@ -30,8 +35,15 @@ interface EqPageProps {
   send: (cmd: Command) => void;
 }
 
+function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export default function EqPage(props: EqPageProps) {
+  const { state } = useSession();
   const [monitoring, setMonitoring] = createSignal(false);
+  /** Links muted by monitor — stores [source, target, previousVolume]. */
+  let mutedLinks: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number }[] = [];
 
   // Auto-disable monitoring when leaving the page
   onCleanup(() => {
@@ -49,15 +61,31 @@ export default function EqPage(props: EqPageProps) {
   }
 
   function enableMonitoring() {
+    const t = props.target;
+    const sinkDesc = t.sinkDescriptor;
+    const sourceDesc = t.cellSource ?? t.endpoint;
+    if (!sinkDesc || !sourceDesc) return;
+
     setMonitoring(true);
-    // TODO: send solo command to backend
-    // send({ type: "soloNode", nodeId: props.target.nodeId, solo: true })
+    mutedLinks = [];
+
+    // Find all other links going to the same sink, mute them
+    for (const link of state.session.links) {
+      if (descriptorsEqual(link.end, sinkDesc) && !descriptorsEqual(link.start, sourceDesc)) {
+        mutedLinks.push({ source: link.start, target: link.end, prevVolume: link.cellVolume });
+        props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
+      }
+    }
   }
 
   function disableMonitoring() {
     setMonitoring(false);
-    // TODO: send unsolo command to backend
-    // send({ type: "soloNode", nodeId: props.target.nodeId, solo: false })
+
+    // Restore all muted links to their previous volume
+    for (const { source, target, prevVolume } of mutedLinks) {
+      props.send({ type: "setLinkVolume", source, target, volume: prevVolume > 0 ? prevVolume : 1 });
+    }
+    mutedLinks = [];
   }
 
   function handleBack() {
@@ -71,6 +99,15 @@ export default function EqPage(props: EqPageProps) {
       props.send({ type: "setCellEq", source: t.cellSource, target: t.cellTarget, eq });
     } else if (t.endpoint) {
       props.send({ type: "setEq", endpoint: t.endpoint, eq });
+    }
+  }
+
+  function handleEffectsChange(effects: EffectsConfig) {
+    const t = props.target;
+    if (t.cellSource && t.cellTarget) {
+      props.send({ type: "setCellEffects", source: t.cellSource, target: t.cellTarget, effects });
+    } else if (t.endpoint) {
+      props.send({ type: "setEffects", endpoint: t.endpoint, effects });
     }
   }
 
@@ -148,7 +185,12 @@ export default function EqPage(props: EqPageProps) {
           initialEq={props.target.initialEq}
           onEqChange={handleEqChange}
         />
-        <EffectsBlock sourceType={props.target.sourceType} color={props.target.color} />
+        <EffectsBlock
+          sourceType={props.target.sourceType}
+          color={props.target.color}
+          initialEffects={props.target.initialEffects}
+          onEffectsChange={handleEffectsChange}
+        />
       </div>
     </div>
   );

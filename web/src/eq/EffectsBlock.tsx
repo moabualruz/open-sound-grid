@@ -13,6 +13,7 @@
  * └───────────────┴────────────┴───────┴──────┘
  */
 import { createSignal, Show, For, untrack } from "solid-js";
+import type { EffectsConfig } from "../types";
 
 export type SourceType = "app" | "cell" | "mix";
 
@@ -169,24 +170,114 @@ export function getEffectsForType(type: SourceType): EffectDef[] {
 interface EffectsBlockProps {
   sourceType: SourceType;
   color?: string;
+  initialEffects?: EffectsConfig;
+  onEffectsChange?: (effects: EffectsConfig) => void;
+}
+
+/** Default EffectsConfig matching osg-core defaults. */
+function defaultEffectsConfig(): EffectsConfig {
+  return {
+    compressor: { enabled: false, threshold: -20, ratio: 4, attack: 10, release: 100, makeup: 0 },
+    gate: { enabled: false, threshold: -60, hold: 100, attack: 0.5, release: 50 },
+    deEsser: { enabled: false, frequency: 6000, threshold: -20, reduction: -6 },
+    limiter: { enabled: false, ceiling: -0.3, release: 50 },
+  };
+}
+
+/** Build an EffectsConfig from the current card states (only compressor + limiter mapped). */
+function buildEffectsConfig(
+  cardStates: Map<string, { enabled: boolean; values: Record<string, number> }>,
+  base: EffectsConfig,
+): EffectsConfig {
+  const config = { ...base };
+
+  const comp = cardStates.get("compressor");
+  if (comp) {
+    config.compressor = {
+      enabled: comp.enabled,
+      threshold: comp.values.threshold ?? base.compressor.threshold,
+      ratio: comp.values.ratio ?? base.compressor.ratio,
+      attack: comp.values.attack ?? base.compressor.attack,
+      release: comp.values.release ?? base.compressor.release,
+      makeup: base.compressor.makeup,
+    };
+  }
+
+  const lim = cardStates.get("limiter");
+  if (lim) {
+    config.limiter = {
+      enabled: lim.enabled,
+      ceiling: lim.values.ceiling ?? base.limiter.ceiling,
+      release: lim.values.release ?? base.limiter.release,
+    };
+  }
+
+  return config;
 }
 
 export default function EffectsBlock(props: EffectsBlockProps) {
   const effects = () => getEffectsForType(props.sourceType);
+  const cardStates = new Map<string, { enabled: boolean; values: Record<string, number> }>();
+  const baseConfig = () => props.initialEffects ?? defaultEffectsConfig();
+
+  function handleCardChange(effectId: string, enabled: boolean, values: Record<string, number>) {
+    cardStates.set(effectId, { enabled, values });
+    // Only fire for effects that have backend mapping
+    if (effectId === "compressor" || effectId === "limiter") {
+      props.onEffectsChange?.(buildEffectsConfig(cardStates, baseConfig()));
+    }
+  }
 
   return (
     <Show when={effects().length > 0}>
       <div class="flex flex-col gap-2">
-        <For each={effects()}>{(effect) => <EffectCard effect={effect} color={props.color} />}</For>
+        <For each={effects()}>
+          {(effect) => (
+            <EffectCard
+              effect={effect}
+              color={props.color}
+              initialEffects={props.initialEffects}
+              onChange={(enabled, values) => handleCardChange(effect.id, enabled, values)}
+            />
+          )}
+        </For>
       </div>
     </Show>
   );
 }
 
-function EffectCard(props: { effect: EffectDef; color?: string }) {
-  const [enabled, setEnabled] = createSignal(false);
+interface EffectCardProps {
+  effect: EffectDef;
+  color?: string;
+  initialEffects?: EffectsConfig;
+  onChange?: (enabled: boolean, values: Record<string, number>) => void;
+}
+
+/** Extract initial values for an effect from EffectsConfig. */
+function getInitialFromConfig(
+  effectId: string,
+  config: EffectsConfig | undefined,
+): { enabled: boolean; values: Record<string, number> } | null {
+  if (!config) return null;
+  if (effectId === "compressor") {
+    const c = config.compressor;
+    return { enabled: c.enabled, values: { threshold: c.threshold, ratio: c.ratio, attack: c.attack, release: c.release } };
+  }
+  if (effectId === "limiter") {
+    const l = config.limiter;
+    return { enabled: l.enabled, values: { ceiling: l.ceiling, release: l.release } };
+  }
+  return null;
+}
+
+function EffectCard(props: EffectCardProps) {
+  const initial = untrack(() => getInitialFromConfig(props.effect.id, props.initialEffects));
+  const [enabled, setEnabled] = createSignal(initial?.enabled ?? false);
   const [values, setValues] = createSignal<Record<string, number>>(
-    untrack(() => Object.fromEntries(props.effect.controls.map((c) => [c.id, c.defaultValue]))),
+    untrack(() => {
+      const defaults = Object.fromEntries(props.effect.controls.map((c) => [c.id, c.defaultValue]));
+      return initial?.values ? { ...defaults, ...initial.values } : defaults;
+    }),
   );
   const [options, setOptions] = createSignal<Record<string, string>>(
     untrack(() =>
@@ -195,7 +286,11 @@ function EffectCard(props: { effect: EffectDef; color?: string }) {
   );
 
   const updateValue = (controlId: string, value: number) => {
-    setValues((prev) => ({ ...prev, [controlId]: value }));
+    setValues((prev) => {
+      const next = { ...prev, [controlId]: value };
+      props.onChange?.(enabled(), next);
+      return next;
+    });
   };
 
   const updateOption = (optionId: string, value: string) => {
@@ -224,7 +319,11 @@ function EffectCard(props: { effect: EffectDef; color?: string }) {
                 ? (props.color ?? "var(--color-accent)")
                 : "var(--color-bg-hover)",
             }}
-            onClick={() => setEnabled(!enabled())}
+            onClick={() => {
+              const next = !enabled();
+              setEnabled(next);
+              props.onChange?.(next, values());
+            }}
           >
             <div
               class="absolute top-0.5 w-2.5 h-2.5 rounded-full transition-all duration-150"

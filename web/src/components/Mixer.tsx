@@ -237,6 +237,8 @@ export default function Mixer() {
       cellSource: source,
       cellTarget: sink,
       initialEq: link?.cellEq,
+      initialEffects: link?.cellEffects,
+      sinkDescriptor: sink,
     });
   }
 
@@ -247,6 +249,8 @@ export default function Mixer() {
       color: getMixColor(ep.displayName),
       endpoint: desc,
       initialEq: ep.eq,
+      initialEffects: ep.effects,
+      sinkDescriptor: desc,
     });
   }
 
