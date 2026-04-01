@@ -667,21 +667,17 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Remove WP's default links to prevent audio leaking to hardware
+                    // ADR-007: link-factory only, no target.object metadata.
+                    // Remove WP's default links to prevent audio leaking to hardware.
                     master.remove_stale_stream_links(stream_node_id, target_node_id);
-                    // Set target.object so WP re-routes the stream to our channel.
-                    let target_name = store.borrow().nodes.get(&target_node_id)
-                        .and_then(|n| n.identifier.node_name().map(String::from));
-                    if let Some(ref name) = target_name
-                        && let Some(ref metadata) = *master.settings_metadata.borrow()
-                    {
-                        let value = format!(r#"{{"name":"{name}"}}"#);
+                    // Set node.dont-move so WP won't reassign this stream.
+                    if let Some(ref metadata) = *master.settings_metadata.borrow() {
                         metadata.set_property(
-                            stream_node_id, "target.object",
-                            Some("Spa:String:JSON"), Some(&value),
+                            stream_node_id, "target.node",
+                            Some("Spa:Id"), Some(&target_node_id.to_string()),
                         );
                     }
-                    // Create direct links to our channel
+                    // Create direct links via link-factory.
                     if let Err(err) = master.create_node_links(stream_node_id, target_node_id) {
                         warn!("[PW] redirect {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
@@ -692,9 +688,9 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Clear target.object so WP auto-routes back to default
+                    // Clear target.node so WP auto-routes back to default
                     if let Some(ref metadata) = *master.settings_metadata.borrow() {
-                        metadata.set_property(stream_node_id, "target.object", None, None);
+                        metadata.set_property(stream_node_id, "target.node", None, None);
                     }
                     if let Err(err) =
                         master.remove_node_links(stream_node_id, target_node_id)

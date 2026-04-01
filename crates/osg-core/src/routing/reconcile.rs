@@ -217,36 +217,59 @@ impl MixerSession {
         }
         messages
     }
-    // diff_app_routing — redirect assigned app streams via target.object
+    // diff_app_routing — link assigned app streams directly to cell sinks
 
-    /// For each channel with assigned apps, find matching PW stream nodes
-    /// and create direct links if not already routed to the channel.
-    /// This handles streams that appear after the assignment.
+    /// For each source channel with assigned apps, find all cell sinks for that
+    /// channel in the graph (`osg.cell.{channel_ulid}-to-*`) and link each
+    /// matching app stream node directly to each cell sink.
+    ///
+    /// Source channels are logical-only (no PW node per ADR-007), so the old
+    /// `channel.pipewire_id` path is never used here.
     fn diff_app_routing(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
-        for (_channel_id, channel) in &self.channels {
-            let Some(target_id) = channel.pipewire_id else {
+
+        for (channel_id, channel) in &self.channels {
+            if channel.kind == ChannelKind::Sink {
                 continue;
-            };
+            }
             if channel.assigned_apps.is_empty() {
                 continue;
             }
 
+            // Collect all cell sink PW node IDs for this channel.
+            let channel_ulid = channel_id.inner().to_string();
+            let cell_prefix = format!("osg.cell.{channel_ulid}-to-");
+            let cell_sink_ids: Vec<u32> = graph
+                .nodes
+                .iter()
+                .filter_map(|(&id, n)| {
+                    let name = n.identifier.node_name()?;
+                    name.starts_with(&cell_prefix).then_some(id)
+                })
+                .collect();
+
+            if cell_sink_ids.is_empty() {
+                continue;
+            }
+
             for assignment in &channel.assigned_apps {
-                for node in graph.nodes.values() {
-                    if node.identifier.application_name.as_deref()
-                        == Some(&assignment.application_name)
-                        && node.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
-                        && node.has_port_kind(PortKind::Source)
+                for app_node in graph.nodes.values() {
+                    if app_node.identifier.application_name.as_deref()
+                        != Some(&assignment.application_name)
+                        || app_node.identifier.binary_name.as_deref()
+                            != Some(&assignment.binary_name)
+                        || !app_node.has_port_kind(PortKind::Source)
                     {
-                        let linked_to_us = graph
-                            .links
-                            .values()
-                            .any(|link| link.start_node == node.id && link.end_node == target_id);
-                        if !linked_to_us {
-                            messages.push(ToPipewireMessage::RedirectStream {
-                                stream_node_id: node.id,
-                                target_node_id: target_id,
+                        continue;
+                    }
+                    for &cell_id in &cell_sink_ids {
+                        let already_linked = graph.links.values().any(|link| {
+                            link.start_node == app_node.id && link.end_node == cell_id
+                        });
+                        if !already_linked {
+                            messages.push(ToPipewireMessage::CreateNodeLinks {
+                                start_id: app_node.id,
+                                end_id: cell_id,
                             });
                         }
                     }
@@ -255,27 +278,40 @@ impl MixerSession {
         }
         messages
     }
-    // diff_cell_links — ensure channel → cell → mix links exist
+    // diff_cell_links — ensure cell_sink monitor → [filter →] mix links exist
 
-    /// For each cell node, ensure PW links exist:
-    /// `channel → [filter →] cell → mix` (filter inserted when present).
+    /// ADR-007: source channels are logical-only. The audio chain per cell is:
+    ///   app stream → cell_sink (volume node)
+    ///   cell_sink monitor → [osg.filter.{ch_ulid}-to-{mix_ulid} →] mix_sink
+    ///
+    /// This function ensures the monitor-out side of the chain exists.
+    /// App→cell links are handled by `diff_app_routing`.
     fn diff_cell_links(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
-        let ulid_to_pw: HashMap<String, u32> = self
+
+        // Build ULID → PW node ID map for sink (mix) channels only.
+        let mix_ulid_to_pw: HashMap<String, u32> = self
             .channels
             .iter()
-            .filter_map(|(id, ch)| ch.pipewire_id.map(|pw| (id.inner().to_string(), pw)))
+            .filter_map(|(id, ch)| {
+                (ch.kind == ChannelKind::Sink)
+                    .then_some(())?;
+                ch.pipewire_id.map(|pw| (id.inner().to_string(), pw))
+            })
             .collect();
-        // Build filter lookup: channel ULID → filter PW node ID
-        let filter_pw: HashMap<&str, u32> = graph
+
+        // Build filter lookup: "{ch_ulid}-to-{mix_ulid}" → filter PW node ID.
+        // Key format matches `osg.filter.{channel_ulid}-to-{mix_ulid}`.
+        let filter_pw: HashMap<String, u32> = graph
             .nodes
             .iter()
             .filter_map(|(&id, n)| {
                 let name = n.identifier.node_name()?;
-                let ulid = name.strip_prefix("osg.filter.")?;
-                Some((ulid, id))
+                let key = name.strip_prefix("osg.filter.")?.to_owned();
+                Some((key, id))
             })
             .collect();
+
         for (&cell_pw_id, cell_node) in &graph.nodes {
             let Some(name) = cell_node.identifier.node_name() else {
                 continue;
@@ -286,41 +322,25 @@ impl MixerSession {
             if cell_node.ports.is_empty() {
                 continue;
             }
-            let (source_pw, sink_pw, ch_ulid) = match rest.split_once("-to-") {
-                Some((ch_ulid, mix_ulid)) => {
-                    let Some(&ch) = ulid_to_pw.get(ch_ulid) else {
-                        continue;
-                    };
-                    let Some(&mx) = ulid_to_pw.get(mix_ulid) else {
-                        continue;
-                    };
-                    (ch, mx, ch_ulid)
-                }
-                None => match Self::parse_legacy_cell_ids(rest) {
-                    Some((ch, mx)) => (ch, mx, ""),
-                    None => continue,
-                },
+            // Parse "osg.cell.{ch_ulid}-to-{mix_ulid}"
+            let Some((ch_ulid, mix_ulid)) = rest.split_once("-to-") else {
+                continue;
             };
-            // Insert filter between channel and cell if it exists
-            if let Some(&filter_id) = filter_pw.get(ch_ulid) {
-                // channel → filter
-                messages.extend(Self::ensure_link(graph, source_pw, filter_id));
-                // filter → cell
-                messages.extend(Self::ensure_link(graph, filter_id, cell_pw_id));
+            let Some(&mix_pw) = mix_ulid_to_pw.get(mix_ulid) else {
+                continue;
+            };
+
+            let filter_key = format!("{ch_ulid}-to-{mix_ulid}");
+            if let Some(&filter_id) = filter_pw.get(&filter_key) {
+                // cell_sink monitor → filter → mix_sink
+                messages.extend(Self::ensure_link(graph, cell_pw_id, filter_id));
+                messages.extend(Self::ensure_link(graph, filter_id, mix_pw));
             } else {
-                // No filter: channel → cell directly
-                messages.extend(Self::ensure_link(graph, source_pw, cell_pw_id));
+                // No filter: cell_sink monitor → mix_sink directly
+                messages.extend(Self::ensure_link(graph, cell_pw_id, mix_pw));
             }
-            // cell → mix
-            messages.extend(Self::ensure_link(graph, cell_pw_id, sink_pw));
         }
         messages
-    }
-
-    /// Parse legacy `{pw_id}.{pw_id}` cell name format.
-    fn parse_legacy_cell_ids(rest: &str) -> Option<(u32, u32)> {
-        let (a, b) = rest.split_once('.')?;
-        Some((a.parse().ok()?, b.parse().ok()?))
     }
 
     /// Emit a `CreateNodeLinks` if `from → to` link is missing.
@@ -566,13 +586,33 @@ impl MixerSession {
                 None
             }
 
-            EndpointDescriptor::Channel(id) => graph
-                .group_nodes
-                .get(&id.inner())
-                .and_then(|gn| gn.id)
-                .and_then(|nid| graph.nodes.get(&nid))
-                .filter(|node| !node.ports.is_empty())
-                .map(|node| vec![node]),
+            EndpointDescriptor::Channel(id) => {
+                let ch = self.channels.get(&id);
+                let is_mix = ch.is_some_and(|c| c.kind == ChannelKind::Sink);
+                if is_mix {
+                    // Mix channels have PW group nodes
+                    graph
+                        .group_nodes
+                        .get(&id.inner())
+                        .and_then(|gn| gn.id)
+                        .and_then(|nid| graph.nodes.get(&nid))
+                        .filter(|node| !node.ports.is_empty())
+                        .map(|node| vec![node])
+                } else {
+                    // ADR-007: source channels are logical. Resolve to cell sinks.
+                    let prefix = format!("osg.cell.{}-to-", id.inner());
+                    let cells: Vec<&PwNode> = graph
+                        .nodes
+                        .values()
+                        .filter(|n| {
+                            n.identifier
+                                .node_name()
+                                .is_some_and(|name| name.starts_with(&prefix))
+                        })
+                        .collect();
+                    if cells.is_empty() { None } else { Some(cells) }
+                }
+            }
 
             EndpointDescriptor::App(id, kind) => {
                 let app = self.apps.get(&id)?;
