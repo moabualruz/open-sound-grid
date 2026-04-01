@@ -235,7 +235,7 @@ impl MixerSession {
     }
 
     /// Find PipeWire cell node IDs for a route by scanning for `osg.cell.{ch}.{mix}` names.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::unused_self)]
     /// Find PW node IDs of cell sinks for a (source, sink) endpoint pair.
     /// ADR-007: Uses ULID-based naming, no resolve_endpoint needed.
     pub(super) fn find_cell_node_ids(

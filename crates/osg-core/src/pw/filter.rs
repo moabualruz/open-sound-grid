@@ -338,7 +338,7 @@ fn apply_gate(buf: &mut [f32], params: &GateParams, env: &mut EnvelopeState, sam
         } else {
             // Release phase
             let coeff = release_coeff;
-            env.gate_env = coeff * env.gate_env;
+            env.gate_env *= coeff;
         }
         *s *= env.gate_env;
     }
