@@ -189,10 +189,16 @@ impl MixerSession {
                     match ep {
                         EndpointDescriptor::EphemeralNode(..) => {}
                         EndpointDescriptor::Channel(id) => {
-                            // Clear redirects for all apps assigned to this channel
-                            if let Some(ch) = self.channels.get(&id)
-                                && let Some(target_id) = ch.pipewire_id
-                            {
+                            // ADR-007: Clear links from app streams to cell sinks
+                            if let Some(ch) = self.channels.get(&id) {
+                                let prefix = format!("osg.cell.{}-to-", id.inner());
+                                let cell_ids: Vec<u32> = graph.nodes.iter()
+                                    .filter_map(|(&nid, n)| {
+                                        n.identifier.node_name()
+                                            .filter(|name| name.starts_with(&prefix))
+                                            .map(|_| nid)
+                                    })
+                                    .collect();
                                 for assignment in &ch.assigned_apps {
                                     for node in graph.nodes.values() {
                                         if node.identifier.application_name.as_deref()
@@ -201,10 +207,12 @@ impl MixerSession {
                                                 == Some(&assignment.binary_name)
                                             && node.has_port_kind(PortKind::Source)
                                         {
-                                            pw_messages.push(ToPipewireMessage::ClearRedirect {
-                                                stream_node_id: node.id,
-                                                target_node_id: target_id,
-                                            });
+                                            for &cell_id in &cell_ids {
+                                                pw_messages.push(ToPipewireMessage::ClearRedirect {
+                                                    stream_node_id: node.id,
+                                                    target_node_id: cell_id,
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -701,25 +709,9 @@ impl MixerSession {
                         break 'handler None;
                     }
 
-                    let target_node_id = ch.pipewire_id;
                     ch.assigned_apps.push(assignment.clone());
-
-                    // Find all matching PW stream nodes and redirect them
-                    if let Some(target_id) = target_node_id {
-                        for node in graph.nodes.values() {
-                            if node.identifier.application_name.as_deref()
-                                == Some(&assignment.application_name)
-                                && node.identifier.binary_name.as_deref()
-                                    == Some(&assignment.binary_name)
-                                && node.has_port_kind(PortKind::Source)
-                            {
-                                pw_messages.push(ToPipewireMessage::RedirectStream {
-                                    stream_node_id: node.id,
-                                    target_node_id: target_id,
-                                });
-                            }
-                        }
-                    }
+                    // ADR-007: Reconciler's diff_app_routing handles actual linking
+                    // to cell sinks on the next tick. No immediate redirect needed.
                     // Destroy the app's auto-channel — it will be recreated on unassign
                     let auto_id = self
                         .channels
@@ -752,33 +744,38 @@ impl MixerSession {
                         break 'handler None;
                     };
 
-                    let target_node_id = ch.pipewire_id;
                     ch.assigned_apps.retain(|a| a != &assignment);
 
-                    // Force a graph update so the reconciler picks up the unassigned
-                    // app immediately and creates a new auto-channel for it.
-                    pw_messages.push(ToPipewireMessage::Update);
-
-                    // Clear redirect on all matching PW stream nodes
-                    if let Some(target_id) = target_node_id {
-                        for node in graph.nodes.values() {
-                            if node.identifier.application_name.as_deref()
-                                == Some(&assignment.application_name)
-                                && node.identifier.binary_name.as_deref()
-                                    == Some(&assignment.binary_name)
-                                && node.has_port_kind(PortKind::Source)
-                            {
+                    // ADR-007: Clear links from app streams to all cell sinks for this channel
+                    let prefix = format!("osg.cell.{}-to-", channel_id.inner());
+                    let cell_ids: Vec<u32> = graph.nodes.iter()
+                        .filter_map(|(&nid, n)| {
+                            n.identifier.node_name()
+                                .filter(|name| name.starts_with(&prefix))
+                                .map(|_| nid)
+                        })
+                        .collect();
+                    for node in graph.nodes.values() {
+                        if node.identifier.application_name.as_deref()
+                            == Some(&assignment.application_name)
+                            && node.identifier.binary_name.as_deref()
+                                == Some(&assignment.binary_name)
+                            && node.has_port_kind(PortKind::Source)
+                        {
+                            for &cell_id in &cell_ids {
                                 pw_messages.push(ToPipewireMessage::ClearRedirect {
                                     stream_node_id: node.id,
-                                    target_node_id: target_id,
+                                    target_node_id: cell_id,
                                 });
-                                debug!(
-                                    "[State] cleared redirect for {} (node {})",
-                                    assignment.application_name, node.id
-                                );
                             }
+                            debug!(
+                                "[State] cleared redirect for {} (node {})",
+                                assignment.application_name, node.id
+                            );
                         }
                     }
+                    // Force graph update so reconciler creates new auto-channel
+                    pw_messages.push(ToPipewireMessage::Update);
                     None
                 }
                 StateMsg::SetDefaultOutputNode(node_id) => {
