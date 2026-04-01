@@ -3,7 +3,7 @@
  * Shows: enable toggle, filter type selector, frequency/gain/Q fields.
  * Modeled after Sonar's per-band popup.
  */
-import { Show } from "solid-js";
+import { Show, For } from "solid-js";
 import type { EqBand, FilterType } from "./math";
 import { formatFreq } from "./math";
 
@@ -64,9 +64,7 @@ export default function EqBandPopup(props: EqBandPopupProps) {
             value={props.band.type}
             onChange={(e) => props.onChangeType(props.band.id, e.currentTarget.value as FilterType)}
           >
-            {FILTER_TYPES.map((ft) => (
-              <option value={ft.type}>{ft.label}</option>
-            ))}
+            <For each={FILTER_TYPES}>{(ft) => <option value={ft.type}>{ft.label}</option>}</For>
           </select>
         </div>
 

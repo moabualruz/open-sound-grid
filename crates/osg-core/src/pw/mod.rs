@@ -3,7 +3,6 @@
 pub mod biquad;
 mod cell;
 pub mod filter;
-pub mod filter_chain;
 mod identifier;
 mod mainloop;
 mod object;
@@ -13,7 +12,7 @@ mod store;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, mpsc},
+    sync::{Arc, RwLock, mpsc},
     thread,
 };
 
@@ -21,11 +20,12 @@ use thiserror::Error;
 use tracing::error;
 use ulid::Ulid;
 
+pub use filter::FilterHandle;
 pub use identifier::NodeIdentifier;
 pub use object::PortKind;
 
 use mainloop::init_mainloop;
-pub use mainloop::map_ports;
+pub use store::map_ports;
 
 /// Errors originating from the PipeWire backend.
 #[derive(Error, Debug)]
@@ -101,9 +101,10 @@ impl PipewireHandle {
         ),
         update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
         peak_store: Arc<peak::PeakStore>,
+        filter_store: FilterHandleStore,
     ) -> Result<Self, PwError> {
         let (pipewire_thread_handle, pw_sender, _from_pw_receiver) =
-            init_mainloop(update_fn, peak_store)?;
+            init_mainloop(update_fn, peak_store, filter_store)?;
         let adapter_thread_handle = init_adapter(to_pw_channel.1, pw_sender);
         Ok(Self {
             pipewire_thread_handle: Some(pipewire_thread_handle),
@@ -136,6 +137,48 @@ pub type Device = object::Device<(), ()>;
 pub type Node = object::Node<(), ()>;
 pub type Port = object::Port<()>;
 pub type Link = object::Link<()>;
+
+/// Thread-safe store of FilterHandles keyed by channel name (e.g. "osg.filter.{ulid}").
+/// Shared between the PW mainloop (writes peaks) and the reducer (reads peaks, sets EQ).
+#[derive(Debug, Clone, Default)]
+pub struct FilterHandleStore {
+    inner: Arc<RwLock<HashMap<String, FilterHandle>>>,
+}
+
+#[allow(clippy::unwrap_used)]
+impl FilterHandleStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert a handle, returning any previous one.
+    pub fn insert(&self, key: String, handle: FilterHandle) -> Option<FilterHandle> {
+        self.inner.write().unwrap().insert(key, handle)
+    }
+
+    /// Remove a handle by key.
+    pub fn remove(&self, key: &str) -> Option<FilterHandle> {
+        self.inner.write().unwrap().remove(key)
+    }
+
+    /// Get a clone of a handle by key.
+    pub fn get(&self, key: &str) -> Option<FilterHandle> {
+        self.inner.read().unwrap().get(key).cloned()
+    }
+
+    /// Read all filter peaks and return (key, left, right) tuples.
+    pub fn read_all_peaks(&self) -> Vec<(String, f32, f32)> {
+        self.inner
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, h)| {
+                let (l, r) = h.peak();
+                (k.clone(), l, r)
+            })
+            .collect()
+    }
+}
 
 /// Read-only projection of PipeWire's current graph state. DDD read model.
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -201,10 +244,22 @@ pub enum ToPipewireMessage {
         stream_node_id: u32,
         target_node_id: u32,
     },
-    /// Start monitoring peak levels for a node.
-    StartPeakMonitor(u32),
-    /// Stop monitoring peak levels for a node.
-    StopPeakMonitor(u32),
+    /// Create an inline pw_filter for EQ + peak metering.
+    /// Inserts between source_node → target_node in the graph.
+    /// The filter_key is used to store/retrieve the FilterHandle.
+    CreateFilter {
+        filter_key: String,
+        name: String,
+    },
+    /// Remove an inline pw_filter by key.
+    RemoveFilter {
+        filter_key: String,
+    },
+    /// Update EQ parameters on an existing filter.
+    UpdateFilterEq {
+        filter_key: String,
+        eq: crate::graph::EqConfig,
+    },
     Exit,
 }
 

@@ -111,6 +111,7 @@ export interface Endpoint {
   volumeMixed: boolean;
   volumeLockedMuted: VolumeLockMuteState;
   visible: boolean;
+  eq?: EqConfig;
 }
 
 export interface MixerLink {
@@ -120,6 +121,7 @@ export interface MixerLink {
   cellVolume: number;
   cellVolumeLeft: number;
   cellVolumeRight: number;
+  cellEq?: EqConfig;
 }
 
 export interface AppAssignment {

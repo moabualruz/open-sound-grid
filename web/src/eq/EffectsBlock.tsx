@@ -16,7 +16,7 @@
  * │ Spatial Audio         │ —    │ —          │ —     │ YES  │
  * └───────────────────────┴──────┴────────────┴───────┴──────┘
  */
-import { createSignal, Show, For } from "solid-js";
+import { createSignal, Show, For, untrack } from "solid-js";
 
 export type SourceType = "mic" | "app" | "cell" | "mix";
 
@@ -235,10 +235,12 @@ export default function EffectsBlock(props: EffectsBlockProps) {
 function EffectCard(props: { effect: EffectDef; color?: string }) {
   const [enabled, setEnabled] = createSignal(false);
   const [values, setValues] = createSignal<Record<string, number>>(
-    Object.fromEntries(props.effect.controls.map((c) => [c.id, c.defaultValue])),
+    untrack(() => Object.fromEntries(props.effect.controls.map((c) => [c.id, c.defaultValue]))),
   );
   const [options, setOptions] = createSignal<Record<string, string>>(
-    Object.fromEntries((props.effect.options ?? []).map((o) => [o.id, o.defaultValue])),
+    untrack(() =>
+      Object.fromEntries((props.effect.options ?? []).map((o) => [o.id, o.defaultValue])),
+    ),
   );
 
   const updateValue = (controlId: string, value: number) => {

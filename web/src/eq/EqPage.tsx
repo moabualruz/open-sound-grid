@@ -19,6 +19,8 @@ export interface EqPageTarget {
   /** For cell EQ: source + target descriptors for SetCellEq. */
   cellSource?: EndpointDescriptor;
   cellTarget?: EndpointDescriptor;
+  /** Current EQ config from backend (for restoring state). */
+  initialEq?: EqConfig;
 }
 
 interface EqPageProps {
@@ -147,6 +149,7 @@ export default function EqPage(props: EqPageProps) {
             <EqPanel
               label={props.target.label}
               color={props.target.color}
+              initialEq={props.target.initialEq}
               onEqChange={handleEqChange}
             />
           }

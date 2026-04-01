@@ -17,6 +17,8 @@ interface EqPanelProps {
   label: string;
   color?: string;
   readonly?: boolean;
+  /** Initial EQ config from backend (loaded on mount). */
+  initialEq?: EqConfig;
   /** Called whenever EQ config changes (bands, enabled). Debounced by the caller. */
   onEqChange?: (eq: EqConfig) => void;
 }
@@ -32,9 +34,29 @@ function toSerializedBands(bands: EqBand[]): EqConfig["bands"] {
   }));
 }
 
+/** Convert serialized EqConfig bands back to internal EqBand format. */
+function fromSerializedBands(bands: EqConfig["bands"]): EqBand[] {
+  const BAND_COLORS = [
+    "#e08850", "#5090e0", "#60c060", "#40b0a0", "#e06090",
+    "#50c8e0", "#e0c050", "#e05050", "#a0d050",
+  ];
+  return bands.map((b, i) => ({
+    id: i,
+    enabled: b.enabled,
+    type: b.filterType as EqBand["type"],
+    frequency: b.frequency,
+    gain: b.gain,
+    q: b.q,
+    color: BAND_COLORS[i % BAND_COLORS.length],
+  }));
+}
+
 export default function EqPanel(props: EqPanelProps) {
-  const [enabled, setEnabled] = createSignal(true);
-  const [bands, setBands] = createSignal<EqBand[]>(createDefaultBands());
+  const initBands = props.initialEq?.bands?.length
+    ? fromSerializedBands(props.initialEq.bands)
+    : createDefaultBands();
+  const [enabled, setEnabled] = createSignal(props.initialEq?.enabled ?? true);
+  const [bands, setBands] = createSignal<EqBand[]>(initBands);
   const [selectedBandId, setSelectedBandId] = createSignal<number | null>(null);
   const [bass, setBass] = createSignal(0);
   const [voice, setVoice] = createSignal(0);

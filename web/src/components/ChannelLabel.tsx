@@ -15,6 +15,7 @@ import {
   Speaker,
   Plus,
 } from "lucide-solid";
+import VuMeter from "./VuMeter";
 import type { EndpointDescriptor, Endpoint, Channel, App } from "../types";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
@@ -195,6 +196,11 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             <X size={12} />
           </button>
         </Show>
+      </div>
+
+      {/* VU meter — channel peak level */}
+      <div class="px-2 pt-1">
+        <VuMeter nodeId={props.channel?.outputNodeId ?? undefined} />
       </div>
 
       {/* Row 2: assigned apps — hidden for auto-created app channels */}

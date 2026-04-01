@@ -3,6 +3,7 @@ import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { Volume2, VolumeX, SlidersVertical } from "lucide-solid";
+import VuMeter from "./VuMeter";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
 interface MatrixCellProps {
@@ -267,6 +268,11 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             <SlidersVertical size={12} />
           </button>
         </Show>
+      </div>
+
+      {/* VU meter — cell node ID will be provided once filters are wired */}
+      <div class="px-3 pb-1">
+        <VuMeter nodeId={undefined} />
       </div>
     </div>
   );

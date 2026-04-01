@@ -9,6 +9,7 @@
  *   Cell:   Compressor
  *   Mix:    Compressor + Limiter + Smart Volume
  */
+import { For } from "solid-js";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
 import type { SourceType } from "./EffectsBlock";
@@ -99,20 +100,22 @@ export default function EqDemo() {
 
       {/* Per-source-type panels */}
       <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        {SOURCES.map((src) => (
-          <div>
-            <SourceHeader
-              title={src.title}
-              subtitle={src.subtitle}
-              color={src.color}
-              type={src.type}
-            />
-            <div class="flex flex-col gap-2">
-              <EqPanel label={src.label} color={src.color} />
-              <EffectsBlock sourceType={src.type} color={src.color} />
+        <For each={SOURCES}>
+          {(src) => (
+            <div>
+              <SourceHeader
+                title={src.title}
+                subtitle={src.subtitle}
+                color={src.color}
+                type={src.type}
+              />
+              <div class="flex flex-col gap-2">
+                <EqPanel label={src.label} color={src.color} />
+                <EffectsBlock sourceType={src.type} color={src.color} />
+              </div>
             </div>
-          </div>
-        ))}
+          )}
+        </For>
       </div>
 
       {/* Effects availability table */}
@@ -215,14 +218,16 @@ function Row(props: { label: string; vals: string[] }) {
       >
         {props.label}
       </td>
-      {props.vals.map((v) => (
-        <td
-          class="px-3 py-1.5 text-center"
-          style={{ color: v === "—" ? "var(--color-text-muted)" : "var(--color-text-secondary)" }}
-        >
-          {v}
-        </td>
-      ))}
+      <For each={props.vals}>
+        {(v) => (
+          <td
+            class="px-3 py-1.5 text-center"
+            style={{ color: v === "—" ? "var(--color-text-muted)" : "var(--color-text-secondary)" }}
+          >
+            {v}
+          </td>
+        )}
+      </For>
     </tr>
   );
 }

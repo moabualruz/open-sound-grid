@@ -209,14 +209,12 @@ impl OsgFilter {
         core_ptr: *mut pipewire_sys::pw_core,
         name: &str,
         description: &str,
-        media_class: &str,
     ) -> Result<Self, String> {
         use std::ffi::CString;
         use std::ptr;
 
         let c_name = CString::new(name).map_err(|e| e.to_string())?;
         let c_desc = CString::new(description).map_err(|e| e.to_string())?;
-        let c_class = CString::new(media_class).map_err(|e| e.to_string())?;
 
         let handle = FilterHandle::new();
         let data = Box::into_raw(Box::new(CallbackData {
@@ -229,13 +227,13 @@ impl OsgFilter {
             out_port_r: ptr::null_mut(),
         }));
 
-        // Build properties — must match what null-audio-sink used so
-        // WirePlumber treats this as a routable audio node, not a DSP filter.
+        // Build properties for an inline DSP filter.
+        // No media.class — prevents WirePlumber from auto-routing outputs
+        // to the default sink (which causes audio leaks).
+        // node.passive=true prevents PW scheduler from driving the node.
         let props = pipewire_sys::pw_properties_new(
             c"media.type".as_ptr().cast::<std::os::raw::c_char>(),
             c"Audio".as_ptr().cast::<std::os::raw::c_char>(),
-            c"media.class".as_ptr().cast::<std::os::raw::c_char>(),
-            c_class.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.name".as_ptr().cast::<std::os::raw::c_char>(),
             c_name.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.nick".as_ptr().cast::<std::os::raw::c_char>(),
@@ -243,6 +241,10 @@ impl OsgFilter {
             c"node.description".as_ptr().cast::<std::os::raw::c_char>(),
             c_desc.as_ptr().cast::<std::os::raw::c_char>(),
             c"node.virtual".as_ptr().cast::<std::os::raw::c_char>(),
+            c"true".as_ptr().cast::<std::os::raw::c_char>(),
+            c"node.passive".as_ptr().cast::<std::os::raw::c_char>(),
+            c"true".as_ptr().cast::<std::os::raw::c_char>(),
+            c"pulse.disable".as_ptr().cast::<std::os::raw::c_char>(),
             c"true".as_ptr().cast::<std::os::raw::c_char>(),
             c"audio.position".as_ptr().cast::<std::os::raw::c_char>(),
             c"FL,FR".as_ptr().cast::<std::os::raw::c_char>(),
@@ -358,6 +360,20 @@ impl OsgFilter {
         (*data).out_port_l = out_port_l;
         (*data).out_port_r = out_port_r;
 
+        if in_port_l.is_null()
+            || in_port_r.is_null()
+            || out_port_l.is_null()
+            || out_port_r.is_null()
+        {
+            tracing::warn!(
+                "[PW] filter '{name}' port creation failed: in_l={} in_r={} out_l={} out_r={}",
+                !in_port_l.is_null(),
+                !in_port_r.is_null(),
+                !out_port_l.is_null(),
+                !out_port_r.is_null(),
+            );
+        }
+
         // Connect with RT processing flag
         let result = pipewire_sys::pw_filter_connect(
             filter,
@@ -407,11 +423,7 @@ pub unsafe fn create_group_filter(
     _kind: super::GroupNodeKind,
 ) -> Result<OsgFilter, String> {
     let node_name = format!("osg.group.{id}");
-    // All channel filters use Source/Virtual — we route audio manually via
-    // RedirectStream links. Duplex causes WirePlumber to auto-route monitor
-    // sources into our input ports, creating feedback loops.
-    let media_class = "Audio/Source/Virtual";
-    let filter = unsafe { OsgFilter::new(core_ptr, &node_name, name, media_class) }
+    let filter = unsafe { OsgFilter::new(core_ptr, &node_name, name) }
         .map_err(|e| format!("filter '{name}': {e}"))?;
     tracing::debug!(
         "[PW] created filter '{}' — node_id: {:?}",

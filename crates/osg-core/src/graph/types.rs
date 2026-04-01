@@ -216,6 +216,10 @@ pub struct Endpoint {
     /// Transient flag: a volume/mute command is in-flight to PipeWire.
     #[serde(skip)]
     pub volume_pending: bool,
+    /// Cached volume before mute (restored on unmute). Null-audio-sinks don't
+    /// honor SPA_PROP_mute, so mute is implemented as volume → 0.
+    #[serde(skip)]
+    pub pre_mute_volume: Option<(f32, f32)>,
 }
 
 fn default_true() -> bool {
@@ -239,6 +243,7 @@ impl Endpoint {
             visible: true,
             eq: EqConfig::default(),
             volume_pending: false,
+            pre_mute_volume: None,
         }
     }
 

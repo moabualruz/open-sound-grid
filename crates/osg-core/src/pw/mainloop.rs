@@ -7,14 +7,16 @@ use std::sync::Arc;
 use pipewire::{
     context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, metadata::Metadata,
     properties::properties, proxy::ProxyT, registry::RegistryRc, spa::param::ParamType,
-    stream::StreamRc, types::ObjectType,
+    types::ObjectType,
 };
 use tracing::{debug, trace, warn};
 use ulid::Ulid;
 
 use super::{
     AudioGraph, FromPipewireMessage, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
-    ToPipewireMessage, object::Port, store::Store,
+    ToPipewireMessage,
+    object::Port,
+    store::{Store, map_ports},
 };
 
 /// # Master
@@ -85,7 +87,6 @@ impl Master {
                     match result {
                         Ok(_) => {
                             let _ = sender.send(ToPipewireMessage::Update);
-
                             // Add param listeners for objects
                             match global.type_ {
                                 ObjectType::Node => {
@@ -230,59 +231,6 @@ impl Master {
         Ok(())
     }
 
-    /// Link pending peak stream nodes to their target's monitor ports.
-    fn resolve_peak_links(&self, pending: &mut HashMap<String, u32>) {
-        let store = self.store.borrow();
-        let resolved: Vec<String> = pending
-            .iter()
-            .filter_map(|(peak_name, &target_id)| {
-                let (&peak_node_id, peak_node) = store
-                    .nodes
-                    .iter()
-                    .find(|(_, n)| n.identifier.node_name() == Some(peak_name.as_str()))?;
-                let has_sink_ports = peak_node
-                    .ports
-                    .iter()
-                    .any(|(_, kind, _)| *kind == PortKind::Sink);
-                if !has_sink_ports {
-                    return None;
-                }
-                let target_node = store.nodes.get(&target_id)?;
-                let monitor_ports: Vec<&Port> = target_node
-                    .ports
-                    .iter()
-                    .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-                    .filter(|p| p.kind == PortKind::Source && p.is_monitor)
-                    .collect();
-                let sink_ports: Vec<&Port> = peak_node
-                    .ports
-                    .iter()
-                    .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-                    .filter(|p| p.kind == PortKind::Sink)
-                    .collect();
-                if monitor_ports.is_empty() || sink_ports.is_empty() {
-                    return None;
-                }
-                let pairs = map_ports(monitor_ports, sink_ports);
-                for (src, dst) in &pairs {
-                    if let Err(e) = self.create_port_link(*src, *dst) {
-                        warn!("[PW] peak link {peak_name} failed: {e}");
-                    }
-                }
-                if !pairs.is_empty() {
-                    debug!(
-                        "[PW] linked peak {peak_name} (node {peak_node_id}) → target {target_id} ({} pairs)",
-                        pairs.len()
-                    );
-                }
-                Some(peak_name.clone())
-            })
-            .collect();
-        for name in resolved {
-            pending.remove(&name);
-        }
-    }
-
     fn create_group_node(
         &self,
         name: String,
@@ -354,63 +302,38 @@ impl Master {
             .group_nodes
             .remove(&id)
             .ok_or(PwError::GroupNodeNotFound(id))?;
-
-        // Dropping the proxy deletes the object on the server
         drop(group_node);
-
         Ok(())
     }
-}
 
-/// Maps two different list of ports to a list of mappings.
-/// These are made at best guess but by no means are always correct.
-/// Standard cases such as surround sound, stereo and MONO ports should
-/// always be correctly mapped.
-///
-/// | Situation | Output |
-/// |-----------|--------|
-/// | start = 1 | map single port to all end ports |
-/// | otherwise | map by channel names |
-pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)> {
-    if start.len() == 1 {
-        return end
-            .iter()
-            .map(|end_port| (start[0].id, end_port.id))
+    /// Remove links from a stream to non-OSG nodes (WP default route leak).
+    fn remove_stale_stream_links(&self, stream_node_id: u32, keep_target: u32) {
+        let s = self.store.borrow();
+        let stale: Vec<u32> = s
+            .links
+            .values()
+            .filter(|l| {
+                l.start_node == stream_node_id
+                    && l.end_node != keep_target
+                    && !s
+                        .nodes
+                        .get(&l.end_node)
+                        .and_then(|n| n.identifier.node_name())
+                        .is_some_and(|n| n.starts_with("osg."))
+            })
+            .map(|l| l.id)
             .collect();
+        drop(s);
+        for id in &stale {
+            self.registry.destroy_global(*id);
+        }
+        if !stale.is_empty() {
+            debug!(
+                "[PW] removed {} WP default links from stream {stream_node_id}",
+                stale.len()
+            );
+        }
     }
-    let pairs: Vec<(u32, u32)> = start
-        .iter()
-        .enumerate()
-        .filter_map(|(index, start_port)| {
-            let start_port_id: u32 = start_port.id;
-            // Try matching by channel name first, then fall back to positional
-            let end_port_id: Option<u32> = end
-                .get(index)
-                .and_then(|port| (port.channel == start_port.channel).then_some(port.id))
-                .or_else(|| {
-                    Some(
-                        end.iter()
-                            .find(|end_port| end_port.channel == start_port.channel)?
-                            .id,
-                    )
-                });
-            if end_port_id.is_none() {
-                trace!("Could not find matching end port for {}", start_port_id);
-            }
-            Some((start_port_id, end_port_id?))
-        })
-        .collect();
-
-    // Fall back to positional mapping when channel names don't match
-    // (e.g. FL/FR vs AUX0/AUX1 on pro audio hardware)
-    if pairs.is_empty() && !start.is_empty() && !end.is_empty() {
-        return start
-            .iter()
-            .zip(end.iter())
-            .map(|(s, e)| (s.id, e.id))
-            .collect();
-    }
-    pairs
 }
 
 pub fn init_node_listeners(
@@ -535,6 +458,7 @@ fn init_metadata_listener(
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
     peak_store: Arc<super::peak::PeakStore>,
+    filter_store: super::FilterHandleStore,
 ) -> Result<
     (
         JoinHandle<()>,
@@ -594,25 +518,18 @@ pub(super) fn init_mainloop(
         // Flag: cleanup orphaned osg nodes on the first Update after startup
         let startup_cleanup_done = Rc::new(RefCell::new(false));
 
-        // Peak monitor streams — kept alive as long as monitoring is active.
-        // Each entry holds the StreamRc + listener (dropping them stops the stream).
-        let peak_streams: Rc<
-            RefCell<HashMap<u32, (StreamRc, pipewire::stream::StreamListener<()>)>>,
-        > = Rc::new(RefCell::new(HashMap::new()));
-
-        // Pending peak links: peak_stream_name → target_node_id.
-        // Resolved when the peak stream's node appears in the store with ports.
-        let pending_peak_links: Rc<RefCell<HashMap<String, u32>>> =
+        // Active OsgFilter instances — kept alive on the PW thread.
+        // FilterHandles are shared via filter_store for cross-thread peak/EQ access.
+        let active_filters: Rc<RefCell<HashMap<String, super::filter::OsgFilter>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
         let _receiver = receiver.attach(mainloop.loop_(), {
             let mainloop = mainloop.clone();
             let store = store.clone();
             let pw_core = pw_core.clone();
-            let peak_streams = peak_streams.clone();
             let peak_store = peak_store.clone();
-            let pending_peak_links = pending_peak_links.clone();
             let startup_cleanup_done = startup_cleanup_done.clone();
+            let active_filters = active_filters.clone();
             move |message| match message {
                 ToPipewireMessage::Update => {
                     // On first update, destroy orphaned osg nodes from previous runs
@@ -632,11 +549,28 @@ pub(super) fn init_mainloop(
                             debug!("[PW] cleaned {} orphaned osg nodes on startup", orphans.len());
                         }
                     }
-                    if !pending_peak_links.borrow().is_empty() {
-                        master.resolve_peak_links(&mut pending_peak_links.borrow_mut());
+                    // Read peaks from all active pw_filter handles → PeakStore.
+                    // Write peaks keyed by filter node ID AND by the filter key
+                    // (channel Ulid). The frontend maps channel Ulid → node ID.
+                    for (key, filter) in active_filters.borrow().iter() {
+                        let (l, r) = filter.handle().peak();
+                        if l > 0.0 || r > 0.0 {
+                            if let Some(node_id) = filter.node_id() {
+                                peak_store.get_or_insert(node_id).store(l, r);
+                            }
+                            // Also write keyed by the channel's own PW node ID
+                            // so frontend VU bars work with existing node IDs.
+                            if let Ok(ulid) = key.parse::<Ulid>() {
+                                let s = store.borrow();
+                                if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
+                                    n.identifier.node_name()
+                                        .is_some_and(|name| name.contains(&ulid.to_string()))
+                                }) {
+                                    peak_store.get_or_insert(ch_pw_id).store(l, r);
+                                }
+                            }
+                        }
                     }
-                    // VU disabled — channel_volumes is volume setting, not peak level.
-                    // Real peaks need peak streams (feedback risk) or pw_filter.
                     update_fn(Box::new(store.borrow().dump_graph()));
                 }
                 ToPipewireMessage::NodeVolume(id, volume) => {
@@ -733,8 +667,9 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Set target.object so WP routes the stream to our channel.
-                    // This avoids tearing links (which pauses the app).
+                    // Remove WP's default links to prevent audio leaking to hardware
+                    master.remove_stale_stream_links(stream_node_id, target_node_id);
+                    // Set target.object so WP re-routes the stream to our channel.
                     let target_name = store.borrow().nodes.get(&target_node_id)
                         .and_then(|n| n.identifier.node_name().map(String::from));
                     if let Some(ref name) = target_name
@@ -746,7 +681,7 @@ pub(super) fn init_mainloop(
                             Some("Spa:String:JSON"), Some(&value),
                         );
                     }
-                    // Also create direct links as fallback
+                    // Create direct links to our channel
                     if let Err(err) = master.create_node_links(stream_node_id, target_node_id) {
                         warn!("[PW] redirect {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
@@ -773,36 +708,47 @@ pub(super) fn init_mainloop(
                         );
                     }
                 }
-                ToPipewireMessage::StartPeakMonitor(node_id) => {
-                    if peak_streams.borrow().contains_key(&node_id) {
-                        return;
-                    }
-                    match super::peak::create_peak_stream(
-                        pw_core.clone(),
-                        node_id,
-                        &peak_store,
-                    ) {
-                        Ok((stream, listener, peak_name)) => {
-                            pending_peak_links.borrow_mut().insert(peak_name, node_id);
-                            peak_streams
-                                .borrow_mut()
-                                .insert(node_id, (stream, listener));
+                ToPipewireMessage::CreateFilter { filter_key, name } => {
+                    let core_ptr = pw_core.as_raw_ptr();
+                    #[allow(unsafe_code)]
+                    let result = unsafe {
+                        super::filter::OsgFilter::new(
+                            core_ptr,
+                            &format!("osg.filter.{filter_key}"),
+                            &name,
+                        )
+                    };
+                    match result {
+                        Ok(osg_filter) => {
+                            filter_store.insert(
+                                filter_key.clone(),
+                                osg_filter.handle().clone(),
+                            );
+                            active_filters.borrow_mut().insert(filter_key.clone(), osg_filter);
+                            debug!("[PW] created inline filter '{filter_key}' ({name})");
                         }
-                        Err(e) => warn!("[PW] peak monitor failed for {node_id}: {e}"),
+                        Err(e) => {
+                            warn!("[PW] failed to create filter '{filter_key}': {e}");
+                        }
                     }
                 }
-                ToPipewireMessage::StopPeakMonitor(node_id) => {
-                    if peak_streams.borrow_mut().remove(&node_id).is_some() {
-                        peak_store.remove(node_id);
-                        debug!("[PW] peak monitor stopped for node {node_id}");
+                ToPipewireMessage::RemoveFilter { filter_key } => {
+                    if active_filters.borrow_mut().remove(&filter_key).is_some() {
+                        filter_store.remove(&filter_key);
+                        debug!("[PW] removed filter '{filter_key}'");
+                    }
+                }
+                ToPipewireMessage::UpdateFilterEq { filter_key, eq } => {
+                    if let Some(handle) = filter_store.get(&filter_key) {
+                        handle.set_eq(&eq);
+                        debug!("[PW] updated EQ on filter '{filter_key}'");
                     }
                 }
                 ToPipewireMessage::Exit => {
                     // Cleanup: destroy all lingering osg nodes
                     let s = store.borrow();
-                    for (&node_id, _) in &s.nodes {
-                        if s.nodes.get(&node_id)
-                            .and_then(|n| n.identifier.node_name())
+                    for (&node_id, node) in &s.nodes {
+                        if node.identifier.node_name()
                             .is_some_and(|n| n.starts_with("osg."))
                         {
                             master.registry.destroy_global(node_id);
@@ -814,9 +760,7 @@ pub(super) fn init_mainloop(
                 }
             }
         });
-
         debug!("PipeWire mainloop initialization done");
-
         mainloop.run();
     });
 

@@ -13,7 +13,9 @@ use tokio::sync::broadcast;
 use tracing::debug;
 
 use crate::graph::ReconcileSettings;
-use crate::pw::{AudioGraph, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore};
+use crate::pw::{
+    AudioGraph, FilterHandleStore, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore,
+};
 use crate::routing::{ReducerHandle, StateMsg, debounced_graph_sender, run_reducer};
 
 /// The public entry point for PipeWire orchestration.
@@ -27,7 +29,8 @@ pub struct OsgCore {
     graph_tx: broadcast::Sender<AudioGraph>,
     reducer: ReducerHandle,
     peak_store: Arc<PeakStore>,
-    pw_sender: Sender<ToPipewireMessage>,
+    filter_store: FilterHandleStore,
+    _pw_sender: Sender<ToPipewireMessage>,
 }
 
 impl OsgCore {
@@ -51,6 +54,7 @@ impl OsgCore {
         let pw_sender_clone = pw_sender.clone();
 
         let peak_store = Arc::new(PeakStore::new());
+        let filter_store = FilterHandleStore::new();
 
         let pw_handle = PipewireHandle::init(
             (pw_sender_clone, pw_receiver),
@@ -65,6 +69,7 @@ impl OsgCore {
                 debounced_send(new_graph);
             },
             peak_store.clone(),
+            filter_store.clone(),
         )?;
 
         debug!("OsgCore initialized, PipeWire connected, reducer started");
@@ -75,7 +80,8 @@ impl OsgCore {
             graph_tx,
             reducer,
             peak_store,
-            pw_sender: pw_sender.clone(),
+            filter_store,
+            _pw_sender: pw_sender.clone(),
         })
     }
 
@@ -105,17 +111,8 @@ impl OsgCore {
         &self.peak_store
     }
 
-    /// Start monitoring peak levels for a PipeWire node.
-    pub fn start_peak_monitor(&self, node_id: u32) {
-        let _ = self
-            .pw_sender
-            .send(ToPipewireMessage::StartPeakMonitor(node_id));
-    }
-
-    /// Stop monitoring peak levels for a PipeWire node.
-    pub fn stop_peak_monitor(&self, node_id: u32) {
-        let _ = self
-            .pw_sender
-            .send(ToPipewireMessage::StopPeakMonitor(node_id));
+    /// Get the shared filter handle store for EQ control and peak reading.
+    pub fn filter_store(&self) -> &FilterHandleStore {
+        &self.filter_store
     }
 }

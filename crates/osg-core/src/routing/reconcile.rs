@@ -13,9 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, EqConfig,
-    Link, LinkState, MixerSession, PersistentNodeId, ReconcileSettings, VolumeLockMuteState,
-    average_volumes, volumes_mixed,
+    ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession, ReconcileSettings,
+    VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -64,10 +63,7 @@ impl MixerSession {
         messages.extend(self.diff_links(graph, &endpoint_nodes));
         messages
     }
-
-    // -----------------------------------------------------------------------
     // diff_nodes — resolve every endpoint to PipeWire nodes
-    // -----------------------------------------------------------------------
 
     /// Try to resolve each endpoint to one or more PipeWire nodes.
     /// Unresolvable endpoints are marked as placeholders. Leftover PW nodes
@@ -120,7 +116,6 @@ impl MixerSession {
                 ep.is_placeholder = true;
             }
         }
-
         // Leftover PW nodes become candidates for the UI to offer.
         self.candidates = remaining_nodes
             .into_iter()
@@ -135,10 +130,7 @@ impl MixerSession {
 
         endpoint_nodes
     }
-
-    // -----------------------------------------------------------------------
     // diff_channels — ensure virtual channels exist in PipeWire
-    // -----------------------------------------------------------------------
 
     #[allow(clippy::expect_used)] // channel keys come from self.channels iteration
     fn diff_channels(
@@ -158,7 +150,15 @@ impl MixerSession {
                 }
                 if channel.pipewire_id != Some(node.id) {
                     channel.pipewire_id = Some(node.id);
-                    // Peak streams disabled — they cause WP feedback loops
+                    // Create inline pw_filter for EQ + VU metering
+                    let ep = self
+                        .endpoints
+                        .get(&endpoint_desc)
+                        .expect("endpoint must exist");
+                    messages.push(ToPipewireMessage::CreateFilter {
+                        filter_key: id.inner().to_string(),
+                        name: format!("EQ: {}", ep.display_name),
+                    });
                 }
             } else {
                 let channel = self.channels.get_mut(&id).expect("channel must exist");
@@ -178,10 +178,7 @@ impl MixerSession {
         }
         messages
     }
-
-    // -----------------------------------------------------------------------
     // diff_cells — ensure every row×mix pair has a cell node
-    // -----------------------------------------------------------------------
 
     /// For every (source channel × sink mix) pair, ensure a cell node exists.
     fn diff_cells(&mut self, _graph: &AudioGraph) -> Vec<ToPipewireMessage> {
@@ -228,10 +225,7 @@ impl MixerSession {
         }
         messages
     }
-
-    // -----------------------------------------------------------------------
     // diff_app_routing — redirect assigned app streams via target.object
-    // -----------------------------------------------------------------------
 
     /// For each channel with assigned apps, find matching PW stream nodes
     /// and create direct links if not already routed to the channel.
@@ -253,12 +247,11 @@ impl MixerSession {
                         && node.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
                         && node.has_port_kind(PortKind::Source)
                     {
-                        // Check if already linked to our channel — skip if so
-                        let already_routed = graph
+                        let linked_to_us = graph
                             .links
                             .values()
                             .any(|link| link.start_node == node.id && link.end_node == target_id);
-                        if !already_routed {
+                        if !linked_to_us {
                             messages.push(ToPipewireMessage::RedirectStream {
                                 stream_node_id: node.id,
                                 target_node_id: target_id,
@@ -270,22 +263,27 @@ impl MixerSession {
         }
         messages
     }
-
-    // -----------------------------------------------------------------------
     // diff_cell_links — ensure channel → cell → mix links exist
-    // -----------------------------------------------------------------------
 
-    /// For each cell node (detected by `osg.cell.{channel_id}.{mix_id}` naming),
-    /// ensure PW links exist: channel → cell → mix.
+    /// For each cell node, ensure PW links exist:
+    /// `channel → [filter →] cell → mix` (filter inserted when present).
     fn diff_cell_links(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
-        // Build ULID → PW ID map from channels
         let ulid_to_pw: HashMap<String, u32> = self
             .channels
             .iter()
             .filter_map(|(id, ch)| ch.pipewire_id.map(|pw| (id.inner().to_string(), pw)))
             .collect();
-
+        // Build filter lookup: channel ULID → filter PW node ID
+        let filter_pw: HashMap<&str, u32> = graph
+            .nodes
+            .iter()
+            .filter_map(|(&id, n)| {
+                let name = n.identifier.node_name()?;
+                let ulid = name.strip_prefix("osg.filter.")?;
+                Some((ulid, id))
+            })
+            .collect();
         for (&cell_pw_id, cell_node) in &graph.nodes {
             let Some(name) = cell_node.identifier.node_name() else {
                 continue;
@@ -293,77 +291,63 @@ impl MixerSession {
             let Some(rest) = name.strip_prefix("osg.cell.") else {
                 continue;
             };
-            let Some((ch_ulid, mix_ulid)) = rest.split_once("-to-") else {
-                // Legacy format: osg.cell.{pw_id}.{pw_id}
-                if let Some((a, b)) = rest.split_once('.') {
-                    if let (Ok(ch), Ok(mx)) = (a.parse::<u32>(), b.parse::<u32>()) {
-                        if cell_node.ports.is_empty() {
-                            continue;
-                        }
-                        if !graph
-                            .links
-                            .values()
-                            .any(|l| l.start_node == ch && l.end_node == cell_pw_id)
-                            && graph.nodes.contains_key(&ch)
-                        {
-                            messages.push(ToPipewireMessage::CreateNodeLinks {
-                                start_id: ch,
-                                end_id: cell_pw_id,
-                            });
-                        }
-                        if !graph
-                            .links
-                            .values()
-                            .any(|l| l.start_node == cell_pw_id && l.end_node == mx)
-                            && graph.nodes.contains_key(&mx)
-                        {
-                            messages.push(ToPipewireMessage::CreateNodeLinks {
-                                start_id: cell_pw_id,
-                                end_id: mx,
-                            });
-                        }
-                    }
-                }
-                continue;
-            };
             if cell_node.ports.is_empty() {
                 continue;
             }
-            let Some(&channel_pw) = ulid_to_pw.get(ch_ulid) else {
-                continue;
+            let (source_pw, sink_pw, ch_ulid) = match rest.split_once("-to-") {
+                Some((ch_ulid, mix_ulid)) => {
+                    let Some(&ch) = ulid_to_pw.get(ch_ulid) else {
+                        continue;
+                    };
+                    let Some(&mx) = ulid_to_pw.get(mix_ulid) else {
+                        continue;
+                    };
+                    (ch, mx, ch_ulid)
+                }
+                None => match Self::parse_legacy_cell_ids(rest) {
+                    Some((ch, mx)) => (ch, mx, ""),
+                    None => continue,
+                },
             };
-            let Some(&mix_pw) = ulid_to_pw.get(mix_ulid) else {
-                continue;
-            };
-            if !graph
-                .links
-                .values()
-                .any(|l| l.start_node == channel_pw && l.end_node == cell_pw_id)
-                && graph.nodes.contains_key(&channel_pw)
-            {
-                messages.push(ToPipewireMessage::CreateNodeLinks {
-                    start_id: channel_pw,
-                    end_id: cell_pw_id,
-                });
+            // Insert filter between channel and cell if it exists
+            if let Some(&filter_id) = filter_pw.get(ch_ulid) {
+                // channel → filter
+                messages.extend(Self::ensure_link(graph, source_pw, filter_id));
+                // filter → cell
+                messages.extend(Self::ensure_link(graph, filter_id, cell_pw_id));
+            } else {
+                // No filter: channel → cell directly
+                messages.extend(Self::ensure_link(graph, source_pw, cell_pw_id));
             }
-            if !graph
-                .links
-                .values()
-                .any(|l| l.start_node == cell_pw_id && l.end_node == mix_pw)
-                && graph.nodes.contains_key(&mix_pw)
-            {
-                messages.push(ToPipewireMessage::CreateNodeLinks {
-                    start_id: cell_pw_id,
-                    end_id: mix_pw,
-                });
-            }
+            // cell → mix
+            messages.extend(Self::ensure_link(graph, cell_pw_id, sink_pw));
         }
         messages
     }
 
-    // -----------------------------------------------------------------------
+    /// Parse legacy `{pw_id}.{pw_id}` cell name format.
+    fn parse_legacy_cell_ids(rest: &str) -> Option<(u32, u32)> {
+        let (a, b) = rest.split_once('.')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    }
+
+    /// Emit a `CreateNodeLinks` if `from → to` link is missing.
+    fn ensure_link(graph: &AudioGraph, from: u32, to: u32) -> Option<ToPipewireMessage> {
+        let exists = graph
+            .links
+            .values()
+            .any(|l| l.start_node == from && l.end_node == to);
+        if !exists && graph.nodes.contains_key(&from) && graph.nodes.contains_key(&to) {
+            Some(ToPipewireMessage::CreateNodeLinks {
+                start_id: from,
+                end_id: to,
+            })
+        } else {
+            None
+        }
+    }
+
     // diff_properties — volume / mute reconciliation
-    // -----------------------------------------------------------------------
 
     /// Compare backend node properties against desired endpoints.
     /// Locked endpoints push their values to PW; unlocked endpoints pull from PW.
@@ -422,8 +406,10 @@ impl MixerSession {
                         .filter(|n| n.mute != endpoint_muted)
                         .map(|n| ToPipewireMessage::NodeMute(n.id, endpoint_muted)),
                 );
-            } else {
-                // Unlocked: pull volume/mute from PW nodes into desired state.
+            } else if endpoint.volume_locked_muted.is_muted() != Some(true) {
+                // Unlocked + unmuted: pull volume/mute from PW nodes into desired state.
+                // Skip pull when muted — we implement mute as volume=0 on null-audio-sinks
+                // and don't want the reconciler to overwrite pre_mute_volume.
                 endpoint.volume_locked_muted =
                     VolumeLockMuteState::from_bools_unlocked(nodes.iter().map(|n| &n.mute));
                 endpoint.volume = average_volumes(nodes.iter().flat_map(|n| &n.channel_volumes));
@@ -440,9 +426,7 @@ impl MixerSession {
         messages
     }
 
-    // -----------------------------------------------------------------------
     // diff_links — connection reconciliation
-    // -----------------------------------------------------------------------
 
     /// Reconcile the link state between desired and actual PipeWire graphs.
     #[allow(clippy::too_many_lines)] // Single match-driven reconciliation loop
@@ -569,9 +553,7 @@ impl MixerSession {
         messages
     }
 
-    // -----------------------------------------------------------------------
     // Endpoint resolution
-    // -----------------------------------------------------------------------
 
     /// Resolve an endpoint descriptor to actual PipeWire nodes.
     pub fn resolve_endpoint<'g>(
@@ -637,9 +619,7 @@ impl MixerSession {
         }
     }
 
-    // -----------------------------------------------------------------------
     // Internal helpers
-    // -----------------------------------------------------------------------
 
     /// Find all PipeWire links between any two active endpoints.
     #[allow(clippy::type_complexity, clippy::unused_self)]
@@ -754,148 +734,6 @@ impl MixerSession {
                     });
                 }
             }
-        }
-    }
-
-    /// Auto-activate discovered apps so they appear in the mixer grid.
-    /// Auto-create a real null-audio-sink channel for each discovered app.
-    /// The app's audio gets redirected to the channel via target.object.
-    /// When the user assigns the app to a different channel, this one hides.
-    fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
-        let mut messages = Vec::new();
-        let output_apps: Vec<_> = self
-            .apps
-            .values()
-            .filter(|app| app.kind == PortKind::Source)
-            .map(|app| (app.name.clone(), app.binary.clone(), app.icon_name.clone()))
-            .collect();
-        for (app_name, binary, icon) in output_apps {
-            let assigned = self.channels.values().any(|ch| {
-                !ch.auto_app
-                    && ch
-                        .assigned_apps
-                        .iter()
-                        .any(|a| a.application_name == app_name && a.binary_name == binary)
-            });
-            if assigned {
-                continue;
-            }
-            let has_auto = self.channels.values().any(|ch| {
-                ch.auto_app
-                    && ch
-                        .assigned_apps
-                        .iter()
-                        .any(|a| a.application_name == app_name && a.binary_name == binary)
-            });
-            if has_auto {
-                continue;
-            }
-            if app_name.is_empty()
-                || binary.is_empty()
-                || app_name == "open-sound-grid"
-                || app_name.starts_with("osg")
-                || binary.contains("easyeffects")
-                || binary.contains("kwin")
-                || binary.contains("pipewire")
-                || binary.contains("wireplumber")
-                || binary.contains("xdg-desktop-portal")
-                || binary.contains("gnome-shell")
-                || binary.contains("pulseaudio")
-                || binary.contains("speech-dispatcher")
-                || app_name == "kwin_wayland"
-                || app_name == "GNOME Shell"
-            {
-                continue;
-            }
-            let id = ChannelId::new();
-            let kind = ChannelKind::Duplex;
-            let descriptor = EndpointDescriptor::Channel(id);
-            self.channels.insert(
-                id,
-                Channel {
-                    id,
-                    kind,
-                    output_node_id: None,
-                    assigned_apps: vec![AppAssignment {
-                        application_name: app_name.clone(),
-                        binary_name: binary.clone(),
-                    }],
-                    auto_app: true,
-                    allow_app_assignment: false,
-                    pipewire_id: None,
-                    pending: true,
-                },
-            );
-            self.endpoints.insert(
-                descriptor,
-                Endpoint::new(descriptor)
-                    .with_display_name(app_name.clone())
-                    .with_icon_name(icon),
-            );
-            messages.push(ToPipewireMessage::CreateGroupNode(
-                app_name.clone(),
-                id.inner(),
-                kind,
-            ));
-            tracing::debug!("[State] auto-created channel for app '{app_name}'");
-        }
-        messages
-    }
-
-    fn discover_apps(&mut self, graph: &AudioGraph) {
-        let mut discovered = HashMap::<(String, String, PortKind), String>::new();
-        for node in graph.nodes.values() {
-            if let (Some(app_name), Some(binary)) = (
-                node.identifier
-                    .application_name
-                    .as_ref()
-                    .filter(|n| !n.is_empty()),
-                node.identifier
-                    .binary_name
-                    .as_ref()
-                    .filter(|n| !n.is_empty()),
-            ) {
-                if node.has_port_kind(PortKind::Source) {
-                    discovered.insert(
-                        (app_name.clone(), binary.clone(), PortKind::Source),
-                        node.identifier.icon_name().to_owned(),
-                    );
-                }
-                if node.has_port_kind(PortKind::Sink) {
-                    discovered.insert(
-                        (app_name.clone(), binary.clone(), PortKind::Sink),
-                        node.identifier.icon_name().to_owned(),
-                    );
-                }
-            }
-        }
-        // Remove existing combinations.
-        for app in self.apps.values() {
-            discovered.remove(&(app.name.clone(), app.binary.clone(), app.kind));
-        }
-        // Add new inactive apps.
-        for ((name, binary, kind), icon) in discovered {
-            tracing::debug!("[State] discovered app '{name}' ({binary}, {kind:?})");
-            let app = App::new_inactive(name, binary, icon, kind);
-            self.apps.insert(app.id, app);
-        }
-    }
-
-    /// Get or create a persistent node for the given PW node.
-    pub fn get_persistent_node(&mut self, node: &PwNode, kind: PortKind) -> EndpointDescriptor {
-        let id = self
-            .persistent_nodes
-            .iter()
-            .find(|(_, (identifier, nk))| *nk == kind && identifier.matches(&node.identifier))
-            .map(|(id, _)| *id);
-
-        if let Some(id) = id {
-            EndpointDescriptor::PersistentNode(id, kind)
-        } else {
-            let id = PersistentNodeId::new();
-            self.persistent_nodes
-                .insert(id, (node.identifier.clone(), kind));
-            EndpointDescriptor::PersistentNode(id, kind)
         }
     }
 }
