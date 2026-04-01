@@ -27,6 +27,15 @@ pub struct NodeIdentifier {
     media_title: Option<String>,
     #[serde(skip)]
     device_id: Option<u32>,
+    /// `device.api` — "alsa" for hardware, absent for virtual/app.
+    #[serde(skip)]
+    pub device_api: Option<String>,
+    /// `device.form-factor` — "microphone", "headset", "webcam", "internal", etc.
+    #[serde(skip)]
+    pub device_form_factor: Option<String>,
+    /// `media.class` — "Audio/Source", "Stream/Output/Audio", etc.
+    #[serde(skip)]
+    pub media_class: Option<String>,
     #[serde(skip)]
     route_name: Option<String>,
     #[serde(skip)]
@@ -56,6 +65,9 @@ impl NodeIdentifier {
             media_name: props.get(*OBJECT_PATH).map(ToOwned::to_owned),
             media_title: props.get(*MEDIA_TITLE).map(ToOwned::to_owned),
             device_id: props.get(*DEVICE_ID).and_then(|id| id.parse().ok()),
+            device_api: props.get("device.api").map(ToOwned::to_owned),
+            device_form_factor: props.get("device.form-factor").map(ToOwned::to_owned),
+            media_class: props.get(*MEDIA_CLASS).map(ToOwned::to_owned),
             route_name: None,
             app_icon_name: props.get(*APP_ICON_NAME).map(ToOwned::to_owned),
             icon_name_: OnceLock::new(),
@@ -78,6 +90,9 @@ impl NodeIdentifier {
             media_name: None,
             media_title: None,
             device_id: None,
+            device_api: None,
+            device_form_factor: None,
+            media_class: None,
             route_name: None,
             app_icon_name: None,
             icon_name_: OnceLock::new(),

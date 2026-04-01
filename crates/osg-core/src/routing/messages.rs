@@ -2,7 +2,9 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{AppAssignment, AppId, ChannelId, ChannelKind, EndpointDescriptor, EqConfig};
+use crate::graph::{
+    AppAssignment, AppId, ChannelId, ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig,
+};
 use crate::pw::PortKind;
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,10 @@ pub enum StateMsg {
     SetEq(EndpointDescriptor, EqConfig),
     /// Set parametric EQ configuration for a per-route cell.
     SetCellEq(EndpointDescriptor, EndpointDescriptor, EqConfig),
+    /// Set effects chain configuration for an endpoint (channel or mix).
+    SetEffects(EndpointDescriptor, EffectsConfig),
+    /// Set effects chain configuration for a per-route cell.
+    SetCellEffects(EndpointDescriptor, EndpointDescriptor, EffectsConfig),
 }
 
 // ---------------------------------------------------------------------------

@@ -759,6 +759,42 @@ pub(super) fn init_mainloop(
                         debug!("[PW] updated EQ on filter '{filter_key}'");
                     }
                 }
+                ToPipewireMessage::UpdateFilterEffects { filter_key, effects } => {
+                    if let Some(handle) = filter_store.get(&filter_key) {
+                        // Convert ms → seconds for all time constants
+                        let ms_to_s = |ms: f32| ms / 1000.0;
+                        let params = super::filter::EffectsParams {
+                            compressor: super::filter::CompressorParams {
+                                enabled: effects.compressor.enabled,
+                                threshold: effects.compressor.threshold,
+                                ratio: effects.compressor.ratio,
+                                attack: ms_to_s(effects.compressor.attack),
+                                release: ms_to_s(effects.compressor.release),
+                                makeup: effects.compressor.makeup,
+                            },
+                            gate: super::filter::GateParams {
+                                enabled: effects.gate.enabled,
+                                threshold: effects.gate.threshold,
+                                hold: ms_to_s(effects.gate.hold),
+                                attack: ms_to_s(effects.gate.attack),
+                                release: ms_to_s(effects.gate.release),
+                            },
+                            de_esser: super::filter::DeEsserParams {
+                                enabled: effects.de_esser.enabled,
+                                frequency: effects.de_esser.frequency,
+                                threshold: effects.de_esser.threshold,
+                                reduction: effects.de_esser.reduction,
+                            },
+                            limiter: super::filter::LimiterParams {
+                                enabled: effects.limiter.enabled,
+                                ceiling: effects.limiter.ceiling,
+                                release: ms_to_s(effects.limiter.release),
+                            },
+                        };
+                        handle.set_effects(params);
+                        debug!("[PW] updated effects on filter '{filter_key}'");
+                    }
+                }
                 ToPipewireMessage::Exit => {
                     // Cleanup: destroy all lingering osg nodes
                     let s = store.borrow();

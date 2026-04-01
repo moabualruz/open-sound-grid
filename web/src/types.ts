@@ -112,6 +112,7 @@ export interface Endpoint {
   volumeLockedMuted: VolumeLockMuteState;
   visible: boolean;
   eq?: EqConfig;
+  effects?: EffectsConfig;
 }
 
 export interface MixerLink {
@@ -122,6 +123,7 @@ export interface MixerLink {
   cellVolumeLeft: number;
   cellVolumeRight: number;
   cellEq?: EqConfig;
+  cellEffects?: EffectsConfig;
 }
 
 export interface AppAssignment {
@@ -206,7 +208,55 @@ export type Command =
       source: EndpointDescriptor;
       target: EndpointDescriptor;
       eq: EqConfig;
+    }
+  | { type: "setEffects"; endpoint: EndpointDescriptor; effects: EffectsConfig }
+  | {
+      type: "setCellEffects";
+      source: EndpointDescriptor;
+      target: EndpointDescriptor;
+      effects: EffectsConfig;
     };
+
+// ---------------------------------------------------------------------------
+// Effects types (matching osg-core graph::types)
+// ---------------------------------------------------------------------------
+
+export interface CompressorConfig {
+  enabled: boolean;
+  threshold: number;
+  ratio: number;
+  attack: number; // ms
+  release: number; // ms
+  makeup: number; // dB
+}
+
+export interface GateConfig {
+  enabled: boolean;
+  threshold: number;
+  hold: number; // ms
+  attack: number; // ms
+  release: number; // ms
+}
+
+export interface DeEsserConfig {
+  enabled: boolean;
+  frequency: number;
+  threshold: number;
+  reduction: number;
+}
+
+export interface LimiterConfig {
+  enabled: boolean;
+  ceiling: number;
+  release: number; // ms
+}
+
+export interface EffectsConfig {
+  compressor: CompressorConfig;
+  gate: GateConfig;
+  deEsser: DeEsserConfig;
+  limiter: LimiterConfig;
+}
 
 // ---------------------------------------------------------------------------
 // EQ types (matching osg-core graph::types)

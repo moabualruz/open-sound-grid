@@ -75,6 +75,118 @@ impl Default for EqConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Effects — compressor / gate / de-esser / limiter configuration
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompressorConfig {
+    pub enabled: bool,
+    /// Threshold in dBFS (e.g., -18.0).
+    pub threshold: f32,
+    /// Compression ratio (e.g., 3.0 for 3:1).
+    pub ratio: f32,
+    /// Attack time in milliseconds (converted to seconds for DSP).
+    pub attack: f32,
+    /// Release time in milliseconds.
+    pub release: f32,
+    /// Make-up gain in dB.
+    pub makeup: f32,
+}
+
+impl Default for CompressorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: -18.0,
+            ratio: 3.0,
+            attack: 8.0,
+            release: 150.0,
+            makeup: 4.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateConfig {
+    pub enabled: bool,
+    /// Threshold in dBFS (e.g., -45.0).
+    pub threshold: f32,
+    /// Hold time in milliseconds.
+    pub hold: f32,
+    /// Attack time in milliseconds.
+    pub attack: f32,
+    /// Release time in milliseconds.
+    pub release: f32,
+}
+
+impl Default for GateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: -45.0,
+            hold: 150.0,
+            attack: 1.0,
+            release: 50.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeEsserConfig {
+    pub enabled: bool,
+    /// Center frequency in Hz (5000–8000).
+    pub frequency: f32,
+    /// Sidechain threshold in dBFS.
+    pub threshold: f32,
+    /// Maximum gain reduction in dB (positive, e.g., 6.0).
+    pub reduction: f32,
+}
+
+impl Default for DeEsserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frequency: 6000.0,
+            threshold: -20.0,
+            reduction: 6.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiterConfig {
+    pub enabled: bool,
+    /// Output ceiling in dBFS (e.g., -1.0).
+    pub ceiling: f32,
+    /// Release time in milliseconds.
+    pub release: f32,
+}
+
+impl Default for LimiterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ceiling: -1.0,
+            release: 50.0,
+        }
+    }
+}
+
+/// Full effects chain configuration for a filter node.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EffectsConfig {
+    pub compressor: CompressorConfig,
+    pub gate: GateConfig,
+    pub de_esser: DeEsserConfig,
+    pub limiter: LimiterConfig,
+}
+
+// ---------------------------------------------------------------------------
 // Identifiers
 // ---------------------------------------------------------------------------
 
@@ -213,6 +325,9 @@ pub struct Endpoint {
     /// Parametric EQ configuration for this endpoint.
     #[serde(default)]
     pub eq: EqConfig,
+    /// Effects chain configuration for this endpoint.
+    #[serde(default)]
+    pub effects: EffectsConfig,
     /// Transient flag: a volume/mute command is in-flight to PipeWire.
     #[serde(skip)]
     pub volume_pending: bool,
@@ -242,6 +357,7 @@ impl Endpoint {
             volume_locked_muted: VolumeLockMuteState::UnmutedUnlocked,
             visible: true,
             eq: EqConfig::default(),
+            effects: EffectsConfig::default(),
             volume_pending: false,
             pre_mute_volume: None,
         }
@@ -318,6 +434,9 @@ pub struct Link {
     /// Per-route parametric EQ configuration.
     #[serde(default)]
     pub cell_eq: EqConfig,
+    /// Per-route effects chain configuration.
+    #[serde(default)]
+    pub cell_effects: EffectsConfig,
     /// PipeWire node ID of the cell's volume-control node (null-audio-sink).
     /// Each cell gets its own PW node so volume can be controlled per-route.
     /// Route: channel → cell_node (volume here) → mix
@@ -447,6 +566,25 @@ pub struct AppAssignment {
 }
 
 // ---------------------------------------------------------------------------
+// Source type — detected from PipeWire node properties
+// ---------------------------------------------------------------------------
+
+/// Classifies the audio source type for contextual EQ/effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceType {
+    /// Real ALSA microphone (device.api=alsa, form-factor=microphone/headset/webcam).
+    HardwareMic,
+    /// ALSA line-in (not a microphone).
+    HardwareLineIn,
+    /// Virtual source (EasyEffects, loopback).
+    VirtualSource,
+    /// Application playback stream (browser, game, music).
+    #[default]
+    AppStream,
+}
+
+// ---------------------------------------------------------------------------
 // Channel — user-created virtual audio bus
 // ---------------------------------------------------------------------------
 
@@ -456,6 +594,9 @@ pub struct AppAssignment {
 pub struct Channel {
     pub id: ChannelId,
     pub kind: ChannelKind,
+    /// Detected source type — determines which EQ presets and effects are shown.
+    #[serde(default)]
+    pub source_type: SourceType,
     /// For sink channels (mixes): the assigned output device node ID.
     pub output_node_id: Option<u32>,
     /// Apps assigned to this channel. Their PW streams are redirected here.

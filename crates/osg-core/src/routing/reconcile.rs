@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    ChannelKind, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession, ReconcileSettings,
-    VolumeLockMuteState, average_volumes, volumes_mixed,
+    ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
+    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -51,7 +51,7 @@ impl MixerSession {
         settings: &ReconcileSettings,
     ) -> Vec<ToPipewireMessage> {
         let endpoint_nodes = self.diff_nodes(graph, settings);
-        let mut messages = self.auto_create_app_channels();
+        let mut messages = self.auto_create_app_channels(graph);
         self.ensure_default_links();
         messages.extend(self.diff_channels(&endpoint_nodes, graph));
         messages.extend(self.diff_cells(graph));
@@ -574,6 +574,7 @@ impl MixerSession {
                     cell_node_id: None,
                     pending: false,
                     cell_eq: EqConfig::default(),
+                    cell_effects: EffectsConfig::default(),
                 }),
                 None => self.links.push(Link {
                     start: source_desc,
@@ -585,6 +586,7 @@ impl MixerSession {
                     cell_node_id: None,
                     pending: false,
                     cell_eq: EqConfig::default(),
+                    cell_effects: EffectsConfig::default(),
                 }),
                 Some(false) => {}
             }
@@ -775,6 +777,7 @@ impl MixerSession {
                         cell_volume_left: 1.0,
                         cell_volume_right: 1.0,
                         cell_eq: EqConfig::default(),
+                        cell_effects: EffectsConfig::default(),
                         cell_node_id: None,
                         pending: false,
                     });

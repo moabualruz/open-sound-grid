@@ -2,8 +2,8 @@ use itertools::Itertools;
 use tracing::{debug, warn};
 
 use crate::graph::{
-    Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, EqConfig, Link, LinkState,
-    MixerSession, ReconcileSettings, average_volumes,
+    Channel, ChannelId, ChannelKind, EffectsConfig, Endpoint, EndpointDescriptor, EqConfig, Link,
+    LinkState, MixerSession, ReconcileSettings, average_volumes,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::{StateMsg, StateOutputMsg};
@@ -66,6 +66,7 @@ impl MixerSession {
                         Channel {
                             id,
                             kind,
+                            source_type: crate::graph::SourceType::default(),
                             output_node_id: None,
                             assigned_apps: Vec::new(),
                             pipewire_id: None,
@@ -108,6 +109,7 @@ impl MixerSession {
                                 cell_volume_left: 1.0,
                                 cell_volume_right: 1.0,
                                 cell_eq: EqConfig::default(),
+                                cell_effects: EffectsConfig::default(),
                                 cell_node_id: None,
                                 pending: true,
                             });
@@ -129,6 +131,7 @@ impl MixerSession {
                                 cell_volume_left: 1.0,
                                 cell_volume_right: 1.0,
                                 cell_eq: EqConfig::default(),
+                                cell_effects: EffectsConfig::default(),
                                 cell_node_id: None,
                                 pending: true,
                             });
@@ -511,6 +514,7 @@ impl MixerSession {
                             cell_node_id: None,
                             pending: !msgs.is_empty(),
                             cell_eq: EqConfig::default(),
+                            cell_effects: EffectsConfig::default(),
                         });
                     }
 
@@ -590,6 +594,7 @@ impl MixerSession {
                                 cell_node_id: None,
                                 pending: false,
                                 cell_eq: EqConfig::default(),
+                                cell_effects: EffectsConfig::default(),
                             });
                         }
                         (_, true) => {}
@@ -925,6 +930,46 @@ impl MixerSession {
                     };
                     if !filter_key.is_empty() {
                         pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
+                    }
+                    None
+                }
+                StateMsg::SetEffects(ep_desc, effects) => {
+                    if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
+                        ep.effects = effects.clone();
+                    }
+                    // Dispatch effects to PW filter if one exists for this endpoint
+                    let filter_key = match ep_desc {
+                        EndpointDescriptor::Channel(id) => id.inner().to_string(),
+                        _ => String::new(),
+                    };
+                    if !filter_key.is_empty() {
+                        pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
+                            filter_key,
+                            effects,
+                        });
+                    }
+                    None
+                }
+                StateMsg::SetCellEffects(source, sink, effects) => {
+                    if let Some(l) = self
+                        .links
+                        .iter_mut()
+                        .find(|l| l.start == source && l.end == sink)
+                    {
+                        l.cell_effects = effects.clone();
+                    }
+                    // Dispatch effects to cell's PW filter
+                    let filter_key = match (&source, &sink) {
+                        (EndpointDescriptor::Channel(ch), EndpointDescriptor::Channel(mx)) => {
+                            format!("{}-to-{}", ch.inner(), mx.inner())
+                        }
+                        _ => String::new(),
+                    };
+                    if !filter_key.is_empty() {
+                        pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
+                            filter_key,
+                            effects,
+                        });
                     }
                     None
                 }

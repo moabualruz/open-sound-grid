@@ -3,15 +3,18 @@
  * Same 10-band EQ, macros, and presets everywhere.
  * No position-based feature branching.
  */
-import { createSignal, createEffect, Show } from "solid-js";
+import { createSignal, createEffect, Show, For, createMemo } from "solid-js";
 import type { EqBand } from "./math";
 import { createDefaultBands, createDefaultBand } from "./math";
 import type { EqConfig } from "../types";
+import type { PresetDef } from "./presets";
+import { getPresetsForCategory, DEFAULT_FAVORITES, BUILT_IN_PRESETS } from "./presets";
 import EqGraph from "./EqGraph";
 import EqBandPopup from "./EqBandPopup";
 import EqMacroSliders from "./EqMacroSliders";
 
 const MAX_BANDS = 10;
+const FAVORITES_STORAGE_KEY = "osg-favorite-presets";
 
 interface EqPanelProps {
   label: string;
@@ -21,6 +24,8 @@ interface EqPanelProps {
   initialEq?: EqConfig;
   /** Called whenever EQ config changes (bands, enabled). Debounced by the caller. */
   onEqChange?: (eq: EqConfig) => void;
+  /** Category determines which presets appear in the dropdown. */
+  category?: "app" | "mic" | "mix" | "cell";
 }
 
 /** Convert internal EqBand (with id/color) to serialized EqBand. */
@@ -51,6 +56,29 @@ function fromSerializedBands(bands: EqConfig["bands"]): EqBand[] {
   }));
 }
 
+/** Build macro bands from slider values. These are additional biquad bands. */
+function buildMacroBands(bass: number, voice: number, treble: number): EqConfig["bands"] {
+  const macroBands: EqConfig["bands"] = [];
+  if (bass !== 0) {
+    macroBands.push({ enabled: true, filterType: "lowShelf", frequency: 200, gain: bass, q: 0.7 });
+  }
+  if (voice !== 0) {
+    macroBands.push({ enabled: true, filterType: "peaking", frequency: 2500, gain: voice, q: 0.8 });
+  }
+  if (treble !== 0) {
+    macroBands.push({ enabled: true, filterType: "highShelf", frequency: 6000, gain: treble, q: 0.7 });
+  }
+  return macroBands;
+}
+
+function loadFavoriteIds(): string[] {
+  try {
+    const stored = localStorage.getItem(FAVORITES_STORAGE_KEY);
+    if (stored) return JSON.parse(stored) as string[];
+  } catch { /* ignore parse errors */ }
+  return DEFAULT_FAVORITES;
+}
+
 export default function EqPanel(props: EqPanelProps) {
   const initBands = props.initialEq?.bands?.length
     ? fromSerializedBands(props.initialEq.bands)
@@ -61,13 +89,36 @@ export default function EqPanel(props: EqPanelProps) {
   const [bass, setBass] = createSignal(0);
   const [voice, setVoice] = createSignal(0);
   const [treble, setTreble] = createSignal(0);
+  const [lastPresetId, setLastPresetId] = createSignal<string | null>(null);
+  const [showGallery, setShowGallery] = createSignal(false);
 
   const selectedBand = () => bands().find((b) => b.id === selectedBandId());
   const canAddBand = () => bands().length < MAX_BANDS;
 
-  // Notify parent whenever EQ config changes
+  // Presets for this category — top 5 + favorites
+  const availablePresets = createMemo(() => {
+    const category = props.category ?? "app";
+    const categoryPresets = getPresetsForCategory(category);
+    const favoriteIds = loadFavoriteIds();
+
+    // Favorites that belong to this category
+    const favoritesInCategory = categoryPresets.filter((p) => favoriteIds.includes(p.id));
+    // Non-favorite category presets
+    const others = categoryPresets.filter((p) => !favoriteIds.includes(p.id));
+    // Combine: favorites first, then fill to 5 from others
+    const combined = [...favoritesInCategory];
+    for (const p of others) {
+      if (combined.length >= 5) break;
+      combined.push(p);
+    }
+    return combined;
+  });
+
+  // Notify parent whenever EQ config changes (includes macro bands)
   createEffect(() => {
-    const eq: EqConfig = { enabled: enabled(), bands: toSerializedBands(bands()) };
+    const userBands = toSerializedBands(bands());
+    const macroBands = buildMacroBands(bass(), voice(), treble());
+    const eq: EqConfig = { enabled: enabled(), bands: [...userBands, ...macroBands] };
     props.onEqChange?.(eq);
   });
 
@@ -85,6 +136,39 @@ export default function EqPanel(props: EqPanelProps) {
   const removeBand = (id: number) => {
     setBands((prev) => prev.filter((b) => b.id !== id));
     if (selectedBandId() === id) setSelectedBandId(null);
+  };
+
+  const applyPreset = (preset: PresetDef) => {
+    if (preset.eq.bands.length > 0) {
+      setBands(fromSerializedBands(preset.eq.bands));
+    } else {
+      setBands(createDefaultBands());
+    }
+    setEnabled(preset.eq.enabled);
+    setLastPresetId(preset.id);
+    setBass(0);
+    setVoice(0);
+    setTreble(0);
+  };
+
+  const resetToLastPreset = () => {
+    const presetId = lastPresetId();
+    if (!presetId) return;
+    const preset = BUILT_IN_PRESETS.find((p) => p.id === presetId);
+    if (preset) applyPreset(preset);
+  };
+
+  const handlePresetSelect = (e: Event) => {
+    const value = (e.target as HTMLSelectElement).value;
+    if (value === "__more__") {
+      setShowGallery(true);
+      // Reset select to current value
+      (e.target as HTMLSelectElement).value = lastPresetId() ?? "";
+      return;
+    }
+    if (!value) return;
+    const preset = BUILT_IN_PRESETS.find((p) => p.id === value);
+    if (preset) applyPreset(preset);
   };
 
   return (
@@ -140,6 +224,8 @@ export default function EqPanel(props: EqPanelProps) {
           <span class="text-[10px] font-mono" style={{ color: "var(--color-text-muted)" }}>
             {bands().length}/{MAX_BANDS}
           </span>
+
+          {/* Preset dropdown */}
           <select
             class="rounded px-1.5 py-0.5 text-[10px]"
             style={{
@@ -147,13 +233,32 @@ export default function EqPanel(props: EqPanelProps) {
               color: "var(--color-text-secondary)",
               border: "1px solid var(--color-border)",
             }}
+            value={lastPresetId() ?? ""}
+            onChange={handlePresetSelect}
           >
-            <option>Default</option>
-            <option>Flat</option>
-            <option>Voice Boost</option>
-            <option>Bass Heavy</option>
-            <option>Treble Boost</option>
+            <option value="">Preset...</option>
+            <For each={availablePresets()}>
+              {(preset) => (
+                <option value={preset.id} title={preset.description}>
+                  {preset.name}
+                </option>
+              )}
+            </For>
+            <option value="__more__">More...</option>
           </select>
+
+          {/* Reset to last preset */}
+          <Show when={lastPresetId()}>
+            <button
+              class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
+              style={{ color: "var(--color-text-muted)", background: "transparent" }}
+              onClick={resetToLastPreset}
+              title="Reset to last applied preset"
+            >
+              Reset
+            </button>
+          </Show>
+
           {/* Import / Export */}
           <button
             class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
@@ -210,6 +315,27 @@ export default function EqPanel(props: EqPanelProps) {
           </button>
         </div>
       </div>
+
+      {/* Gallery signal placeholder — gallery component comes later */}
+      <Show when={showGallery()}>
+        <div
+          class="px-3 py-2 text-[10px] flex items-center justify-between"
+          style={{
+            "background-color": "var(--color-bg-secondary)",
+            color: "var(--color-text-muted)",
+            "border-bottom": "1px solid var(--color-border)",
+          }}
+        >
+          <span>Preset gallery (coming soon)</span>
+          <button
+            class="text-[10px] px-1.5 py-0.5 rounded"
+            style={{ color: "var(--color-text-secondary)" }}
+            onClick={() => setShowGallery(false)}
+          >
+            Close
+          </button>
+        </div>
+      </Show>
 
       {/* EQ Graph */}
       <div style={{ opacity: enabled() ? 1 : 0.3 }} class="transition-opacity duration-200">

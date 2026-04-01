@@ -8,9 +8,33 @@ use tracing::debug;
 
 use crate::graph::{
     App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor,
-    MixerSession, PersistentNodeId, ReconcileSettings,
+    MixerSession, PersistentNodeId, ReconcileSettings, SourceType,
 };
 use crate::pw::{AudioGraph, Node as PwNode, PortKind, ToPipewireMessage};
+use crate::pw::identifier::NodeIdentifier;
+
+/// Detect source type from PipeWire node properties.
+fn detect_source_type(id: &NodeIdentifier) -> SourceType {
+    let node_name = id.node_name().unwrap_or("");
+    // Our own nodes
+    if node_name.starts_with("osg.") {
+        return SourceType::AppStream;
+    }
+    // EasyEffects virtual source
+    if node_name.starts_with("easyeffects_") {
+        return SourceType::VirtualSource;
+    }
+    // Hardware ALSA input
+    if id.device_api.as_deref() == Some("alsa") && node_name.starts_with("alsa_input") {
+        return match id.device_form_factor.as_deref() {
+            Some("microphone") | Some("headset") | Some("webcam") | Some("internal") => {
+                SourceType::HardwareMic
+            }
+            _ => SourceType::HardwareLineIn,
+        };
+    }
+    SourceType::AppStream
+}
 
 /// EasyEffects processed mic source node name in PipeWire.
 const EASYEFFECTS_SOURCE: &str = "easyeffects_source";
@@ -55,8 +79,11 @@ impl MixerSession {
         })
     }
 
-    /// Auto-create a real null-audio-sink channel for each discovered app.
-    pub(super) fn auto_create_app_channels(&mut self) -> Vec<ToPipewireMessage> {
+    /// Auto-create a logical channel for each discovered app.
+    pub(super) fn auto_create_app_channels(
+        &mut self,
+        graph: &crate::pw::AudioGraph,
+    ) -> Vec<ToPipewireMessage> {
         let messages = Vec::new();
         let output_apps: Vec<_> = self
             .apps
@@ -74,12 +101,24 @@ impl MixerSession {
             let id = ChannelId::new();
             let kind = ChannelKind::Duplex;
             let descriptor = EndpointDescriptor::Channel(id);
+            // Detect source type from PW node properties
+            let source_type = graph
+                .nodes
+                .values()
+                .find(|n| {
+                    n.identifier.application_name.as_deref() == Some(&app_name)
+                        && n.identifier.binary_name.as_deref() == Some(&binary)
+                })
+                .map(|n| detect_source_type(&n.identifier))
+                .unwrap_or_default();
+
             // ADR-007: App channels are logical-only — no PW node.
             self.channels.insert(
                 id,
                 Channel {
                     id,
                     kind,
+                    source_type,
                     output_node_id: None,
                     assigned_apps: vec![AppAssignment {
                         application_name: app_name.clone(),

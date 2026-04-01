@@ -25,7 +25,7 @@ framework_processing:
             enabled: false
 watch:
     debounce_ms: 500
-    last_index_time: 2026-03-31T21:51:15.31596112+02:00
+    last_index_time: 2026-04-01T09:57:38.027807513+02:00
     rpg_persist_interval_ms: 1000
     rpg_derived_debounce_ms: 300
     rpg_full_reconcile_interval_sec: 300

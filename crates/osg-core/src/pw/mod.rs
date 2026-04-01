@@ -3,7 +3,7 @@
 pub mod biquad;
 mod cell;
 pub mod filter;
-mod identifier;
+pub mod identifier;
 mod mainloop;
 mod object;
 pub mod peak;
@@ -259,6 +259,11 @@ pub enum ToPipewireMessage {
     UpdateFilterEq {
         filter_key: String,
         eq: crate::graph::EqConfig,
+    },
+    /// Update effects chain parameters on an existing filter.
+    UpdateFilterEffects {
+        filter_key: String,
+        effects: crate::graph::EffectsConfig,
     },
     Exit,
 }

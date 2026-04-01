@@ -5,7 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::graph::{AppAssignment, ChannelId, ChannelKind, EndpointDescriptor, EqConfig};
+use crate::graph::{
+    AppAssignment, ChannelId, ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig,
+};
 use crate::routing::StateMsg;
 
 /// A command received from the frontend over WebSocket.
@@ -132,6 +134,19 @@ pub enum Command {
         target: EndpointDescriptor,
         eq: EqConfig,
     },
+
+    /// Set effects chain configuration for an endpoint (channel or mix).
+    SetEffects {
+        endpoint: EndpointDescriptor,
+        effects: EffectsConfig,
+    },
+
+    /// Set effects chain configuration for a per-route cell.
+    SetCellEffects {
+        source: EndpointDescriptor,
+        target: EndpointDescriptor,
+        effects: EffectsConfig,
+    },
 }
 
 impl Command {
@@ -203,6 +218,12 @@ impl Command {
             ),
             Self::SetEq { endpoint, eq } => StateMsg::SetEq(endpoint, eq),
             Self::SetCellEq { source, target, eq } => StateMsg::SetCellEq(source, target, eq),
+            Self::SetEffects { endpoint, effects } => StateMsg::SetEffects(endpoint, effects),
+            Self::SetCellEffects {
+                source,
+                target,
+                effects,
+            } => StateMsg::SetCellEffects(source, target, effects),
         }
     }
 }
