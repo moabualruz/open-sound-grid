@@ -7,7 +7,7 @@ pub mod identifier;
 mod mainloop;
 mod object;
 pub mod peak;
-mod pod;
+pub mod pod;
 mod store;
 
 use std::{

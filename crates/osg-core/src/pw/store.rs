@@ -293,7 +293,7 @@ impl Store {
         Ok(())
     }
 
-    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its param event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its param event
     pub(super) fn update_node_param(&mut self, _type_: ParamType, id: u32, pod: Option<&Pod>) {
         // abort if no pod is available
         let Some(pod) = pod else {
@@ -303,11 +303,11 @@ impl Store {
         let node = self
             .nodes
             .get_mut(&id)
-            .expect("node must exist when receiving its param update");
+            .expect(&format!("node {id} must exist when receiving its param update"));
 
         // deserialize the pod
         let (_, value) = PodDeserializer::deserialize_any_from(pod.as_bytes())
-            .expect("PW-provided pod bytes must be deserializable");
+            .expect(&format!("pod bytes from node {id} must be deserializable"));
 
         let node_props = NodeProps::new(value);
 
@@ -319,7 +319,7 @@ impl Store {
         }
     }
 
-    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its info event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its info event
     pub(super) fn update_node_info(&mut self, node_info: &NodeInfoRef) {
         let Some(props) = node_info.props() else {
             return;
@@ -327,7 +327,10 @@ impl Store {
         let node = self
             .nodes
             .get_mut(&node_info.id())
-            .expect("node must exist when receiving its param update");
+            .expect(&format!(
+                "node {} must exist when receiving its info update",
+                node_info.id()
+            ));
         if let EndpointId::Device { device_index, .. } = &mut node.endpoint
             && let Some(idx) = props
                 .get("card.profile.device")
@@ -403,7 +406,7 @@ impl Store {
         Ok(())
     }
 
-    #[allow(clippy::expect_used)] // PW guarantees the device exists when dispatching its param event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the device exists when dispatching its param event
     #[allow(clippy::too_many_arguments)] // Matches PW callback signature
     pub(super) fn update_device_param(
         &mut self,
@@ -415,7 +418,7 @@ impl Store {
         let device = self
             .devices
             .get_mut(&id)
-            .expect("device must exist when receiving its param update");
+            .expect(&format!("device {id} must exist when receiving its param update"));
 
         // If index is 0, clear as we assume more routes will be coming later if there are more
         if index == 0 {

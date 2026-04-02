@@ -192,21 +192,27 @@ impl FilterHandle {
     }
 
     /// Set bypass state (lock-free, any thread). Bypassed = passthrough.
+    /// Uses Release ordering to ensure EQ coefficients stored via ArcSwap
+    /// are visible to the RT thread before it reads this flag.
     pub fn set_bypassed(&self, bypassed: bool) {
-        self.bypassed.store(bypassed, Ordering::Relaxed);
+        self.bypassed.store(bypassed, Ordering::Release);
     }
 
     /// Read bypass state (lock-free).
+    /// Uses Acquire ordering to synchronize with `set_bypassed` / `set_eq`
+    /// Release stores, ensuring the RT thread sees the latest EQ coefficients.
     pub fn is_bypassed(&self) -> bool {
-        self.bypassed.load(Ordering::Relaxed)
+        self.bypassed.load(Ordering::Acquire)
     }
 
     /// Update EQ parameters and clear bypass (lock-free, any thread).
     pub fn set_eq(&self, config: &EqConfig) {
         self.eq.store(Arc::new(CompiledEq::from_config(config)));
-        // Enabling EQ implicitly clears bypass
+        // Enabling EQ implicitly clears bypass.
+        // Uses Release ordering to ensure the ArcSwap store above is
+        // visible to the RT thread before it reads the bypassed flag.
         if !config.bands.is_empty() {
-            self.bypassed.store(false, Ordering::Relaxed);
+            self.bypassed.store(false, Ordering::Release);
         }
     }
 
@@ -221,7 +227,10 @@ impl FilterHandle {
     }
 
     /// Set stereo volume (lock-free, any thread). Values 0.0–1.0.
+    /// Clamp to valid range — values above 1.0 are boost, above 1.5 risks distortion
     pub fn set_volume(&self, left: f32, right: f32) {
+        let left = left.clamp(0.0, 1.5);
+        let right = right.clamp(0.0, 1.5);
         self.volume_left.store(left.to_bits(), Ordering::Relaxed);
         self.volume_right.store(right.to_bits(), Ordering::Relaxed);
     }
@@ -433,6 +442,20 @@ impl OsgFilter {
         name: &str,
         description: &str,
     ) -> Result<Self, String> {
+        // SAFETY: All FFI calls in this function are safe because:
+        // 1. `core_ptr` is guaranteed valid by the caller (from the running PW connection).
+        // 2. `data` is heap-allocated via `Box::into_raw` and lives until `drop()` reclaims it.
+        //    The `data` pointer is passed to PW as a callback user-data pointer — PW never
+        //    frees it; we own the lifetime exclusively.
+        // 3. `events` and `listener` are Box-pinned so their addresses remain stable for PW's
+        //    internal pointer references. They are stored as fields and dropped with `self`.
+        // 4. All `CString` values are validated before use and live long enough for the
+        //    `pw_properties_new` call (which copies the strings internally).
+        // 5. Port pointers returned by `pw_filter_add_port` are stored in `CallbackData` and
+        //    only read by the RT process callback — PW guarantees they remain valid while
+        //    the filter is connected.
+        // 6. `pw_filter_destroy` in `drop()` is the exclusive cleanup path — no double-free
+        //    because `Self` is not `Clone` and `filter`/`data` are exclusively owned.
         use std::ffi::CString;
         use std::ptr;
 
@@ -624,6 +647,9 @@ impl OsgFilter {
     /// Get the PW global node ID (available once the filter is streaming).
     #[allow(unsafe_code)]
     pub fn node_id(&self) -> Option<u32> {
+        // SAFETY: `self.filter` is a valid pw_filter pointer created in `new()`
+        // and only invalidated when `drop()` runs — which consumes self, so
+        // it cannot be called while this method holds a reference.
         let id = unsafe { pipewire_sys::pw_filter_get_node_id(self.filter) };
         if id == u32::MAX { None } else { Some(id) }
     }
@@ -648,6 +674,8 @@ pub unsafe fn create_group_filter(
     _kind: super::GroupNodeKind,
 ) -> Result<OsgFilter, String> {
     let node_name = format!("osg.group.{id}");
+    // SAFETY: Caller guarantees `core_ptr` is a valid pw_core from the running
+    // PW connection, and this is called from the PW mainloop thread.
     let filter = unsafe { OsgFilter::new(core_ptr, &node_name, name) }
         .map_err(|e| format!("filter '{name}': {e}"))?;
     tracing::debug!(
@@ -661,6 +689,10 @@ pub unsafe fn create_group_filter(
 impl Drop for OsgFilter {
     #[allow(unsafe_code)]
     fn drop(&mut self) {
+        // SAFETY: `self.filter` was created by `pw_filter_new` and is valid
+        // until destroyed. `self.data` was allocated via `Box::into_raw` in
+        // `new()` and is only reclaimed here in `drop()`, ensuring no double-free.
+        // Both pointers are exclusively owned by this struct.
         unsafe {
             pipewire_sys::pw_filter_destroy(self.filter);
             drop(Box::from_raw(self.data));
@@ -674,6 +706,28 @@ impl Drop for OsgFilter {
 
 /// Process callback — runs on PW real-time thread.
 /// Reads stereo input, applies EQ cascade, volume gain, mute, computes peaks, writes output.
+///
+/// # SAFETY
+/// This function is called by PipeWire's RT thread via the `process` function pointer
+/// registered in `OsgFilter::new()`. Safety guarantees:
+///
+/// 1. **`data` pointer lifetime**: The `CallbackData` is allocated via `Box::into_raw` in
+///    `OsgFilter::new()` and reclaimed exclusively in `OsgFilter::drop()`. The `data`
+///    pointer is valid for the entire lifetime of the filter — PW calls `on_process` only
+///    while the filter is connected, which is strictly within the filter's lifetime.
+///
+/// 2. **Buffer validity**: `pw_filter_get_dsp_buffer` returns pointers to PW-managed
+///    buffers that are valid for the duration of this process callback invocation. The
+///    `n_samples` value comes from `(*position).clock.duration`, which PW guarantees is
+///    non-zero and matches the buffer sizes. Null checks on output pointers prevent
+///    dereferencing invalid buffers.
+///
+/// 3. **`position` pointer**: PW always provides a valid `spa_io_position` struct during
+///    process callbacks. Null check is a defensive guard.
+///
+/// 4. **No mutation of shared state**: The callback reads params via `FilterHandle`
+///    (lock-free atomics/ArcSwap) and writes only to `d.states_l`, `d.states_r`,
+///    `d.env_l`, `d.env_r` which are exclusively owned by this `CallbackData`.
 #[allow(unsafe_code, clippy::too_many_lines)]
 unsafe extern "C" fn on_process(
     data: *mut std::os::raw::c_void,

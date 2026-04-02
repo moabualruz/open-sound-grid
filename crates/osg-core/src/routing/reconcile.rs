@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
-    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
+    average_volumes, volumes_mixed, ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link,
+    LinkState, MixerSession, ReconcileSettings, VolumeLockMuteState,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -30,6 +30,12 @@ pub struct ReconciliationService;
 
 impl ReconciliationService {
     /// Compare desired state against PipeWire reality and produce corrective commands.
+    ///
+    /// Note: This function is called from the event loop, not recursively.
+    /// There is no depth tracking needed here — oscillation (corrections causing
+    /// new diffs causing more corrections) is prevented at the caller level by
+    /// the debounce timing on the reconciliation channel. If oscillation becomes
+    /// a concern, the caller should track consecutive identical corrections.
     pub fn reconcile(
         state: &mut MixerSession,
         graph: &AudioGraph,
@@ -132,7 +138,7 @@ impl MixerSession {
     }
     // diff_channels — ensure virtual channels exist in PipeWire
 
-    #[allow(clippy::expect_used)] // channel keys come from self.channels iteration
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // channel keys come from self.channels iteration
     fn diff_channels(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
@@ -140,7 +146,11 @@ impl MixerSession {
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
-            let channel_kind = self.channels.get(&id).expect("channel must exist").kind;
+            let channel_kind = self
+                .channels
+                .get(&id)
+                .expect(&format!("channel {id:?} must exist in channels map"))
+                .kind;
             // ADR-007: Source channels are logical-only — no PW node.
             // Only Sink (mix) channels get PW group nodes.
             if channel_kind != ChannelKind::Sink {
@@ -151,7 +161,10 @@ impl MixerSession {
                 .get(&endpoint_desc)
                 .and_then(|nodes| nodes.first())
             {
-                let channel = self.channels.get_mut(&id).expect("channel must exist");
+                let channel = self
+                    .channels
+                    .get_mut(&id)
+                    .expect(&format!("channel {id:?} must exist for mutation"));
                 if channel.pending {
                     channel.pending = false;
                 }
@@ -161,20 +174,23 @@ impl MixerSession {
                     let ep = self
                         .endpoints
                         .get(&endpoint_desc)
-                        .expect("endpoint must exist");
+                        .expect(&format!("endpoint for channel {id:?} must exist"));
                     messages.push(ToPipewireMessage::CreateFilter {
                         filter_key: format!("mix.{}", id.inner()),
                         name: format!("EQ: {}", ep.display_name),
                     });
                 }
             } else {
-                let channel = self.channels.get_mut(&id).expect("channel must exist");
+                let channel = self
+                    .channels
+                    .get_mut(&id)
+                    .expect(&format!("channel {id:?} must exist for mutation"));
                 if !channel.pending {
                     channel.pending = true;
                     let ep = self
                         .endpoints
                         .get(&endpoint_desc)
-                        .expect("endpoint must exist");
+                        .expect(&format!("endpoint for channel {id:?} must exist"));
                     messages.push(ToPipewireMessage::CreateGroupNode(
                         ep.display_name.clone(),
                         id.inner(),
@@ -238,12 +254,9 @@ impl MixerSession {
     }
     // diff_app_routing — link assigned app streams directly to cell sinks
 
-    /// For each source channel with assigned apps, find all cell sinks for that
-    /// channel in the graph (`osg.cell.{channel_ulid}-to-*`) and link each
-    /// matching app stream node directly to each cell sink.
-    ///
-    /// Source channels are logical-only (no PW node per ADR-007), so the old
-    /// `channel.pipewire_id` path is never used here.
+    /// Link each assigned app stream node to all matching cell sinks.
+    /// Source channels are logical-only (ADR-007).
+    #[allow(clippy::too_many_lines)] // Match-driven routing logic for app→cell linking
     fn diff_app_routing(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
 
@@ -289,9 +302,10 @@ impl MixerSession {
                     // Check which cells need linking
                     let mut missing: Vec<u32> = Vec::new();
                     for &cell_id in &cell_sink_ids {
-                        let already_linked = graph.links.values().any(|link| {
-                            link.start_node == app_node.id && link.end_node == cell_id
-                        });
+                        let already_linked = graph
+                            .links
+                            .values()
+                            .any(|link| link.start_node == app_node.id && link.end_node == cell_id);
                         if !already_linked {
                             missing.push(cell_id);
                         }
@@ -331,8 +345,7 @@ impl MixerSession {
             .channels
             .iter()
             .filter_map(|(id, ch)| {
-                (ch.kind == ChannelKind::Sink)
-                    .then_some(())?;
+                (ch.kind == ChannelKind::Sink).then_some(())?;
                 ch.pipewire_id.map(|pw| (id.inner().to_string(), pw))
             })
             .collect();
@@ -383,7 +396,9 @@ impl MixerSession {
             if ch.kind != ChannelKind::Sink {
                 continue;
             }
-            let Some(mix_pw) = ch.pipewire_id else { continue };
+            let Some(mix_pw) = ch.pipewire_id else {
+                continue;
+            };
             let mix_filter_key = format!("mix.{}", ch_id.inner());
             if let Some(&filter_id) = filter_pw.get(&mix_filter_key) {
                 // Find hardware output for this mix
