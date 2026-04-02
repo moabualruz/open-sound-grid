@@ -2,7 +2,8 @@ import { Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
-import { Volume2, VolumeX, SlidersVertical } from "lucide-solid";
+import { useMonitor } from "../stores/monitorStore";
+import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
 import VuMeter from "./VuMeter";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
@@ -22,6 +23,7 @@ const DEBOUNCE_MS = 16;
 export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const { settings } = useMixerSettings();
+  const monitor = useMonitor();
   const [cellVol, setCellVol] = createSignal(1);
   const [cellL, setCellL] = createSignal(1);
   const [cellR, setCellR] = createSignal(1);
@@ -31,6 +33,18 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   let userDragging = false;
 
   const isStereo = () => settings.stereoMode === "stereo";
+
+  // Monitor state: is this cell being monitored, or muted by monitoring?
+  const isMonitored = () =>
+    monitor.state.monitoredCell !== null &&
+    JSON.stringify(monitor.state.monitoredCell!.source) === JSON.stringify(props.sourceDescriptor) &&
+    JSON.stringify(monitor.state.monitoredCell!.target) === JSON.stringify(props.sinkDescriptor);
+
+  // A cell is muted by monitoring if monitoring is active and this is not the monitored cell
+  const mutedByMonitor = () =>
+    monitor.state.monitoredCell !== null &&
+    props.link !== null && // only consider linked cells
+    !isMonitored();
 
   // Sync from backend — but not while the user is actively dragging the slider
   createEffect(() => {
@@ -149,12 +163,16 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     <div class="group min-w-[10rem] flex-1">
       <div
         style={{ "--mix-accent": props.mixColor }}
-        class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-150 ${
-          !isLinked()
-            ? "border-border/30 bg-bg-primary/50 opacity-40 hover:opacity-70"
-            : channelMuted()
-              ? "border-vu-hot/20 bg-vu-hot/5"
-              : "border-border bg-bg-elevated"
+        class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
+          isMonitored()
+            ? "border-accent bg-bg-elevated ring-2 ring-accent/40"
+            : mutedByMonitor()
+              ? "border-border/30 bg-bg-primary/50 opacity-30"
+              : !isLinked()
+                ? "border-border/30 bg-bg-primary/50 opacity-40 hover:opacity-70"
+                : channelMuted()
+                  ? "border-vu-hot/20 bg-vu-hot/5"
+                  : "border-border bg-bg-elevated"
         }`}
       >
         {/* Per-cell route toggle */}
@@ -288,11 +306,17 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           <button
             type="button"
             onClick={() => props.onOpenEq?.()}
-            class="shrink-0 text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent transition-colors duration-150"
+            class={`shrink-0 transition-colors duration-150 ${
+              isMonitored()
+                ? "text-accent"
+                : "text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent"
+            }`}
             title="EQ & Effects"
             aria-label="EQ & Effects"
           >
-            <SlidersVertical size={12} />
+            <Show when={isMonitored()} fallback={<SlidersVertical size={12} />}>
+              <Headphones size={12} />
+            </Show>
           </button>
         </Show>
       </div>

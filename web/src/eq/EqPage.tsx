@@ -3,13 +3,15 @@
  * Contains: back button, monitor toggle, EQ panel, effects blocks.
  * Monitor mode: solo this audio path, muting everything else.
  */
-import { createSignal, onCleanup, Show } from "solid-js";
+import { onCleanup, Show } from "solid-js";
 import { Headphones, ArrowLeft } from "lucide-solid";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
 import type { SourceType } from "./EffectsBlock";
 import type { EndpointDescriptor, EqConfig, EffectsConfig, Command } from "../types";
 import { useSession } from "../stores/sessionStore";
+import { useMonitor } from "../stores/monitorStore";
+import { computeMutedLinks, computeRestoreVolumes } from "./monitorLogic";
 
 export interface EqPageTarget {
   label: string;
@@ -41,20 +43,36 @@ function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean
 
 export default function EqPage(props: EqPageProps) {
   const { state } = useSession();
-  const [monitoring, setMonitoring] = createSignal(false);
-  /** Links muted by monitor — stores [source, target, previousVolume]. */
-  let mutedLinks: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number; wasMonitored: boolean }[] = [];
+  const monitor = useMonitor();
+  /** Track which links were muted by monitoring (for restore). Only stores source+target IDs. */
+  let mutedLinkIds: { source: EndpointDescriptor; target: EndpointDescriptor }[] = [];
+  /** Track endpoint mute states for mix monitoring. */
   let mutedEndpoints: { endpoint: EndpointDescriptor; wasMuted: boolean }[] = [];
 
   // Auto-disable monitoring when leaving the page
   onCleanup(() => {
-    if (monitoring()) {
+    if (monitor.state.monitoredCell !== null && isMonitoringActive()) {
       disableMonitoring();
     }
   });
 
+  function isMonitoringActive() {
+    const t = props.target;
+    const sinkDesc = t.sinkDescriptor;
+    if (!sinkDesc) return false;
+    if (t.cellSource) {
+      return (
+        monitor.state.monitoredCell !== null &&
+        descriptorsEqual(monitor.state.monitoredCell!.source, t.cellSource) &&
+        descriptorsEqual(monitor.state.monitoredCell!.target, sinkDesc)
+      );
+    }
+    // For mix monitoring, check if any monitored cell targets this mix
+    return monitor.state.monitoredCell !== null;
+  }
+
   function toggleMonitoring() {
-    if (monitoring()) {
+    if (monitor.state.monitoredCell !== null && isMonitoringActive()) {
       disableMonitoring();
     } else {
       enableMonitoring();
@@ -66,81 +84,74 @@ export default function EqPage(props: EqPageProps) {
     const sinkDesc = t.sinkDescriptor;
     if (!sinkDesc) return;
 
-    setMonitoring(true);
-    mutedLinks = [];
-
     if (t.cellSource) {
-      // Cell monitoring: mute other cells going to the same mix, force this cell to 100%
+      // Cell monitoring: mute ALL other links across ALL mixes
       const sourceDesc = t.cellSource;
-      const thisLink = state.session.links.find(
-        (l) => descriptorsEqual(l.start, sourceDesc) && descriptorsEqual(l.end, sinkDesc),
-      );
-      if (thisLink) {
-        mutedLinks.push({
-          source: sourceDesc,
-          target: sinkDesc,
-          prevVolume: thisLink.cellVolume,
-          wasMonitored: true,
+      const result = computeMutedLinks(state.session.links, sourceDesc, sinkDesc);
+
+      // Boost the monitored cell to 100%
+      if (result.monitoredLink) {
+        props.send({
+          type: "setLinkVolume",
+          source: result.monitoredLink.source,
+          target: result.monitoredLink.target,
+          volume: 1,
         });
-        props.send({ type: "setLinkVolume", source: sourceDesc, target: sinkDesc, volume: 1 });
       }
-      for (const link of state.session.links) {
-        if (descriptorsEqual(link.end, sinkDesc) && !descriptorsEqual(link.start, sourceDesc)) {
-          mutedLinks.push({
-            source: link.start,
-            target: link.end,
-            prevVolume: link.cellVolume,
-            wasMonitored: false,
-          });
-          props.send({ type: "setLinkVolume", source: link.start, target: link.end, volume: 0 });
-        }
+
+      // Mute all other links
+      for (const m of result.linksToMute) {
+        props.send({ type: "setLinkVolume", source: m.source, target: m.target, volume: 0 });
       }
+
+      // Track muted link IDs for restore (not volumes — we'll re-read at restore time)
+      mutedLinkIds = result.linksToMute.map((m) => ({ source: m.source, target: m.target }));
+
+      monitor.startMonitoring(sourceDesc, sinkDesc);
     } else if (t.endpoint) {
       // Mix monitoring: mute ALL OTHER mix endpoints, unmute this one
       const thisMixDesc = sinkDesc;
       mutedEndpoints = [];
-      // Find all mix endpoints (kind === Sink)
       for (const [desc, ep] of state.session.endpoints) {
         if (!("channel" in desc)) continue;
-        // Check if this is a sink/mix channel
         const ch = state.session.channels[desc.channel];
         if (!ch || ch.kind !== "sink") continue;
         const isMuted = ep.volumeLockedMuted === "mutedLocked" || ep.volumeLockedMuted === "mutedUnlocked";
         if (descriptorsEqual(desc, thisMixDesc)) {
-          // This mix: ensure unmuted
           if (isMuted) {
             mutedEndpoints.push({ endpoint: desc, wasMuted: true });
             props.send({ type: "setMute", endpoint: desc, muted: false });
           }
         } else {
-          // Other mix: mute it
           mutedEndpoints.push({ endpoint: desc, wasMuted: isMuted });
           if (!isMuted) {
             props.send({ type: "setMute", endpoint: desc, muted: true });
           }
         }
       }
+      monitor.startMonitoring(t.endpoint, sinkDesc);
     }
   }
 
   function disableMonitoring() {
-    setMonitoring(false);
-
-    // Restore cell link volumes
-    for (const { source, target, prevVolume } of mutedLinks) {
-      props.send({ type: "setLinkVolume", source, target, volume: prevVolume });
+    // Restore cell link volumes by re-reading current state
+    const restore = computeRestoreVolumes(state.session.links, mutedLinkIds);
+    for (const cmd of restore.commands) {
+      props.send({ type: "setLinkVolume", source: cmd.source, target: cmd.target, volume: cmd.volume });
     }
-    mutedLinks = [];
+    mutedLinkIds = [];
 
     // Restore mix mute states
     for (const { endpoint, wasMuted } of mutedEndpoints) {
       props.send({ type: "setMute", endpoint, muted: wasMuted });
     }
     mutedEndpoints = [];
+
+    monitor.stopMonitoring();
   }
 
   function handleBack() {
-    if (monitoring()) disableMonitoring();
+    if (monitor.state.monitoredCell !== null && isMonitoringActive()) disableMonitoring();
     props.onBack();
   }
 
@@ -206,20 +217,20 @@ export default function EqPage(props: EqPageProps) {
         <button
           class="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all duration-150"
           style={{
-            "background-color": monitoring() ? props.target.color : "var(--color-bg-elevated)",
-            color: monitoring() ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-            border: `1px solid ${monitoring() ? props.target.color : "var(--color-border)"}`,
+            "background-color": isMonitoringActive() ? props.target.color : "var(--color-bg-elevated)",
+            color: isMonitoringActive() ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+            border: `1px solid ${isMonitoringActive() ? props.target.color : "var(--color-border)"}`,
           }}
           onClick={toggleMonitoring}
           title={
-            monitoring()
+            isMonitoringActive()
               ? "Stop monitoring — unmute all other audio paths"
               : "Monitor — solo this audio path, mute everything else"
           }
         >
           <Headphones size={14} />
-          <span>{monitoring() ? "Monitoring" : "Monitor"}</span>
-          <Show when={monitoring()}>
+          <span>{isMonitoringActive() ? "Monitoring" : "Monitor"}</span>
+          <Show when={isMonitoringActive()}>
             <span
               class="w-1.5 h-1.5 rounded-full animate-pulse"
               style={{ "background-color": "var(--color-text-primary)" }}

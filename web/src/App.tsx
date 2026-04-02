@@ -3,6 +3,7 @@ import { GraphProvider } from "./stores/graphStore";
 import { SessionProvider } from "./stores/sessionStore";
 import { MixerSettingsProvider } from "./stores/mixerSettings";
 import { LevelsProvider } from "./stores/levelsStore";
+import { MonitorProvider } from "./stores/monitorStore";
 import Mixer from "./components/Mixer";
 
 const EqDemo = lazy(() => import("./eq/EqDemo"));
@@ -20,11 +21,13 @@ export default function App() {
     <Show when={route() !== "#eq-demo"} fallback={<EqDemo />}>
       <GraphProvider>
         <SessionProvider>
-          <MixerSettingsProvider>
-            <LevelsProvider>
-              <Mixer />
-            </LevelsProvider>
-          </MixerSettingsProvider>
+          <MonitorProvider>
+            <MixerSettingsProvider>
+              <LevelsProvider>
+                <Mixer />
+              </LevelsProvider>
+            </MixerSettingsProvider>
+          </MonitorProvider>
         </SessionProvider>
       </GraphProvider>
     </Show>
