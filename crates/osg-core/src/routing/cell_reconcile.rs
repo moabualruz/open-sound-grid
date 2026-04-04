@@ -6,16 +6,20 @@
 //   * `diff_cell_links`  — ensure cell_sink monitor → [filter] → mix links
 //   * `ensure_link`      — helper to emit CreateNodeLinks if missing
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::graph::{ChannelKind, EndpointDescriptor, MixerSession};
+use crate::graph::{ChannelKind, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
 impl MixerSession {
     // diff_cells — ensure every row×mix pair has a cell node
 
     /// For every (source channel × sink mix) pair, ensure a cell node exists.
-    pub(crate) fn diff_cells(&mut self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+    pub(crate) fn diff_cells(
+        &self,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+    ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         let rows: Vec<_> = self
             .channels
@@ -25,11 +29,11 @@ impl MixerSession {
         let mixes: Vec<_> = self
             .channels
             .iter()
-            .filter(|(_, ch)| ch.kind == ChannelKind::Sink && ch.pipewire_id.is_some())
+            .filter(|(id, ch)| ch.kind == ChannelKind::Sink && rt.channel_pipewire_id(id).is_some())
             .collect();
         // ADR-007: Source channels are logical. Cell sinks keyed by (ch_ulid, mx_ulid).
         // Collect existing cell names from the graph to avoid duplicates.
-        let existing_cells: HashSet<&str> = graph
+        let existing_cells: std::collections::HashSet<&str> = graph
             .nodes
             .values()
             .filter_map(|n| n.identifier.node_name())
@@ -38,10 +42,10 @@ impl MixerSession {
         for (row_id, _row_ch) in &rows {
             for (mix_id, _mix_ch) in &mixes {
                 let cell_id = format!("osg.cell.{}-to-{}", row_id.inner(), mix_id.inner());
-                if !self.created_cells.contains(&cell_id)
+                if !rt.created_cells.contains(&cell_id)
                     && !existing_cells.contains(cell_id.as_str())
                 {
-                    self.created_cells.insert(cell_id.clone());
+                    rt.created_cells.insert(cell_id.clone());
                     let rn = self
                         .endpoints
                         .get(&EndpointDescriptor::Channel(**row_id))
@@ -57,7 +61,7 @@ impl MixerSession {
                         cell_id,
                         channel_ulid: row_id.inner().to_string(),
                         mix_ulid: mix_id.inner().to_string(),
-                        instance_id: self.instance_id,
+                        instance_id: rt.instance_id,
                     });
                 }
             }
@@ -149,7 +153,11 @@ impl MixerSession {
     ///
     /// This function ensures the monitor-out side of the chain exists.
     /// App→cell links are handled by `diff_app_routing`.
-    pub(crate) fn diff_cell_links(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+    pub(crate) fn diff_cell_links(
+        &self,
+        graph: &AudioGraph,
+        rt: &RuntimeState,
+    ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
 
         // Build ULID → PW node ID map for sink (mix) channels only.
@@ -158,7 +166,8 @@ impl MixerSession {
             .iter()
             .filter_map(|(id, ch)| {
                 (ch.kind == ChannelKind::Sink).then_some(())?;
-                ch.pipewire_id.map(|pw| (id.inner().to_string(), pw))
+                rt.channel_pipewire_id(id)
+                    .map(|pw| (id.inner().to_string(), pw))
             })
             .collect();
 
@@ -208,13 +217,13 @@ impl MixerSession {
             if ch.kind != ChannelKind::Sink {
                 continue;
             }
-            let Some(mix_pw) = ch.pipewire_id else {
+            let Some(mix_pw) = rt.channel_pipewire_id(ch_id) else {
                 continue;
             };
             let mix_filter_key = format!("mix.{}", ch_id.inner());
             if let Some(&filter_id) = filter_pw.get(&mix_filter_key) {
                 // Find hardware output for this mix
-                let hw_id = ch.output_node_id.or(self.default_output_node_id);
+                let hw_id = ch.output_node_id.or(rt.default_output_node_id);
                 if let Some(hw) = hw_id {
                     // mix_sink → mix_filter → hardware
                     messages.extend(Self::ensure_link(graph, mix_pw, filter_id));

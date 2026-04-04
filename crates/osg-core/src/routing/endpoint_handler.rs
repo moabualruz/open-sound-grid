@@ -7,21 +7,23 @@ use tracing::warn;
 
 use crate::graph::{
     Channel, ChannelId, ChannelKind, EffectsConfig, Endpoint, EndpointDescriptor, EqConfig, Link,
-    LinkState, MixerSession, ReconcileSettings, average_volumes,
+    LinkState, MixerSession, ReconcileSettings, RuntimeState, average_volumes,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 use crate::routing::messages::StateOutputMsg;
 
 impl MixerSession {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_ephemeral_node(
         &mut self,
         id: u32,
         kind: PortKind,
         graph: &AudioGraph,
+        rt: &mut RuntimeState,
     ) -> Option<StateOutputMsg> {
         let node = graph.nodes.get(&id).filter(|n| n.has_port_kind(kind))?;
         let descriptor = EndpointDescriptor::EphemeralNode(id, kind);
-        self.candidates
+        rt.candidates
             .retain(|(cid, ck, _)| *cid != id || *ck != kind);
         let endpoint = Endpoint::new(descriptor)
             .with_display_name(node.identifier.human_name(kind).to_owned())
@@ -46,22 +48,28 @@ impl MixerSession {
             PortKind::Source => self.active_sources.push(descriptor),
             PortKind::Sink => self.active_sinks.push(descriptor),
         }
-        // If the node matches an existing app, add as exception.
-        if let Some(app) = self
+        // If the node matches an existing active app, add as exception.
+        let active_app_ids: Vec<_> = self
             .apps
-            .values_mut()
-            .find(|a| a.is_active && a.matches(&node.identifier, kind))
-        {
-            app.exceptions.push(descriptor);
+            .iter()
+            .filter(|(app_id, _)| rt.app_is_active(app_id))
+            .filter(|(_, a)| a.matches(&node.identifier, kind))
+            .map(|(app_id, _)| *app_id)
+            .collect();
+        for app_id in active_app_ids {
+            if let Some(app) = self.apps.get_mut(&app_id) {
+                app.exceptions.push(descriptor);
+            }
         }
         Some(StateOutputMsg::EndpointAdded(descriptor))
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub(super) fn handle_add_channel(
         &mut self,
         name: String,
         kind: ChannelKind,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> Option<StateOutputMsg> {
         let id = ChannelId::new();
@@ -74,8 +82,6 @@ impl MixerSession {
                 source_type: crate::graph::SourceType::default(),
                 output_node_id: None,
                 assigned_apps: Vec::new(),
-                pipewire_id: None,
-                pending: kind == ChannelKind::Sink,
                 auto_app: false,
                 allow_app_assignment: kind != ChannelKind::Source,
             },
@@ -86,11 +92,12 @@ impl MixerSession {
         );
         // ADR-007: Only mixes get PW nodes. Source channels are logical.
         if kind == ChannelKind::Sink {
+            rt.set_channel_pending(id, true);
             pw_messages.push(ToPipewireMessage::CreateGroupNode(
                 name,
                 id.inner(),
-                kind,
-                self.instance_id,
+                kind.into(),
+                rt.instance_id,
             ));
         }
         // Auto-create active links to all existing counterparts.
@@ -120,8 +127,8 @@ impl MixerSession {
                     cell_eq: EqConfig::default(),
                     cell_effects: EffectsConfig::default(),
                     cell_node_id: None,
-                    pending: true,
                 });
+                rt.set_link_pending((src, descriptor), true);
             }
         } else {
             // New source channel: link it to every existing sink
@@ -142,8 +149,8 @@ impl MixerSession {
                     cell_eq: EqConfig::default(),
                     cell_effects: EffectsConfig::default(),
                     cell_node_id: None,
-                    pending: true,
                 });
+                rt.set_link_pending((descriptor, sink), true);
             }
         }
         Some(StateOutputMsg::EndpointAdded(descriptor))
@@ -156,10 +163,11 @@ impl MixerSession {
         kind: PortKind,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
     ) -> Option<StateOutputMsg> {
         let mut app = self.apps.get(&id).cloned()?;
         let descriptor = EndpointDescriptor::App(id, kind);
-        app.is_active = true;
+        rt.set_app_active(id, true);
         match kind {
             PortKind::Source => self.active_sources.push(descriptor),
             PortKind::Sink => self.active_sinks.push(descriptor),
@@ -200,6 +208,7 @@ impl MixerSession {
         ep: EndpointDescriptor,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> Option<StateOutputMsg> {
         if self.endpoints.remove(&ep).is_none() {
@@ -207,6 +216,7 @@ impl MixerSession {
             return None;
         }
 
+        rt.remove_endpoint(ep);
         self.active_sources.retain(|e| *e != ep);
         self.active_sinks.retain(|e| *e != ep);
 
@@ -217,6 +227,7 @@ impl MixerSession {
         match ep {
             EndpointDescriptor::EphemeralNode(..) => {}
             EndpointDescriptor::Channel(id) => {
+                rt.remove_channel(id);
                 // ADR-007: Clear links from app streams to cell sinks
                 if let Some(ch) = self.channels.get(&id) {
                     let prefix = format!("osg.cell.{}-to-", id.inner());
@@ -258,12 +269,9 @@ impl MixerSession {
             }
             EndpointDescriptor::App(id, _) => {
                 if self.resolve_endpoint(ep, graph, settings).is_some() {
-                    if let Some(app) = self.apps.get_mut(&id) {
-                        app.is_active = false;
-                    } else {
-                        warn!("[State] app {id:?} missing");
-                    }
+                    rt.set_app_active(id, false);
                 } else {
+                    rt.remove_app(id);
                     self.apps.remove(&id);
                 }
             }
@@ -275,14 +283,16 @@ impl MixerSession {
         Some(StateOutputMsg::EndpointRemoved(ep))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_rename_endpoint(
         &mut self,
         descriptor: EndpointDescriptor,
         name: Option<String>,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) {
         if let EndpointDescriptor::Channel(id) = descriptor {
-            if let (Some(endpoint), Some(ch)) = (
+            if let (Some(endpoint), Some(_ch)) = (
                 self.endpoints.get_mut(&descriptor),
                 self.channels.get_mut(&id),
             ) && let Some(name) = name.filter(|n| *n != endpoint.display_name)
@@ -292,7 +302,7 @@ impl MixerSession {
                     filter_key: id.inner().to_string(),
                 });
                 endpoint.display_name = name;
-                ch.pending = false;
+                rt.set_channel_pending(id, false);
             }
         } else if let Some(endpoint) = self.endpoints.get_mut(&descriptor) {
             match name {
@@ -304,10 +314,12 @@ impl MixerSession {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_change_channel_kind(
         &mut self,
         id: ChannelId,
         kind: ChannelKind,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) {
         if let Some(ch) = self.channels.get_mut(&id)
@@ -318,7 +330,7 @@ impl MixerSession {
                 filter_key: id.inner().to_string(),
             });
             ch.kind = kind;
-            ch.pending = false;
+            rt.set_channel_pending(id, false);
         }
     }
 

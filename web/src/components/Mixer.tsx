@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createEffect, createMemo } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import MixHeader from "./MixHeader";
@@ -9,117 +9,24 @@ import ChannelCreator from "./ChannelCreator";
 import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
 import DragReorder from "./DragReorder";
-import { useLevels } from "../stores/levelsStore";
 import { Settings } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
-import type { Endpoint, EndpointDescriptor, PwGroupNode } from "../types";
+import type { Endpoint, EndpointDescriptor } from "../types";
 import { getMixColor, findEndpoint, findLink } from "./mixerUtils";
 import { useKeyboardNav } from "./useKeyboardNav";
 import { useMixOutputs } from "./useMixOutputs";
+import { useMixerViewModel } from "../hooks/useMixerViewModel";
 
 export default function Mixer() {
   const { state, send } = useSession();
   const graphState = useGraph();
-  const levels = useLevels();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [eqTarget, setEqTarget] = createSignal<EqPageTarget | null>(null);
 
-  /** Get peak values for a channel by looking up its group node in the peak store. */
-  function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
-    if (!("channel" in desc)) return { left: 0, right: 0 };
-    const group = graphState.graph.groupNodes[desc.channel] as PwGroupNode | undefined;
-    if (!group?.id) return { left: 0, right: 0 };
-    const p = levels.peaks[String(group.id)];
-    return p ?? { left: 0, right: 0 };
-  }
+  const { channels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder } =
+    useMixerViewModel();
 
-  function channelKind(desc: EndpointDescriptor): string | undefined {
-    if (!("channel" in desc)) return undefined;
-    const ch = state.session.channels[desc.channel];
-    return ch?.kind;
-  }
-
-  type EndpointEntry = { desc: EndpointDescriptor; ep: Endpoint };
-
-  const rawChannels = () =>
-    state.session.endpoints
-      .filter(([desc, ep]) => "channel" in desc && channelKind(desc) !== "sink" && ep.visible)
-      .map(([desc, ep]) => ({ desc, ep }));
-
-  const sinkChannels = () =>
-    state.session.endpoints
-      .filter(([desc, ep]) => "channel" in desc && channelKind(desc) === "sink" && ep.visible)
-      .map(([desc, ep]) => ({ desc, ep }));
-
-  const rawMixes = () => {
-    const fromSinks = state.session.activeSinks
-      .map((desc) => ({ desc, ep: findEndpoint(state.session.endpoints, desc) }))
-      .filter((m) => m.ep?.visible !== false);
-    if (fromSinks.length > 0) return fromSinks;
-    return sinkChannels();
-  };
-
-  const descKey = (d: EndpointDescriptor) => JSON.stringify(d);
-
-  // Local order — instant UI, persisted to backend on change
-  const [localChannelOrder, setLocalChannelOrder] = createSignal<EndpointDescriptor[]>([]);
-  const [localMixOrder, setLocalMixOrder] = createSignal<EndpointDescriptor[]>([]);
-  let channelOrderInitialized = false;
-  let mixOrderInitialized = false;
-
-  createEffect(() => {
-    const backendOrder = state.session.channelOrder;
-    if (!channelOrderInitialized && backendOrder.length > 0) {
-      channelOrderInitialized = true;
-      setLocalChannelOrder(backendOrder);
-    }
-  });
-  createEffect(() => {
-    const backendOrder = state.session.mixOrder;
-    if (!mixOrderInitialized && backendOrder.length > 0) {
-      mixOrderInitialized = true;
-      setLocalMixOrder(backendOrder);
-    }
-  });
-
-  function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): EndpointEntry[] {
-    if (order.length === 0) return items;
-    const orderKeys = order.map(descKey);
-    const byKey = new Map(items.map((item) => [descKey(item.desc), item]));
-    const ordered: EndpointEntry[] = [];
-    for (const key of orderKeys) {
-      const item = byKey.get(key);
-      if (item) {
-        ordered.push(item);
-        byKey.delete(key);
-      }
-    }
-    for (const item of byKey.values()) ordered.push(item);
-    return ordered;
-  }
-
-  const channels = createMemo(() => applyOrder(rawChannels(), localChannelOrder()));
-  const mixes = createMemo(() =>
-    applyOrder(
-      rawMixes().filter((m): m is { desc: EndpointDescriptor; ep: Endpoint } => m.ep != null),
-      localMixOrder(),
-    ),
-  );
-
-  function persistChannelOrder(reordered: EndpointEntry[]) {
-    const order = reordered.map((item) => item.desc);
-    setLocalChannelOrder(order);
-    send({ type: "setChannelOrder", order });
-  }
-
-  function persistMixOrder(reordered: EndpointEntry[]) {
-    const order = reordered.map((item) => item.desc);
-    setLocalMixOrder(order);
-    send({ type: "setMixOrder", order });
-  }
-
-  // eslint-disable-next-line solid/reactivity -- mixes/channels passed as getter fns, called only inside effects
   const { mixOutputs, setMixOutput, usedDeviceIds } = useMixOutputs(
     mixes,
     () => state.session.channels,
@@ -165,7 +72,6 @@ export default function Mixer() {
   }
 
   // --- Keyboard navigation ---
-  // eslint-disable-next-line solid/reactivity -- channels/mixes passed as getter fns, called only inside event handlers
   const { focusedCell, setFocusedCell, registerCellActions, handleGridKeyDown } = useKeyboardNav(
     channels,
     mixes,

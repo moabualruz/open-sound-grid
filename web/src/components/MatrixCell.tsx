@@ -1,10 +1,11 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { useMonitor } from "../stores/monitorStore";
 import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
 import VuMeter from "./VuMeter";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
 /** Imperative actions exposed to the parent grid for keyboard shortcuts. */
@@ -27,8 +28,6 @@ interface MatrixCellProps {
   onActionsReady?: (actions: MatrixCellActions) => void;
 }
 
-const DEBOUNCE_MS = 16;
-
 export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const { settings } = useMixerSettings();
@@ -38,8 +37,28 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const [cellR, setCellR] = createSignal(1);
   const [cellMuted, setCellMuted] = createSignal(false);
   let preMuteVol: { vol: number; left: number; right: number } | null = null;
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let userDragging = false;
+
+  const sendDebounced = useVolumeDebounce((v) => {
+    send({
+      type: "setLinkVolume",
+      source: props.sourceDescriptor,
+      target: props.sinkDescriptor,
+      volume: v,
+    });
+    userDragging = false;
+  });
+
+  const sendStereoDebounced = useVolumeDebounce((_v) => {
+    send({
+      type: "setLinkStereoVolume",
+      source: props.sourceDescriptor,
+      target: props.sinkDescriptor,
+      left: cellL(),
+      right: cellR(),
+    });
+    userDragging = false;
+  });
 
   const isStereo = () => settings.stereoMode === "stereo";
 
@@ -94,16 +113,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     setCellVol(value);
     setCellL(value);
     setCellR(value);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setLinkVolume",
-        source: props.sourceDescriptor,
-        target: props.sinkDescriptor,
-        volume: value,
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendDebounced(value);
   }
 
   function handleStereoInput(channel: "left" | "right", value: number) {
@@ -112,17 +122,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     if (channel === "left") setCellL(value);
     else setCellR(value);
     setCellVol((cellL() + cellR()) / 2);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setLinkStereoVolume",
-        source: props.sourceDescriptor,
-        target: props.sinkDescriptor,
-        left: cellL(),
-        right: cellR(),
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendStereoDebounced(value);
   }
 
   function handleWheel(e: WheelEvent) {
@@ -173,10 +173,6 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   createEffect(() => {
     props.onActionsReady?.({ toggleMute: toggleCellMute, adjustVolume });
-  });
-
-  onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
   });
 
   return (

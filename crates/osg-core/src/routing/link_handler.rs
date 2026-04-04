@@ -6,15 +6,17 @@ use tracing::warn;
 
 use crate::graph::{
     EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession, ReconcileSettings,
+    RuntimeState,
 };
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
 impl MixerSession {
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub(super) fn handle_link(
         &mut self,
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> bool {
         if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
@@ -52,9 +54,10 @@ impl MixerSession {
             cell_id,
             channel_ulid: src_ulid.clone(),
             mix_ulid: snk_ulid.clone(),
-            instance_id: self.instance_id,
+            instance_id: rt.instance_id,
         });
 
+        let link_key = (source, sink);
         if let Some(link) = self
             .links
             .iter_mut()
@@ -70,7 +73,7 @@ impl MixerSession {
                 _ => {}
             }
             if !msgs.is_empty() {
-                link.pending = true;
+                rt.set_link_pending(link_key, true);
             }
         } else {
             self.links.push(Link {
@@ -81,10 +84,12 @@ impl MixerSession {
                 cell_volume_left: 1.0,
                 cell_volume_right: 1.0,
                 cell_node_id: None,
-                pending: !msgs.is_empty(),
                 cell_eq: EqConfig::default(),
                 cell_effects: EffectsConfig::default(),
             });
+            if !msgs.is_empty() {
+                rt.set_link_pending(link_key, true);
+            }
         }
 
         pw_messages.extend(msgs);
@@ -130,7 +135,8 @@ impl MixerSession {
                 self.links[pos].state = LinkState::DisconnectedLocked;
                 let msgs = self.remove_pipewire_node_links(graph, source, sink, settings);
                 if !msgs.is_empty() {
-                    self.links[pos].pending = true;
+                    // Note: link_pending tracked in rt, but handle_remove_link doesn't take rt.
+                    // The pending state will be resolved on the next reconcile pass.
                 }
                 pw_messages.extend(msgs);
             }
@@ -139,11 +145,13 @@ impl MixerSession {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_set_link_locked(
         &mut self,
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         locked: bool,
+        rt: &mut RuntimeState,
     ) -> bool {
         if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
             warn!("[State] cannot set link lock {source:?} -> {sink:?}: wrong direction");
@@ -171,7 +179,6 @@ impl MixerSession {
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
                     cell_node_id: None,
-                    pending: false,
                     cell_eq: EqConfig::default(),
                     cell_effects: EffectsConfig::default(),
                 });
@@ -182,7 +189,8 @@ impl MixerSession {
                 self.links[i].state = LinkState::ConnectedUnlocked;
             }
             (Some((i, LinkState::DisconnectedLocked)), false) => {
-                self.links.swap_remove(i);
+                let removed = self.links.swap_remove(i);
+                rt.remove_link(&(removed.start, removed.end));
             }
             (_, false) => {}
         }

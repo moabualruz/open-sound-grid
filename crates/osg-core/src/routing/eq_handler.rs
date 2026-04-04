@@ -4,6 +4,7 @@
 
 use crate::graph::{ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, MixerSession};
 use crate::pw::ToPipewireMessage;
+use crate::routing::filter_lifecycle;
 
 impl MixerSession {
     /// Handle `StateMsg::SetEq` — update endpoint EQ and dispatch to PW filter.
@@ -29,7 +30,7 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
+            filter_lifecycle::update_eq(&mut pw_messages, &filter_key, eq);
         }
         pw_messages
     }
@@ -57,7 +58,7 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
+            filter_lifecycle::update_eq(&mut pw_messages, &filter_key, eq);
         }
         pw_messages
     }
@@ -85,10 +86,7 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                filter_key,
-                effects,
-            });
+            filter_lifecycle::update_effects(&mut pw_messages, &filter_key, effects);
         }
         pw_messages
     }
@@ -116,10 +114,7 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                filter_key,
-                effects,
-            });
+            filter_lifecycle::update_effects(&mut pw_messages, &filter_key, effects);
         }
         pw_messages
     }

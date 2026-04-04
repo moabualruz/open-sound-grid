@@ -2,16 +2,18 @@
 //
 // Handles: SetMixOutput (hardware output routing)
 
-use crate::graph::{ChannelId, EndpointDescriptor, MixerSession};
+use crate::graph::{ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 
 impl MixerSession {
     /// Handle `StateMsg::SetMixOutput` — change a mix's hardware output.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_set_mix_output(
         &mut self,
         channel_id: ChannelId,
         output_node_id: Option<u32>,
         graph: &AudioGraph,
+        rt: &RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let mut pw_messages = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
@@ -20,8 +22,10 @@ impl MixerSession {
         let old_output = ch.output_node_id;
         ch.output_node_id = output_node_id;
 
+        let pw_id = rt.channel_pipewire_id(&channel_id);
+
         // Remove old links if previously assigned
-        if let (Some(pw_id), Some(old_id)) = (ch.pipewire_id, old_output) {
+        if let (Some(pw_id), Some(old_id)) = (pw_id, old_output) {
             pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
                 start_id: pw_id,
                 end_id: old_id,
@@ -29,7 +33,7 @@ impl MixerSession {
         }
 
         // Create new links to the output device
-        if let (Some(pw_id), Some(new_id)) = (ch.pipewire_id, output_node_id) {
+        if let (Some(pw_id), Some(new_id)) = (pw_id, output_node_id) {
             pw_messages.push(ToPipewireMessage::CreateNodeLinks {
                 start_id: pw_id,
                 end_id: new_id,

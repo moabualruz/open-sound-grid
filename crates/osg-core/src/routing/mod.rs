@@ -11,6 +11,7 @@ mod apps;
 mod cell_reconcile;
 mod endpoint_handler;
 mod eq_handler;
+pub(crate) mod filter_lifecycle;
 mod link_handler;
 pub mod messages;
 mod order_handler;

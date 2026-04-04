@@ -10,6 +10,7 @@ pub mod endpoint;
 pub mod eq_config;
 pub mod identifiers;
 pub mod link;
+pub mod runtime;
 pub mod serde_helpers;
 pub mod session;
 pub mod types;
@@ -25,7 +26,9 @@ pub use effects_config::{
 pub use endpoint::{Endpoint, EndpointDescriptor};
 pub use eq_config::{EqBand, EqConfig, FilterType};
 pub use identifiers::{AppId, ChannelId, DeviceId, PersistentNodeId};
+pub use link::LinkKey;
 pub use link::{Link, LinkState};
+pub use runtime::RuntimeState;
 pub use session::{MixerSession, ReconcileSettings};
 pub use utils::{aggregate_bools, average_volumes, volumes_mixed};
 pub use volume_state::VolumeLockMuteState;

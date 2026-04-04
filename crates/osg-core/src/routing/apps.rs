@@ -8,7 +8,7 @@ use tracing::debug;
 
 use crate::graph::{
     App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor,
-    MixerSession, PersistentNodeId, ReconcileSettings, SourceType,
+    MixerSession, PersistentNodeId, ReconcileSettings, RuntimeState, SourceType,
 };
 use crate::pw::identifier::NodeIdentifier;
 use crate::pw::{AudioGraph, Node as PwNode, PortKind, ToPipewireMessage};
@@ -83,6 +83,7 @@ impl MixerSession {
     pub(super) fn auto_create_app_channels(
         &mut self,
         graph: &crate::pw::AudioGraph,
+        rt: &RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let messages = Vec::new();
         let output_apps: Vec<_> = self
@@ -113,6 +114,8 @@ impl MixerSession {
                 .unwrap_or_default();
 
             // ADR-007: App channels are logical-only — no PW node.
+            // Runtime state (pipewire_id, pending) lives in RuntimeState, not Channel.
+            let _ = rt; // rt is available for future runtime init if needed
             self.channels.insert(
                 id,
                 Channel {
@@ -126,8 +129,6 @@ impl MixerSession {
                     }],
                     auto_app: true,
                     allow_app_assignment: false,
-                    pipewire_id: None,
-                    pending: false,
                 },
             );
             self.endpoints.insert(

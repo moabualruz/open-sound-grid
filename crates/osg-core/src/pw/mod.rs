@@ -91,6 +91,16 @@ pub enum GroupNodeKind {
     Sink,
 }
 
+impl From<crate::graph::ChannelKind> for GroupNodeKind {
+    fn from(k: crate::graph::ChannelKind) -> Self {
+        match k {
+            crate::graph::ChannelKind::Source => Self::Source,
+            crate::graph::ChannelKind::Sink => Self::Sink,
+            crate::graph::ChannelKind::Duplex => Self::Duplex,
+        }
+    }
+}
+
 #[allow(missing_debug_implementations)] // Contains thread JoinHandles which are not Debug
 pub struct PipewireHandle {
     pipewire_thread_handle: Option<thread::JoinHandle<()>>,

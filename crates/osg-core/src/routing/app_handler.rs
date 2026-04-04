@@ -4,7 +4,7 @@
 
 use tracing::debug;
 
-use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession};
+use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
 impl MixerSession {
@@ -15,11 +15,13 @@ impl MixerSession {
     /// so it always has an output destination. The reconciler links to new
     /// cell sinks on the next tick, then the staging link is cleaned up.
     #[allow(clippy::too_many_lines)] // Multi-step staging + unlink + restore logic
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_assign_app(
         &mut self,
         channel_id: ChannelId,
         assignment: AppAssignment,
         graph: &AudioGraph,
+        rt: &RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let mut pw_messages = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
@@ -63,7 +65,7 @@ impl MixerSession {
         if let Some(id) = auto_id {
             // Staging sink: link app streams to staging BEFORE unlinking from old cells.
             // This prevents audio glitches from having no output destination.
-            if let Some(staging_id) = self.staging_node_id {
+            if let Some(staging_id) = rt.staging_node_id {
                 for &stream_id in &app_stream_ids {
                     pw_messages.push(ToPipewireMessage::CreateNodeLinks {
                         start_id: stream_id,
@@ -99,7 +101,7 @@ impl MixerSession {
             }
 
             // Remove staging links — the reconciler will link to new cells
-            if let Some(staging_id) = self.staging_node_id {
+            if let Some(staging_id) = rt.staging_node_id {
                 for &stream_id in &app_stream_ids {
                     pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
                         start_id: stream_id,
@@ -118,11 +120,13 @@ impl MixerSession {
 
     /// Handle `StateMsg::UnassignApp` — unassign an app from a channel and restore auto-channel.
     #[allow(clippy::too_many_lines)] // Multi-step teardown/restore logic for app unassignment
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_unassign_app(
         &mut self,
         channel_id: ChannelId,
         assignment: AppAssignment,
         graph: &AudioGraph,
+        rt: &RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let mut pw_messages = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
@@ -145,7 +149,7 @@ impl MixerSession {
             .collect();
 
         // Staging sink: link app streams to staging BEFORE clearing old redirects
-        if let Some(staging_id) = self.staging_node_id {
+        if let Some(staging_id) = rt.staging_node_id {
             for &stream_id in &app_stream_ids {
                 pw_messages.push(ToPipewireMessage::CreateNodeLinks {
                     start_id: stream_id,
@@ -180,7 +184,7 @@ impl MixerSession {
         }
 
         // Remove staging links — the auto-channel restore or reconciler handles new links
-        if let Some(staging_id) = self.staging_node_id {
+        if let Some(staging_id) = rt.staging_node_id {
             for &stream_id in &app_stream_ids {
                 pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
                     start_id: stream_id,

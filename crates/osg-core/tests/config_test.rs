@@ -3,7 +3,7 @@
 use osg_core::config::PersistentState;
 use osg_core::graph::{
     ChannelId, ChannelKind, EffectsConfig, EndpointDescriptor, EqBand, EqConfig, FilterType, Link,
-    LinkState, MixerSession,
+    LinkState, MixerSession, RuntimeState,
 };
 use osg_core::migration;
 
@@ -14,10 +14,11 @@ use osg_core::migration;
 #[test]
 fn round_trip_preserves_mixer_session() {
     let mut session = MixerSession::default();
+    let mut runtime = RuntimeState::default();
 
     // Add a channel with EQ and effects.
     let ch_id = ChannelId::new();
-    let mut channel = osg_core::graph::Channel {
+    let channel = osg_core::graph::Channel {
         id: ch_id,
         kind: ChannelKind::Source,
         source_type: Default::default(),
@@ -25,14 +26,13 @@ fn round_trip_preserves_mixer_session() {
         assigned_apps: Vec::new(),
         auto_app: false,
         allow_app_assignment: true,
-        pipewire_id: None,
-        pending: false,
     };
-    // Transient fields should not affect serialization.
-    channel.pipewire_id = Some(42);
+    // Transient pipewire_id lives in RuntimeState.
+    runtime.set_channel_pipewire_id(ch_id, Some(42));
     session.channels.insert(ch_id, channel);
 
     // Add a locked link with cell EQ.
+    // Note: `pending` is now tracked in RuntimeState, not on Link.
     let link = Link {
         start: EndpointDescriptor::Channel(ch_id),
         end: EndpointDescriptor::Channel(ChannelId::new()),
@@ -51,13 +51,12 @@ fn round_trip_preserves_mixer_session() {
             }],
         },
         cell_effects: EffectsConfig::default(),
-        cell_node_id: Some(99), // transient — should be skipped
-        pending: true,          // transient — should be skipped
+        cell_node_id: Some(99), // transient — should be stripped by from_state
     };
     session.links.push(link);
 
     // Serialize via PersistentState.
-    let ps = PersistentState::from_state(session.clone());
+    let ps = PersistentState::from_state(session.clone(), &runtime);
     let toml_str = toml::to_string_pretty(&ps).expect("serialize");
 
     // Deserialize back via migration.
@@ -75,9 +74,8 @@ fn round_trip_preserves_mixer_session() {
     assert_eq!(loaded_link.cell_eq.bands.len(), 1);
     assert_eq!(loaded_link.cell_eq.bands[0].frequency, 8000.0);
 
-    // Transient fields reset to defaults.
+    // Transient cell_node_id is stripped.
     assert_eq!(loaded_link.cell_node_id, None);
-    assert!(!loaded_link.pending);
 }
 
 // ---------------------------------------------------------------------------

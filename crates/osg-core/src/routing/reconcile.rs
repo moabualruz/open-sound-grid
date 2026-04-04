@@ -13,8 +13,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession,
-    ReconcileSettings, VolumeLockMuteState, average_volumes, volumes_mixed,
+    ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkKey, LinkState,
+    MixerSession, ReconcileSettings, RuntimeState, VolumeLockMuteState, average_volumes,
+    volumes_mixed,
 };
 use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
 use itertools::Itertools;
@@ -40,8 +41,9 @@ impl ReconciliationService {
         state: &mut MixerSession,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
     ) -> Vec<ToPipewireMessage> {
-        state.diff(graph, settings)
+        state.diff(graph, settings, rt)
     }
 }
 
@@ -55,17 +57,18 @@ impl MixerSession {
         &mut self,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
     ) -> Vec<ToPipewireMessage> {
-        let endpoint_nodes = self.diff_nodes(graph, settings);
-        let mut messages = self.auto_create_app_channels(graph);
+        let endpoint_nodes = self.diff_nodes(graph, settings, rt);
+        let mut messages = self.auto_create_app_channels(graph, rt);
         self.ensure_default_links();
-        messages.extend(self.diff_channels(&endpoint_nodes, graph));
-        messages.extend(self.diff_cells(graph));
+        messages.extend(self.diff_channels(&endpoint_nodes, graph, rt));
+        messages.extend(self.diff_cells(graph, rt));
         self.resolve_cell_node_ids(graph);
-        messages.extend(self.diff_cell_links(graph));
+        messages.extend(self.diff_cell_links(graph, rt));
         messages.extend(self.diff_app_routing(graph));
-        messages.extend(self.diff_properties(&endpoint_nodes));
-        messages.extend(self.diff_links(graph, &endpoint_nodes));
+        messages.extend(self.diff_properties(&endpoint_nodes, rt));
+        messages.extend(self.diff_links(graph, &endpoint_nodes, rt));
         messages
     }
     // diff_nodes — resolve every endpoint to PipeWire nodes
@@ -77,6 +80,7 @@ impl MixerSession {
         &mut self,
         graph: &'a AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
     ) -> HashMap<EndpointDescriptor, Vec<&'a PwNode>> {
         let mut remaining_nodes: HashSet<(u32, PortKind)> = graph
             .nodes
@@ -122,7 +126,7 @@ impl MixerSession {
             }
         }
         // Leftover PW nodes become candidates for the UI to offer.
-        self.candidates = remaining_nodes
+        rt.candidates = remaining_nodes
             .into_iter()
             .filter_map(|(id, kind)| {
                 let node = graph.nodes.get(&id)?;
@@ -139,9 +143,10 @@ impl MixerSession {
 
     #[allow(clippy::expect_used, clippy::expect_fun_call)] // channel keys come from self.channels iteration
     fn diff_channels(
-        &mut self,
+        &self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
         _graph: &AudioGraph,
+        rt: &mut RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
@@ -160,15 +165,11 @@ impl MixerSession {
                 .get(&endpoint_desc)
                 .and_then(|nodes| nodes.first())
             {
-                let channel = self
-                    .channels
-                    .get_mut(&id)
-                    .expect(&format!("channel {id:?} must exist for mutation"));
-                if channel.pending {
-                    channel.pending = false;
+                if rt.channel_pending(&id) {
+                    rt.set_channel_pending(id, false);
                 }
-                if channel.pipewire_id != Some(node.id) {
-                    channel.pipewire_id = Some(node.id);
+                if rt.channel_pipewire_id(&id) != Some(node.id) {
+                    rt.set_channel_pipewire_id(id, Some(node.id));
                     // Create resident mix-level EQ filter
                     let ep = self
                         .endpoints
@@ -182,10 +183,10 @@ impl MixerSession {
             } else {
                 let channel = self
                     .channels
-                    .get_mut(&id)
+                    .get(&id)
                     .expect(&format!("channel {id:?} must exist for mutation"));
-                if !channel.pending {
-                    channel.pending = true;
+                if !rt.channel_pending(&id) {
+                    rt.set_channel_pending(id, true);
                     let ep = self
                         .endpoints
                         .get(&endpoint_desc)
@@ -193,8 +194,8 @@ impl MixerSession {
                     messages.push(ToPipewireMessage::CreateGroupNode(
                         ep.display_name.clone(),
                         id.inner(),
-                        channel.kind,
-                        self.instance_id,
+                        channel.kind.into(),
+                        rt.instance_id,
                     ));
                 }
             }
@@ -211,6 +212,7 @@ impl MixerSession {
     pub fn diff_properties(
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
+        rt: &mut RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let mut messages = Vec::new();
 
@@ -220,7 +222,7 @@ impl MixerSession {
             };
             let num_messages_before = messages.len();
 
-            if endpoint.volume_pending {
+            if rt.volume_pending(ep_desc) {
                 // While a command is in-flight, just check if PW has converged.
                 let volumes_match = if endpoint.volume_locked_muted.is_locked() {
                     nodes
@@ -234,7 +236,7 @@ impl MixerSession {
                 let mute_match = endpoint.volume_locked_muted.is_muted()
                     == crate::graph::aggregate_bools(nodes.iter().map(|n| &n.mute));
                 if volumes_match && mute_match {
-                    endpoint.volume_pending = false;
+                    rt.set_volume_pending(*ep_desc, false);
                 }
             } else if endpoint.volume_locked_muted.is_locked() {
                 // Locked: push desired volume to any divergent nodes.
@@ -276,7 +278,7 @@ impl MixerSession {
             }
 
             if messages.len() > num_messages_before {
-                endpoint.volume_pending = true;
+                rt.set_volume_pending(*ep_desc, true);
             }
         }
 
@@ -291,6 +293,7 @@ impl MixerSession {
         &mut self,
         graph: &AudioGraph,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
+        rt: &mut RuntimeState,
     ) -> Vec<ToPipewireMessage> {
         let (node_links, mut remaining_endpoint_links) =
             self.find_relevant_links(graph, endpoint_nodes);
@@ -309,10 +312,12 @@ impl MixerSession {
                 continue;
             };
 
+            let link_key: LinkKey = (link.start, link.end);
+
             // If a command is in-flight, just check convergence.
-            if link.pending {
+            if rt.link_pending(&link_key) {
                 if are_endpoints_connected(source, sink, &node_links) == link.state.is_connected() {
-                    link.pending = false;
+                    rt.set_link_pending(link_key, false);
                 }
                 continue;
             }
@@ -363,12 +368,14 @@ impl MixerSession {
             }
 
             if messages.len() > num_messages_before {
-                link.pending = true;
+                rt.set_link_pending(link_key, true);
             }
         }
 
         // Remove dead links in reverse order to preserve indices.
         for i in to_remove_indices.into_iter().rev() {
+            let removed = &self.links[i];
+            rt.remove_link(&(removed.start, removed.end));
             self.links.swap_remove(i);
         }
 
@@ -389,7 +396,6 @@ impl MixerSession {
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
                     cell_node_id: None,
-                    pending: false,
                     cell_eq: EqConfig::default(),
                     cell_effects: EffectsConfig::default(),
                 }),
@@ -401,7 +407,6 @@ impl MixerSession {
                     cell_volume_left: 1.0,
                     cell_volume_right: 1.0,
                     cell_node_id: None,
-                    pending: false,
                     cell_eq: EqConfig::default(),
                     cell_effects: EffectsConfig::default(),
                 }),
@@ -596,7 +601,6 @@ impl MixerSession {
                         cell_eq: EqConfig::default(),
                         cell_effects: EffectsConfig::default(),
                         cell_node_id: None,
-                        pending: false,
                     });
                 }
             }

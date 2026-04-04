@@ -2,7 +2,7 @@
 //
 // Handles: SetVolume, SetStereoVolume, SetMute, SetVolumeLocked
 
-use crate::graph::{EndpointDescriptor, MixerSession, ReconcileSettings};
+use crate::graph::{EndpointDescriptor, MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 
 impl MixerSession {
@@ -13,6 +13,7 @@ impl MixerSession {
         volume: f32,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> bool {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
@@ -34,7 +35,7 @@ impl MixerSession {
                 })
                 .collect();
             if !msgs.is_empty() {
-                endpoint.volume_pending = true;
+                rt.set_volume_pending(ep_desc, true);
             }
             pw_messages.extend(msgs);
         } else if let EndpointDescriptor::Channel(ch_id) = ep_desc {
@@ -62,6 +63,7 @@ impl MixerSession {
         right: f32,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
@@ -86,7 +88,7 @@ impl MixerSession {
                 })
                 .collect();
             if !msgs.is_empty() {
-                endpoint.volume_pending = true;
+                rt.set_volume_pending(ep_desc, true);
             }
             pw_messages.extend(msgs);
         } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
@@ -111,6 +113,7 @@ impl MixerSession {
         muted: bool,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> bool {
         // Update endpoint state
@@ -120,11 +123,15 @@ impl MixerSession {
             };
             endpoint.volume_locked_muted = endpoint.volume_locked_muted.with_mute(muted);
             if muted {
-                endpoint.pre_mute_volume = Some((endpoint.volume_left, endpoint.volume_right));
+                rt.set_pre_mute_volume(
+                    ep_desc,
+                    Some((endpoint.volume_left, endpoint.volume_right)),
+                );
                 endpoint.volume_left = 0.0;
                 endpoint.volume_right = 0.0;
                 endpoint.volume = 0.0;
-            } else if let Some((left, right)) = endpoint.pre_mute_volume.take() {
+            } else if let Some((left, right)) = rt.pre_mute_volume(&ep_desc) {
+                rt.set_pre_mute_volume(ep_desc, None);
                 endpoint.volume_left = left;
                 endpoint.volume_right = right;
                 endpoint.volume = (left + right) / 2.0;
@@ -178,6 +185,7 @@ impl MixerSession {
         locked: bool,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
+        rt: &mut RuntimeState,
         pw_messages: &mut Vec<ToPipewireMessage>,
     ) -> bool {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
@@ -199,7 +207,7 @@ impl MixerSession {
                 return false;
             };
 
-            if !endpoint.volume_pending
+            if !rt.volume_pending(&ep_desc)
                 && nodes
                     .iter()
                     .all(|n| n.channel_volumes.iter().all(|v| *v == endpoint.volume))
@@ -218,7 +226,7 @@ impl MixerSession {
                 })
                 .collect();
             if !msgs.is_empty() {
-                endpoint.volume_pending = true;
+                rt.set_volume_pending(ep_desc, true);
             }
             pw_messages.extend(msgs);
         } else {

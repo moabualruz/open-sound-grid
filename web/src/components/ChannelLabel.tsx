@@ -1,7 +1,8 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import {
   Volume2,
   VolumeX,
@@ -29,8 +30,6 @@ interface ChannelLabelProps {
   peakRight?: number;
 }
 
-const DEBOUNCE_MS = 16;
-
 function channelIcon(displayName: string) {
   switch (displayName) {
     case "Music":
@@ -57,8 +56,22 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const [localR, setLocalR] = createSignal(1);
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let userDragging = false;
+
+  const sendDebounced = useVolumeDebounce((v) => {
+    send({ type: "setVolume", endpoint: props.descriptor, volume: v });
+    userDragging = false;
+  });
+
+  const sendStereoDebounced = useVolumeDebounce((_v) => {
+    send({
+      type: "setStereoVolume",
+      endpoint: props.descriptor,
+      left: localL(),
+      right: localR(),
+    });
+    userDragging = false;
+  });
 
   const isStereo = () => settings.stereoMode === "stereo";
 
@@ -97,11 +110,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     setLocal(value);
     setLocalL(value);
     setLocalR(value);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({ type: "setVolume", endpoint: props.descriptor, volume: value });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendDebounced(value);
   }
 
   function handleStereoInput(channel: "left" | "right", value: number) {
@@ -109,21 +118,8 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     if (channel === "left") setLocalL(value);
     else setLocalR(value);
     setLocal((localL() + localR()) / 2);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setStereoVolume",
-        endpoint: props.descriptor,
-        left: localL(),
-        right: localR(),
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendStereoDebounced(value);
   }
-
-  onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-  });
 
   const pct = () => Math.round(local() * 100);
   const pctL = () => Math.round(localL() * 100);

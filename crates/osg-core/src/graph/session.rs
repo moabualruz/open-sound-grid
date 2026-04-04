@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pw::{NodeIdentifier, PortKind};
 
-use super::channel::App;
-use super::channel::{Channel, Device};
+use super::channel::{App, Channel, Device};
 use super::endpoint::{Endpoint, EndpointDescriptor};
 use super::identifiers::{AppId, ChannelId, DeviceId, PersistentNodeId};
 use super::link::Link;
@@ -28,8 +27,6 @@ pub struct MixerSession {
         deserialize_with = "crate::graph::serde_helpers::deserialize_map_from_vec"
     )]
     pub endpoints: HashMap<EndpointDescriptor, Endpoint>,
-    #[serde(skip)]
-    pub candidates: Vec<(u32, PortKind, NodeIdentifier)>,
     #[serde(default)]
     pub links: Vec<Link>,
     /// Mapping from persistent node IDs to their identifiers.
@@ -47,27 +44,6 @@ pub struct MixerSession {
     /// User-defined display order for sink mixes (columns).
     #[serde(default)]
     pub mix_order: Vec<EndpointDescriptor>,
-    /// PipeWire node ID of the OS default audio sink.
-    /// Updated from PipeWire metadata `default.audio.sink`.
-    #[serde(skip)]
-    pub default_output_node_id: Option<u32>,
-    /// Tracks which cell nodes have been created (by "osg.cell.{ch_pw_id}.{mix_pw_id}" name).
-    /// Prevents duplicate creation in the reconciliation loop.
-    #[serde(skip)]
-    pub created_cells: std::collections::HashSet<String>,
-    /// Monotonically increasing counter bumped on every `update()` call.
-    /// The reducer uses this to skip reconciliation when only graph events
-    /// arrive but the desired state hasn't changed.
-    #[serde(skip)]
-    pub generation: u64,
-    /// ULID of the current OSG instance. Stamped on all PW nodes for
-    /// ownership tracking. Stale nodes from a crashed previous instance
-    /// are reaped on startup.
-    #[serde(skip)]
-    pub instance_id: ulid::Ulid,
-    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
-    #[serde(skip)]
-    pub staging_node_id: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

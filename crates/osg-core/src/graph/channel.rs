@@ -7,8 +7,14 @@ use crate::pw::{NodeIdentifier, PortKind};
 use super::endpoint::EndpointDescriptor;
 use super::identifiers::AppId;
 
-/// The kind of virtual audio bus. Domain alias for pw::ChannelKind.
-pub type ChannelKind = crate::pw::GroupNodeKind;
+/// The kind of virtual audio bus. Owned by the domain layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChannelKind {
+    Source,
+    Sink,
+    Duplex,
+}
 
 fn default_true() -> bool {
     true
@@ -73,13 +79,6 @@ pub struct Channel {
     /// prevents users from assigning apps to them.
     #[serde(default = "default_true")]
     pub allow_app_assignment: bool,
-    /// PipeWire ID — only used for Sink (mix) channels. Source channels
-    /// are logical-only and do not have a PW node (ADR-007).
-    #[serde(skip)]
-    pub pipewire_id: Option<u32>,
-    /// True while a create request is in-flight (mixes only).
-    #[serde(skip)]
-    pub pending: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -92,8 +91,6 @@ pub struct Channel {
 pub struct App {
     pub id: AppId,
     pub kind: PortKind,
-    #[serde(skip)]
-    pub is_active: bool,
     pub name: String,
     pub binary: String,
     pub icon_name: String,
@@ -110,7 +107,6 @@ impl App {
         Self {
             id: AppId::new(),
             kind,
-            is_active: false,
             name: application_name,
             binary,
             icon_name,

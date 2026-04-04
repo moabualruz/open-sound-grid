@@ -6,6 +6,10 @@ use super::effects_config::EffectsConfig;
 use super::endpoint::{EndpointDescriptor, default_one};
 use super::eq_config::EqConfig;
 
+/// Key used to identify a link in RuntimeState maps.
+/// Tuple of (source descriptor, sink descriptor).
+pub type LinkKey = (EndpointDescriptor, EndpointDescriptor);
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Link {
@@ -33,9 +37,6 @@ pub struct Link {
     /// Transient: populated at runtime by reconciliation, stripped before persistence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_node_id: Option<u32>,
-    /// Transient: a link command is in-flight to PipeWire.
-    #[serde(skip)]
-    pub pending: bool,
 }
 
 /// The desired link state. There is no "DisconnectedUnlocked" variant;

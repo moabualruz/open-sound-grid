@@ -3,7 +3,7 @@
  * Contains: back button, monitor toggle, EQ panel, effects blocks.
  * Monitor mode: solo this audio path, muting everything else.
  */
-import { onCleanup, Show } from "solid-js";
+import { Show } from "solid-js";
 import { Headphones, ArrowLeft } from "lucide-solid";
 import EqPanel from "./EqPanel";
 import EffectsBlock from "./EffectsBlock";
@@ -11,7 +11,7 @@ import type { SourceType } from "./EffectsBlock";
 import type { EndpointDescriptor, EqConfig, EffectsConfig, Command } from "../types";
 import { useSession } from "../stores/sessionStore";
 import { useMonitor } from "../stores/monitorStore";
-import { computeMutedLinks, computeRestoreVolumes } from "./monitorLogic";
+import { useMonitorOrchestration } from "../hooks/useMonitorOrchestration";
 
 export interface EqPageTarget {
   label: string;
@@ -37,127 +37,21 @@ interface EqPageProps {
   send: (cmd: Command) => void;
 }
 
-function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 export default function EqPage(props: EqPageProps) {
   const { state } = useSession();
-  const monitor = useMonitor();
-  /** Track which links were muted by monitoring (for restore). Only stores source+target IDs. */
-  let mutedLinkIds: { source: EndpointDescriptor; target: EndpointDescriptor }[] = [];
-  /** Track endpoint mute states for mix monitoring. */
-  let mutedEndpoints: { endpoint: EndpointDescriptor; wasMuted: boolean }[] = [];
+  const monitorStore = useMonitor();
 
-  // Auto-disable monitoring when leaving the page
-  onCleanup(() => {
-    if (monitor.state.monitoredCell !== null && isMonitoringActive()) {
-      disableMonitoring();
-    }
+  const { isMonitoringActive, toggleMonitoring, disableMonitoring } = useMonitorOrchestration({
+    getSession: () => state.session,
+    monitorStore,
+    getSend: () => props.send,
+    getSinkDescriptor: () => props.target.sinkDescriptor,
+    getCellSource: () => props.target.cellSource,
+    getEndpoint: () => props.target.endpoint,
   });
 
-  function isMonitoringActive() {
-    const t = props.target;
-    const sinkDesc = t.sinkDescriptor;
-    if (!sinkDesc) return false;
-    if (t.cellSource) {
-      return (
-        monitor.state.monitoredCell !== null &&
-        descriptorsEqual(monitor.state.monitoredCell!.source, t.cellSource) &&
-        descriptorsEqual(monitor.state.monitoredCell!.target, sinkDesc)
-      );
-    }
-    // For mix monitoring, check if any monitored cell targets this mix
-    return monitor.state.monitoredCell !== null;
-  }
-
-  function toggleMonitoring() {
-    if (monitor.state.monitoredCell !== null && isMonitoringActive()) {
-      disableMonitoring();
-    } else {
-      enableMonitoring();
-    }
-  }
-
-  function enableMonitoring() {
-    const t = props.target;
-    const sinkDesc = t.sinkDescriptor;
-    if (!sinkDesc) return;
-
-    if (t.cellSource) {
-      // Cell monitoring: mute ALL other links across ALL mixes
-      const sourceDesc = t.cellSource;
-      const result = computeMutedLinks(state.session.links, sourceDesc, sinkDesc);
-
-      // Boost the monitored cell to 100%
-      if (result.monitoredLink) {
-        props.send({
-          type: "setLinkVolume",
-          source: result.monitoredLink.source,
-          target: result.monitoredLink.target,
-          volume: 1,
-        });
-      }
-
-      // Mute all other links
-      for (const m of result.linksToMute) {
-        props.send({ type: "setLinkVolume", source: m.source, target: m.target, volume: 0 });
-      }
-
-      // Track muted link IDs for restore (not volumes — we'll re-read at restore time)
-      mutedLinkIds = result.linksToMute.map((m) => ({ source: m.source, target: m.target }));
-
-      monitor.startMonitoring(sourceDesc, sinkDesc);
-    } else if (t.endpoint) {
-      // Mix monitoring: mute ALL OTHER mix endpoints, unmute this one
-      const thisMixDesc = sinkDesc;
-      mutedEndpoints = [];
-      for (const [desc, ep] of state.session.endpoints) {
-        if (!("channel" in desc)) continue;
-        const ch = state.session.channels[desc.channel];
-        if (!ch || ch.kind !== "sink") continue;
-        const isMuted =
-          ep.volumeLockedMuted === "mutedLocked" || ep.volumeLockedMuted === "mutedUnlocked";
-        if (descriptorsEqual(desc, thisMixDesc)) {
-          if (isMuted) {
-            mutedEndpoints.push({ endpoint: desc, wasMuted: true });
-            props.send({ type: "setMute", endpoint: desc, muted: false });
-          }
-        } else {
-          mutedEndpoints.push({ endpoint: desc, wasMuted: isMuted });
-          if (!isMuted) {
-            props.send({ type: "setMute", endpoint: desc, muted: true });
-          }
-        }
-      }
-      monitor.startMonitoring(t.endpoint, sinkDesc);
-    }
-  }
-
-  function disableMonitoring() {
-    // Restore cell link volumes by re-reading current state
-    const restore = computeRestoreVolumes(state.session.links, mutedLinkIds);
-    for (const cmd of restore.commands) {
-      props.send({
-        type: "setLinkVolume",
-        source: cmd.source,
-        target: cmd.target,
-        volume: cmd.volume,
-      });
-    }
-    mutedLinkIds = [];
-
-    // Restore mix mute states
-    for (const { endpoint, wasMuted } of mutedEndpoints) {
-      props.send({ type: "setMute", endpoint, muted: wasMuted });
-    }
-    mutedEndpoints = [];
-
-    monitor.stopMonitoring();
-  }
-
   function handleBack() {
-    if (monitor.state.monitoredCell !== null && isMonitoringActive()) disableMonitoring();
+    if (monitorStore.state.monitoredCell !== null && isMonitoringActive()) disableMonitoring();
     props.onBack();
   }
 

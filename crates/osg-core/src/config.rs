@@ -75,16 +75,15 @@ impl Default for PersistentState {
 
 impl PersistentState {
     /// Build a saveable snapshot, stripping transient data.
-    pub fn from_state(mut state: MixerSession) -> Self {
+    pub fn from_state(mut state: MixerSession, runtime: &crate::graph::RuntimeState) -> Self {
         // Only persist locked links.
         state.links.retain(|link| link.state.is_locked());
-        // Strip transient runtime fields from links before persistence.
+        // Strip transient cell_node_id from links before persistence.
         for link in &mut state.links {
             link.cell_node_id = None;
-            link.pending = false;
         }
         // Only persist active applications.
-        state.apps.retain(|_, app| app.is_active);
+        state.apps.retain(|id, _| runtime.app_is_active(id));
 
         Self {
             version: migration::CURRENT_VERSION.to_owned(),
