@@ -28,6 +28,8 @@ pub(super) struct CellNodeArgs {
     pub channel_ulid: String,
     /// Mix ULID string (for cell_node_ids key).
     pub mix_ulid: String,
+    /// OSG instance ULID stamped on the PW node for ownership tracking.
+    pub instance_id: ulid::Ulid,
 }
 
 /// Create a per-cell null-audio-sink. ADR-007: apps link directly here.
@@ -42,6 +44,7 @@ pub(super) fn create_cell_node(
         cell_id,
         channel_ulid,
         mix_ulid,
+        instance_id,
     } = args;
     let cell_name = cell_id;
     let proxy = pw_core
@@ -63,6 +66,8 @@ pub(super) fn create_cell_node(
                 "session.suspend-timeout-seconds" => "0",
                 "pulse.disable" => "true",
                 *OBJECT_LINGER => "true",
+                // Instance ownership tag for orphan cleanup
+                "osg.instance" => instance_id.to_string(),
             },
         )
         .map_err(|e| PwError::SinkCreationFailed(format!("cell node '{name}': {e}")))?;

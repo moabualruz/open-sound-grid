@@ -72,14 +72,20 @@ impl OsgCore {
             filter_store.clone(),
         )?;
 
-        // ADR-007: Create staging sink — always-alive, vol=0, for glitch-free rerouting
-        let _ = pw_sender.send(ToPipewireMessage::CreateGroupNode(
-            "Staging".to_owned(),
-            ulid::Ulid::nil(),
-            crate::pw::GroupNodeKind::Sink,
-        ));
+        // Generate a unique instance ID for this process lifetime.
+        // Stamped on all PW nodes for ownership tracking.
+        let instance_id = ulid::Ulid::new();
 
-        debug!("OsgCore initialized, PipeWire connected, reducer started");
+        // ADR-007: Create staging sink — always-alive, vol=0, for glitch-free rerouting
+        let _ = pw_sender.send(ToPipewireMessage::CreateStagingSink { instance_id });
+
+        // Propagate instance_id to the reducer so reconciliation can stamp new nodes.
+        reducer.set_instance_id(instance_id);
+
+        debug!(
+            %instance_id,
+            "OsgCore initialized, PipeWire connected, reducer started"
+        );
 
         Ok(Self {
             _pw_handle: pw_handle,

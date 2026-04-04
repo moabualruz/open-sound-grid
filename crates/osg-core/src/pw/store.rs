@@ -62,6 +62,10 @@ pub(super) struct Store {
     pub(super) cell_proxies: CellProxies,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
     pub(super) cell_node_ids: HashMap<(String, String), u32>,
+    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
+    pub(super) staging_node_id: Option<u32>,
+    /// ULID of the current OSG instance. Set after CreateStagingSink.
+    pub(super) instance_id: Option<ulid::Ulid>,
 }
 
 impl Store {
@@ -78,6 +82,8 @@ impl Store {
             default_source_name: None,
             cell_proxies: CellProxies::new(),
             cell_node_ids: HashMap::new(),
+            staging_node_id: None,
+            instance_id: None,
         }
     }
 
@@ -445,6 +451,7 @@ impl Store {
             default_sink_name: self.default_sink_name.clone(),
             default_source_name: self.default_source_name.clone(),
             cell_node_ids: self.cell_node_ids.clone(),
+            staging_node_id: self.staging_node_id,
         }
     }
 }

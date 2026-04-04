@@ -161,6 +161,9 @@ impl Default for LimiterParams {
     }
 }
 
+// SmartVolumeParams and SpatialAudioParams live in effects_dsp.rs.
+pub use super::effects_dsp::{SmartVolumeParams, SpatialAudioParams};
+
 /// All effects params bundled for ArcSwap sharing.
 #[derive(Debug, Clone, Default)]
 pub struct EffectsParams {
@@ -170,14 +173,19 @@ pub struct EffectsParams {
     pub limiter: LimiterParams,
     /// Volume boost in dB (0–12). Applied as linear gain after limiter.
     pub boost: f32,
+    pub smart_volume: SmartVolumeParams,
+    pub spatial: SpatialAudioParams,
 }
 
-/// Per-channel envelope state for compressor/gate (lives in CallbackData, not shared).
+/// Per-channel envelope state for compressor/gate/smart-volume (lives in CallbackData, not shared).
 #[derive(Debug, Default)]
 pub(super) struct EnvelopeState {
     pub(super) compressor_env: f32,    // current envelope level (linear)
     pub(super) gate_env: f32,          // gate envelope (0.0 = closed, 1.0 = open)
     pub(super) gate_hold_counter: f32, // samples remaining in hold phase
+    pub(super) sv_rms_sum: f64,        // running sum of squared samples for RMS window
+    pub(super) sv_sample_count: u32,   // samples accumulated in current RMS window
+    pub(super) sv_current_gain: f32,   // current applied gain (linear, starts at 1.0)
 }
 
 /// Shared handle for lock-free EQ/volume/mute parameter passing and peak reading.
@@ -317,7 +325,8 @@ pub fn process_block(
 
 // Effects DSP processing functions live in effects_dsp.rs.
 use super::effects_dsp::{
-    apply_boost, apply_compressor, apply_de_esser, apply_gate, apply_limiter,
+    apply_boost, apply_compressor, apply_de_esser, apply_gate, apply_limiter, apply_smart_volume,
+    apply_spatial,
 };
 
 // ---------------------------------------------------------------------------
@@ -680,6 +689,10 @@ unsafe extern "C" fn on_process(
     let mut peak_l: f32 = 0.0;
     let mut peak_r: f32 = 0.0;
 
+    // Track whether each channel has live audio (for spatial crossfeed).
+    let mut l_has_signal = false;
+    let mut r_has_signal = false;
+
     // Always write output — silence if no input or muted, to prevent graph stalls.
     if !out_l.is_null() {
         let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
@@ -695,19 +708,14 @@ unsafe extern "C" fn on_process(
                 let eq = d.handle.load_eq();
                 process_block(in_slice_l, out_slice_l, &eq, &mut d.states_l);
             }
-            // Effects chain: gate → compressor → de-esser → limiter → boost
+            // Effects chain: gate → compressor → de-esser → limiter → boost → smart volume
             apply_gate(out_slice_l, &fx.gate, &mut d.env_l, SAMPLE_RATE);
             apply_compressor(out_slice_l, &fx.compressor, &mut d.env_l, SAMPLE_RATE);
             apply_de_esser(out_slice_l, &fx.de_esser);
             apply_limiter(out_slice_l, &fx.limiter);
             apply_boost(out_slice_l, fx.boost);
-            // Volume gain
-            if (vol_l - 1.0).abs() > f32::EPSILON {
-                for s in out_slice_l.iter_mut() {
-                    *s *= vol_l;
-                }
-            }
-            peak_l = out_slice_l.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+            apply_smart_volume(out_slice_l, &fx.smart_volume, &mut d.env_l, SAMPLE_RATE);
+            l_has_signal = true;
         }
     }
     if !out_r.is_null() {
@@ -723,20 +731,44 @@ unsafe extern "C" fn on_process(
                 let eq = d.handle.load_eq();
                 process_block(in_slice_r, out_slice_r, &eq, &mut d.states_r);
             }
-            // Effects chain: gate → compressor → de-esser → limiter → boost
+            // Effects chain: gate → compressor → de-esser → limiter → boost → smart volume
             apply_gate(out_slice_r, &fx.gate, &mut d.env_r, SAMPLE_RATE);
             apply_compressor(out_slice_r, &fx.compressor, &mut d.env_r, SAMPLE_RATE);
             apply_de_esser(out_slice_r, &fx.de_esser);
             apply_limiter(out_slice_r, &fx.limiter);
             apply_boost(out_slice_r, fx.boost);
-            // Volume gain
-            if (vol_r - 1.0).abs() > f32::EPSILON {
-                for s in out_slice_r.iter_mut() {
-                    *s *= vol_r;
-                }
-            }
-            peak_r = out_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+            apply_smart_volume(out_slice_r, &fx.smart_volume, &mut d.env_r, SAMPLE_RATE);
+            r_has_signal = true;
         }
+    }
+
+    // Spatial audio (crossfeed + stereo width) — operates on both channels simultaneously.
+    // Must run after all per-channel effects but before volume gain and peak measurement.
+    if l_has_signal && r_has_signal && !out_l.is_null() && !out_r.is_null() {
+        let fx = d.handle.load_effects();
+        let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
+        let out_slice_r = std::slice::from_raw_parts_mut(out_r, n);
+        apply_spatial(out_slice_l, out_slice_r, &fx.spatial);
+    }
+
+    // Volume gain and peak measurement (after spatial).
+    if !out_l.is_null() {
+        let out_slice_l = std::slice::from_raw_parts_mut(out_l, n);
+        if l_has_signal && (vol_l - 1.0).abs() > f32::EPSILON {
+            for s in out_slice_l.iter_mut() {
+                *s *= vol_l;
+            }
+        }
+        peak_l = out_slice_l.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+    }
+    if !out_r.is_null() {
+        let out_slice_r = std::slice::from_raw_parts_mut(out_r, n);
+        if r_has_signal && (vol_r - 1.0).abs() > f32::EPSILON {
+            for s in out_slice_r.iter_mut() {
+                *s *= vol_r;
+            }
+        }
+        peak_r = out_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
     }
     d.handle.store_peaks(peak_l, peak_r);
 }

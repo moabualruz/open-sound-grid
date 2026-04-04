@@ -128,6 +128,12 @@ impl MixerSession {
     }
 
     /// Handle `StateMsg::AssignApp` — assign an app to a channel and park its auto-channel.
+    ///
+    /// Uses the staging sink for glitch-free rerouting: before unlinking from
+    /// old cell sinks, each app stream is linked to the staging sink (vol=0)
+    /// so it always has an output destination. The reconciler links to new
+    /// cell sinks on the next tick, then the staging link is cleaned up.
+    #[allow(clippy::too_many_lines)] // Multi-step staging + unlink + restore logic
     pub(crate) fn handle_assign_app(
         &mut self,
         channel_id: crate::graph::ChannelId,
@@ -146,6 +152,19 @@ impl MixerSession {
         }
 
         ch.assigned_apps.push(assignment.clone());
+
+        // Collect app stream node IDs for staging sink linking
+        let app_stream_ids: Vec<u32> = graph
+            .nodes
+            .values()
+            .filter(|n| {
+                n.identifier.application_name.as_deref() == Some(&assignment.application_name)
+                    && n.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
+                    && n.has_port_kind(PortKind::Source)
+            })
+            .map(|n| n.id)
+            .collect();
+
         // ADR-007: Reconciler's diff_app_routing handles actual linking
         // to cell sinks on the next tick. No immediate redirect needed.
         // Destroy the app's auto-channel — it will be recreated on unassign
@@ -161,6 +180,17 @@ impl MixerSession {
             })
             .map(|(id, _)| *id);
         if let Some(id) = auto_id {
+            // Staging sink: link app streams to staging BEFORE unlinking from old cells.
+            // This prevents audio glitches from having no output destination.
+            if let Some(staging_id) = self.staging_node_id {
+                for &stream_id in &app_stream_ids {
+                    pw_messages.push(ToPipewireMessage::CreateNodeLinks {
+                        start_id: stream_id,
+                        end_id: staging_id,
+                    });
+                }
+            }
+
             // ADR-007: Don't destroy the auto-channel's cells/filters —
             // just unlink apps from them. Cells keep their volume/EQ state
             // and get relinked when the app is ungrouped.
@@ -170,14 +200,14 @@ impl MixerSession {
                     .node_name()
                     .is_some_and(|name| name.starts_with(&prefix))
                 {
-                    for app_node in graph.nodes.values() {
+                    for &stream_id in &app_stream_ids {
                         if graph
                             .links
                             .values()
-                            .any(|l| l.start_node == app_node.id && l.end_node == nid)
+                            .any(|l| l.start_node == stream_id && l.end_node == nid)
                         {
                             pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                                start_id: app_node.id,
+                                start_id: stream_id,
                                 end_id: nid,
                             });
                         }
@@ -186,6 +216,17 @@ impl MixerSession {
                     pw_messages.push(ToPipewireMessage::NodeVolume(nid, vec![0.0, 0.0]));
                 }
             }
+
+            // Remove staging links — the reconciler will link to new cells
+            if let Some(staging_id) = self.staging_node_id {
+                for &stream_id in &app_stream_ids {
+                    pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+                        start_id: stream_id,
+                        end_id: staging_id,
+                    });
+                }
+            }
+
             // Hide the auto-channel but keep it in the model
             if let Some(ep) = self.endpoints.get_mut(&EndpointDescriptor::Channel(id)) {
                 ep.visible = false;
@@ -210,6 +251,28 @@ impl MixerSession {
 
         ch.assigned_apps.retain(|a| a != &assignment);
 
+        // Collect app stream node IDs for staging sink linking
+        let app_stream_ids: Vec<u32> = graph
+            .nodes
+            .values()
+            .filter(|n| {
+                n.identifier.application_name.as_deref() == Some(&assignment.application_name)
+                    && n.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
+                    && n.has_port_kind(PortKind::Source)
+            })
+            .map(|n| n.id)
+            .collect();
+
+        // Staging sink: link app streams to staging BEFORE clearing old redirects
+        if let Some(staging_id) = self.staging_node_id {
+            for &stream_id in &app_stream_ids {
+                pw_messages.push(ToPipewireMessage::CreateNodeLinks {
+                    start_id: stream_id,
+                    end_id: staging_id,
+                });
+            }
+        }
+
         // ADR-007: Clear links from app streams to all cell sinks for this channel
         let prefix = format!("osg.cell.{}-to-", channel_id.inner());
         let cell_ids: Vec<u32> = graph
@@ -222,21 +285,26 @@ impl MixerSession {
                     .map(|_| nid)
             })
             .collect();
-        for node in graph.nodes.values() {
-            if node.identifier.application_name.as_deref() == Some(&assignment.application_name)
-                && node.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
-                && node.has_port_kind(PortKind::Source)
-            {
-                for &cell_id in &cell_ids {
-                    pw_messages.push(ToPipewireMessage::ClearRedirect {
-                        stream_node_id: node.id,
-                        target_node_id: cell_id,
-                    });
-                }
-                debug!(
-                    "[State] cleared redirect for {} (node {})",
-                    assignment.application_name, node.id
-                );
+        for &stream_id in &app_stream_ids {
+            for &cell_id in &cell_ids {
+                pw_messages.push(ToPipewireMessage::ClearRedirect {
+                    stream_node_id: stream_id,
+                    target_node_id: cell_id,
+                });
+            }
+            debug!(
+                "[State] cleared redirect for {} (node {stream_id})",
+                assignment.application_name
+            );
+        }
+
+        // Remove staging links — the auto-channel restore or reconciler handles new links
+        if let Some(staging_id) = self.staging_node_id {
+            for &stream_id in &app_stream_ids {
+                pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+                    start_id: stream_id,
+                    end_id: staging_id,
+                });
             }
         }
         // Restore hidden auto-channel if it exists

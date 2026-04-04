@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, For, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
@@ -13,7 +13,7 @@ interface SettingsPanelProps {
 export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
   const { state } = useSession();
   const graphState = useGraph();
-  const { settings, setStereoMode } = useMixerSettings();
+  const { settings, setStereoMode, setTheme } = useMixerSettings();
   const [presetName, setPresetName] = createSignal("");
   // TODO(backend): persist latency setting via command
   const [latency, setLatency] = createSignal("0");
@@ -137,24 +137,27 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
                 Appearance
               </h3>
               <div class="flex gap-2">
-                <button class="flex flex-1 items-center justify-center gap-2 rounded-md border border-border-active bg-bg-hover px-3 py-2 text-xs text-text-primary">
-                  <Moon size={14} />
-                  Dark
-                </button>
-                <button
-                  disabled
-                  class="flex flex-1 items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-text-muted opacity-50"
+                <For
+                  each={[
+                    { value: "dark" as const, label: "Dark", Icon: Moon },
+                    { value: "light" as const, label: "Light", Icon: Sun },
+                    { value: "system" as const, label: "System", Icon: Monitor },
+                  ]}
                 >
-                  <Sun size={14} />
-                  Light
-                </button>
-                <button
-                  disabled
-                  class="flex flex-1 items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-xs text-text-muted opacity-50"
-                >
-                  <Monitor size={14} />
-                  System
-                </button>
+                  {(item) => (
+                    <button
+                      onClick={() => setTheme(item.value)}
+                      class={`flex flex-1 items-center justify-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors duration-150 ${
+                        settings.theme === item.value
+                          ? "border-border-active bg-bg-hover text-text-primary"
+                          : "border-border text-text-muted hover:text-text-secondary"
+                      }`}
+                    >
+                      <item.Icon size={14} />
+                      {item.label}
+                    </button>
+                  )}
+                </For>
               </div>
             </section>
 
@@ -206,7 +209,6 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
               <div class="space-y-1 text-[10px] text-text-muted">
                 <p>Real-time VU meters (needs /ws/levels backend endpoint)</p>
                 <p>Preset save/load (needs backend persistence)</p>
-                <p>Light/System theme</p>
                 <p>Keyboard navigation (arrow keys, shortcuts)</p>
                 <p>Compact view</p>
               </div>

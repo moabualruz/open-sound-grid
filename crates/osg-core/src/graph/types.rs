@@ -74,120 +74,8 @@ impl Default for EqConfig {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Effects — compressor / gate / de-esser / limiter configuration
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CompressorConfig {
-    pub enabled: bool,
-    /// Threshold in dBFS (e.g., -18.0).
-    pub threshold: f32,
-    /// Compression ratio (e.g., 3.0 for 3:1).
-    pub ratio: f32,
-    /// Attack time in milliseconds (converted to seconds for DSP).
-    pub attack: f32,
-    /// Release time in milliseconds.
-    pub release: f32,
-    /// Make-up gain in dB.
-    pub makeup: f32,
-}
-
-impl Default for CompressorConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            threshold: -18.0,
-            ratio: 3.0,
-            attack: 8.0,
-            release: 150.0,
-            makeup: 4.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GateConfig {
-    pub enabled: bool,
-    /// Threshold in dBFS (e.g., -45.0).
-    pub threshold: f32,
-    /// Hold time in milliseconds.
-    pub hold: f32,
-    /// Attack time in milliseconds.
-    pub attack: f32,
-    /// Release time in milliseconds.
-    pub release: f32,
-}
-
-impl Default for GateConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            threshold: -45.0,
-            hold: 150.0,
-            attack: 1.0,
-            release: 50.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeEsserConfig {
-    pub enabled: bool,
-    /// Center frequency in Hz (5000–8000).
-    pub frequency: f32,
-    /// Sidechain threshold in dBFS.
-    pub threshold: f32,
-    /// Maximum gain reduction in dB (positive, e.g., 6.0).
-    pub reduction: f32,
-}
-
-impl Default for DeEsserConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            frequency: 6000.0,
-            threshold: -20.0,
-            reduction: 6.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LimiterConfig {
-    pub enabled: bool,
-    /// Output ceiling in dBFS (e.g., -1.0).
-    pub ceiling: f32,
-    /// Release time in milliseconds.
-    pub release: f32,
-}
-
-impl Default for LimiterConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            ceiling: -1.0,
-            release: 50.0,
-        }
-    }
-}
-
-/// Full effects chain configuration for a filter node.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct EffectsConfig {
-    pub compressor: CompressorConfig,
-    pub gate: GateConfig,
-    pub de_esser: DeEsserConfig,
-    pub limiter: LimiterConfig,
-    /// Volume boost in dB (0–12). Applied as linear gain after limiter.
-    #[serde(default)]
-    pub boost: f32,
-}
+// Effects chain configs are in effects_config.rs — re-exported via mod.rs.
+pub use super::effects_config::*;
 
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -730,6 +618,14 @@ pub struct MixerSession {
     /// arrive but the desired state hasn't changed.
     #[serde(skip)]
     pub generation: u64,
+    /// ULID of the current OSG instance. Stamped on all PW nodes for
+    /// ownership tracking. Stale nodes from a crashed previous instance
+    /// are reaped on startup.
+    #[serde(skip)]
+    pub instance_id: ulid::Ulid,
+    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
+    #[serde(skip)]
+    pub staging_node_id: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

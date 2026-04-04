@@ -216,8 +216,7 @@ impl Master {
 
     fn remove_port_link(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
         let store = self.store.borrow_mut();
-        // There shouldn't be more than one link between the same two ports, but loop just in case
-        // there is for some reason.
+        // Loop in case multiple links exist between the same ports.
         for link_id in store.links.values().filter_map(|link| {
             (link.start_port == start_id && link.end_port == end_id).then_some(link.id)
         }) {
@@ -236,11 +235,13 @@ impl Master {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)] // instance_id is required for ownership tagging
     fn create_group_node(
         &self,
         name: String,
         id: Ulid,
         kind: GroupNodeKind,
+        instance_id: Ulid,
     ) -> Result<(), PwError> {
         let proxy = self
             .pw_core
@@ -267,6 +268,8 @@ impl Master {
                     "channelmix.normalize" => "false",
                     // Hide from PulseAudio clients to prevent KDE noise
                     "pulse.disable" => "true",
+                    // Instance ownership tag for orphan cleanup
+                    "osg.instance" => instance_id.to_string(),
                 },
             )
             .map_err(|e| PwError::SinkCreationFailed(format!("group node '{name}': {e}")))?;
@@ -308,6 +311,57 @@ impl Master {
             .remove(&id)
             .ok_or(PwError::GroupNodeNotFound(id))?;
         drop(group_node);
+        Ok(())
+    }
+
+    /// Create the staging sink — always-alive, vol=0, for glitch-free rerouting.
+    /// Apps transit through this node during channel reassignment so they never
+    /// have zero output destinations (which causes audible glitches).
+    fn create_staging_sink(&self, instance_id: Ulid) -> Result<(), PwError> {
+        let proxy = self
+            .pw_core
+            .create_object::<pipewire::node::Node>(
+                "adapter",
+                &properties! {
+                    *FACTORY_NAME => "support.null-audio-sink",
+                    *NODE_NAME => format!("osg.staging.{instance_id}"),
+                    *NODE_NICK => "OSG Staging",
+                    *NODE_DESCRIPTION => "OSG Staging (silent)",
+                    *APP_NAME => OSG_APP_NAME,
+                    *NODE_VIRTUAL => "true",
+                    *MEDIA_CLASS => "Audio/Sink",
+                    "audio.position" => "FL,FR",
+                    "monitor.channel-volumes" => "true",
+                    "monitor.passthrough" => "true",
+                    "channelmix.upmix" => "false",
+                    "channelmix.normalize" => "false",
+                    "session.suspend-timeout-seconds" => "0",
+                    "node.always-process" => "true",
+                    // Hide from PulseAudio clients and pavucontrol
+                    "pulse.disable" => "true",
+                    // Instance ownership tag
+                    "osg.instance" => instance_id.to_string(),
+                },
+            )
+            .map_err(|e| PwError::SinkCreationFailed(format!("staging sink: {e}")))?;
+
+        let store_clone = self.store.clone();
+        let sender_clone = self.sender.clone();
+        let listener = proxy
+            .upcast_ref()
+            .add_listener_local()
+            .bound(move |staging_pw_id| {
+                debug!("[PW] staging sink bound as {staging_pw_id}");
+                store_clone.borrow_mut().staging_node_id = Some(staging_pw_id);
+                // Set volume to 0 — staging sink must be silent
+                let _ =
+                    sender_clone.send(ToPipewireMessage::NodeVolume(staging_pw_id, vec![0.0, 0.0]));
+            })
+            .register();
+
+        // Keep the proxy alive by storing it in cell_proxies
+        self.store.borrow_mut().cell_proxies.push((proxy, listener));
+        self.store.borrow_mut().instance_id = Some(instance_id);
         Ok(())
     }
 
@@ -416,17 +470,32 @@ pub(super) fn init_mainloop(
             let active_filters = active_filters.clone();
             move |message| match message {
                 ToPipewireMessage::Update => {
+                    // Instance-aware orphan cleanup: reap osg.* nodes from
+                    // crashed previous instances (different or missing osg.instance).
                     if !*startup_cleanup_done.borrow() {
                         *startup_cleanup_done.borrow_mut() = true;
                         let s = store.borrow();
+                        let current_instance = s.instance_id;
                         let orphans: Vec<u32> = s
                             .nodes
                             .iter()
                             .filter(|(_, n)| {
-                                n.identifier.node_name().is_some_and(|name| {
-                                    name.starts_with("osg.")
-                                        && !name.starts_with("osg.staging.")
-                                })
+                                let Some(name) = n.identifier.node_name() else {
+                                    return false;
+                                };
+                                if !name.starts_with("osg.") {
+                                    return false;
+                                }
+                                // Check osg.instance property — reap if missing or stale
+                                let node_instance = n.identifier.osg_instance
+                                    .as_deref()
+                                    .and_then(|v| v.parse::<Ulid>().ok());
+                                match (node_instance, current_instance) {
+                                    // Node has our instance — keep (we just created it)
+                                    (Some(ni), Some(ci)) if ni == ci => false,
+                                    // Node has different instance or no instance — orphan
+                                    _ => true,
+                                }
                             })
                             .map(|(id, _)| *id)
                             .collect();
@@ -505,8 +574,8 @@ pub(super) fn init_mainloop(
                         warn!("Error removing node links: {err:?}");
                     };
                 }
-                ToPipewireMessage::CreateGroupNode(name, id, kind) => {
-                    if let Err(err) = master.create_group_node(name, id, kind) {
+                ToPipewireMessage::CreateGroupNode(name, id, kind, instance_id) => {
+                    if let Err(err) = master.create_group_node(name, id, kind, instance_id) {
                         warn!("Error creating group node: {err:?}");
                     }
                 }
@@ -529,11 +598,17 @@ pub(super) fn init_mainloop(
                         warn!("[PW] no metadata proxy for SetDefaultSink");
                     }
                 }
+                ToPipewireMessage::CreateStagingSink { instance_id } => {
+                    if let Err(err) = master.create_staging_sink(instance_id) {
+                        warn!("[PW] failed to create staging sink: {err:?}");
+                    }
+                }
                 ToPipewireMessage::CreateCellNode {
                     name,
                     cell_id,
                     channel_ulid,
                     mix_ulid,
+                    instance_id,
                 } => {
                     if let Err(err) = super::cell::create_cell_node(
                         &master.pw_core,
@@ -543,6 +618,7 @@ pub(super) fn init_mainloop(
                             cell_id,
                             channel_ulid: channel_ulid.clone(),
                             mix_ulid: mix_ulid.clone(),
+                            instance_id,
                         },
                     ) {
                         warn!("[PW] failed to create cell node: {err:?}");
@@ -678,6 +754,17 @@ pub(super) fn init_mainloop(
                                 release: ms_to_s(effects.limiter.release),
                             },
                             boost: effects.boost,
+                            smart_volume: super::filter::SmartVolumeParams {
+                                enabled: effects.smart_volume.enabled,
+                                target_db: effects.smart_volume.target_db,
+                                speed: effects.smart_volume.speed,
+                                max_gain_db: effects.smart_volume.max_gain_db,
+                            },
+                            spatial: super::filter::SpatialAudioParams {
+                                enabled: effects.spatial.enabled,
+                                crossfeed: effects.spatial.crossfeed,
+                                width: effects.spatial.width,
+                            },
                         };
                         handle.set_effects(params);
                         debug!("[PW] updated effects on filter '{filter_key}'");

@@ -199,6 +199,9 @@ pub struct AudioGraph {
     /// Map (channel_node_id, mix_node_id) → cell PW node ID for per-route volume.
     #[serde(skip)]
     pub cell_node_ids: HashMap<(String, String), u32>,
+    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
+    #[serde(skip)]
+    pub staging_node_id: Option<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -215,7 +218,8 @@ pub enum ToPipewireMessage {
     #[rustfmt::skip]
     RemoveNodeLinks { start_id: u32, end_id: u32 },
     /// Domain: AddChannel. Creates a virtual audio bus (Channel) in PipeWire.
-    CreateGroupNode(String, Ulid, GroupNodeKind),
+    /// Fields: (name, ulid, kind, instance_id).
+    CreateGroupNode(String, Ulid, GroupNodeKind, Ulid),
     /// Domain: RemoveChannel. Removes a virtual audio bus (Channel) from PipeWire.
     RemoveGroupNode(Ulid),
     /// Set the OS default audio sink via PipeWire metadata.
@@ -229,6 +233,8 @@ pub enum ToPipewireMessage {
         cell_id: String,
         channel_ulid: String,
         mix_ulid: String,
+        /// OSG instance ULID stamped on the PW node for ownership tracking.
+        instance_id: Ulid,
     },
     /// Remove a per-cell volume node and its links.
     RemoveCellNode {
@@ -245,6 +251,12 @@ pub enum ToPipewireMessage {
     ClearRedirect {
         stream_node_id: u32,
         target_node_id: u32,
+    },
+    /// Create the staging sink — always-alive, vol=0, for glitch-free rerouting.
+    /// ADR-007: Apps transit through this sink during reassignment to avoid
+    /// audio glitches from having no output destination.
+    CreateStagingSink {
+        instance_id: Ulid,
     },
     /// Create an inline pw_filter for EQ + peak metering.
     /// Inserts between source_node → target_node in the graph.
@@ -281,6 +293,7 @@ struct PipewireChannelError(ToPipewireMessage);
 /// because pipewire::channel uses a synchronous mutex and thus could cause deadlocks if called
 /// from async code. This might not be needed, but it'd probably be pretty annoying to debug if it
 /// turned out that the small block to send messages is actually a problem.
+#[allow(clippy::result_large_err)] // PipewireChannelError wraps ToPipewireMessage which is large by design
 fn init_adapter(
     receiver: mpsc::Receiver<ToPipewireMessage>,
     pw_sender: pipewire::channel::Sender<ToPipewireMessage>,

@@ -86,6 +86,7 @@ impl MixerSession {
                             name,
                             id.inner(),
                             kind,
+                            self.instance_id,
                         ));
                     }
                     // Auto-create active links to all existing counterparts.
@@ -497,6 +498,7 @@ impl MixerSession {
                         cell_id,
                         channel_ulid: src_ulid.clone(),
                         mix_ulid: snk_ulid.clone(),
+                        instance_id: self.instance_id,
                     });
 
                     if let Some(link) = self

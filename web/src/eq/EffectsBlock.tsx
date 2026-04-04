@@ -194,17 +194,34 @@ const EFFECTS: EffectDef[] = [
     id: "smartVolume",
     label: "Smart Volume",
     description: "Loudness normalization — keeps all sources at similar perceived volume",
-    comingSoon: true,
     availableOn: ["app", "mix"],
     controls: [
       {
-        id: "target",
-        label: "Target",
+        id: "targetDb",
+        label: "Target Level",
         min: -30,
-        max: -10,
+        max: -6,
         step: 1,
         defaultValue: -18,
-        unit: "LUFS",
+        unit: "dB",
+      },
+      {
+        id: "speed",
+        label: "Speed",
+        min: 0,
+        max: 100,
+        step: 1,
+        defaultValue: 30,
+        unit: "%",
+      },
+      {
+        id: "maxGainDb",
+        label: "Max Gain",
+        min: 0,
+        max: 24,
+        step: 1,
+        defaultValue: 12,
+        unit: "dB",
       },
     ],
   },
@@ -220,24 +237,26 @@ const EFFECTS: EffectDef[] = [
   {
     id: "spatialAudio",
     label: "Spatial Audio",
-    description: "HRTF virtual 7.1 surround for headphones",
-    comingSoon: true,
+    description: "Bauer crossfeed + stereo width for headphone listening",
     availableOn: ["mix"],
     controls: [
-      { id: "distance", label: "Distance", min: 0, max: 100, step: 1, defaultValue: 50, unit: "" },
-    ],
-    options: [
       {
-        id: "mode",
-        label: "Mode",
-        options: ["Performance", "Immersive"],
-        defaultValue: "Performance",
+        id: "crossfeed",
+        label: "Crossfeed",
+        min: 0,
+        max: 100,
+        step: 1,
+        defaultValue: 30,
+        unit: "%",
       },
       {
-        id: "output",
-        label: "Output",
-        options: ["Headphone", "Speaker"],
-        defaultValue: "Headphone",
+        id: "width",
+        label: "Width",
+        min: 0,
+        max: 200,
+        step: 1,
+        defaultValue: 100,
+        unit: "%",
       },
     ],
   },
@@ -267,6 +286,8 @@ function defaultEffectsConfig(): EffectsConfig {
     deEsser: { enabled: false, frequency: 6000, threshold: -20, reduction: -6 },
     limiter: { enabled: false, ceiling: -0.3, release: 50 },
     boost: 0,
+    smartVolume: { enabled: false, targetDb: -18, speed: 0.3, maxGainDb: 12 },
+    spatial: { enabled: false, crossfeed: 0.3, width: 1.0 },
   };
 }
 
@@ -324,6 +345,25 @@ function buildEffectsConfig(
     config.boost = boost.enabled ? (boost.values.boost ?? 0) : 0;
   }
 
+  const sv = cardStates.get("smartVolume");
+  if (sv) {
+    config.smartVolume = {
+      enabled: sv.enabled,
+      targetDb: sv.values.targetDb ?? base.smartVolume.targetDb,
+      speed: (sv.values.speed ?? 30) / 100, // UI 0–100% → wire 0.0–1.0
+      maxGainDb: sv.values.maxGainDb ?? base.smartVolume.maxGainDb,
+    };
+  }
+
+  const spatial = cardStates.get("spatialAudio");
+  if (spatial) {
+    config.spatial = {
+      enabled: spatial.enabled,
+      crossfeed: (spatial.values.crossfeed ?? 30) / 100, // UI 0–100% → wire 0.0–1.0
+      width: (spatial.values.width ?? 100) / 100, // UI 0–200% → wire 0.0–2.0
+    };
+  }
+
   return config;
 }
 
@@ -333,7 +373,15 @@ export default function EffectsBlock(props: EffectsBlockProps) {
   const baseConfig = () => props.initialEffects ?? defaultEffectsConfig();
 
   /** Effect IDs that have backend DSP mapping. */
-  const MAPPED_EFFECTS = new Set(["compressor", "limiter", "deEsser", "gate", "volumeBoost"]);
+  const MAPPED_EFFECTS = new Set([
+    "compressor",
+    "limiter",
+    "deEsser",
+    "gate",
+    "volumeBoost",
+    "smartVolume",
+    "spatialAudio",
+  ]);
 
   function handleCardChange(effectId: string, enabled: boolean, values: Record<string, number>) {
     cardStates.set(effectId, { enabled, values });
@@ -401,6 +449,22 @@ function getInitialFromConfig(
   if (effectId === "volumeBoost") {
     const b = config.boost ?? 0;
     return { enabled: b > 0, values: { boost: b } };
+  }
+  if (effectId === "smartVolume") {
+    const sv = config.smartVolume;
+    if (!sv) return null;
+    return {
+      enabled: sv.enabled,
+      values: { targetDb: sv.targetDb, speed: sv.speed * 100, maxGainDb: sv.maxGainDb },
+    };
+  }
+  if (effectId === "spatialAudio") {
+    const sp = config.spatial;
+    if (!sp) return null;
+    return {
+      enabled: sp.enabled,
+      values: { crossfeed: sp.crossfeed * 100, width: sp.width * 100 },
+    };
   }
   return null;
 }

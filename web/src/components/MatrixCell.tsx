@@ -7,6 +7,12 @@ import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
 import VuMeter from "./VuMeter";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
 
+/** Imperative actions exposed to the parent grid for keyboard shortcuts. */
+export interface MatrixCellActions {
+  toggleMute: () => void;
+  adjustVolume: (delta: number) => void;
+}
+
 interface MatrixCellProps {
   link: MixerLink | null;
   sourceEndpoint: Endpoint | undefined;
@@ -16,6 +22,9 @@ interface MatrixCellProps {
   peakLeft?: number;
   peakRight?: number;
   onOpenEq?: () => void;
+  focused?: boolean;
+  /** Parent registers to receive imperative cell actions. */
+  onActionsReady?: (actions: MatrixCellActions) => void;
 }
 
 const DEBOUNCE_MS = 16;
@@ -156,6 +165,16 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     }
   }
 
+  // Expose imperative actions to parent for keyboard shortcuts
+  function adjustVolume(delta: number) {
+    const next = Math.max(0, Math.min(1, cellVol() + delta));
+    handleInput(next);
+  }
+
+  createEffect(() => {
+    props.onActionsReady?.({ toggleMute: toggleCellMute, adjustVolume });
+  });
+
   onCleanup(() => {
     if (debounceTimer) clearTimeout(debounceTimer);
   });
@@ -165,6 +184,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
       <div
         style={{ "--mix-accent": props.mixColor }}
         class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
+          props.focused ? "ring-2 ring-blue-500" : ""
+        } ${
           isMonitored()
             ? "border-accent bg-bg-elevated ring-2 ring-accent/40"
             : mutedByMonitor()
