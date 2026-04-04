@@ -2,7 +2,10 @@ import type { JSX } from "solid-js";
 import { useLevels } from "../stores/levelsStore";
 
 interface VuMeterProps {
-  nodeId: number | undefined;
+  nodeId?: number | undefined;
+  /** Override peaks directly (bypasses nodeId lookup). */
+  peakLeft?: number;
+  peakRight?: number;
 }
 
 /** Color class based on peak level: green 0-70%, yellow 70-90%, red 90-100%. */
@@ -21,6 +24,9 @@ export default function VuMeter(props: VuMeterProps): JSX.Element {
   const levels = useLevels();
 
   const peaks = () => {
+    if (props.peakLeft != null || props.peakRight != null) {
+      return { left: props.peakLeft ?? 0, right: props.peakRight ?? 0 };
+    }
     if (props.nodeId == null) return { left: 0, right: 0 };
     return levels.peaks[String(props.nodeId)] ?? { left: 0, right: 0 };
   };

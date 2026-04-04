@@ -176,7 +176,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   });
 
   return (
-    <div class="group min-w-[10rem] flex-1">
+    <div class="group h-full">
       <div
         style={{ "--mix-accent": props.mixColor }}
         class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
@@ -187,7 +187,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             : mutedByMonitor()
               ? "border-border/30 bg-bg-primary/50 opacity-30"
               : !isLinked()
-                ? "border-border/30 bg-bg-primary/50 opacity-40 hover:opacity-70"
+                ? "border-dashed border-border/50 bg-bg-elevated"
                 : channelMuted()
                   ? "border-vu-hot/20 bg-vu-hot/5"
                   : "border-border bg-bg-elevated"

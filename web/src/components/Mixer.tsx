@@ -79,6 +79,8 @@ export default function Mixer() {
     openCellEq,
   );
 
+  const gridCols = () => `12rem repeat(${mixes().length}, minmax(10rem, 1fr))`;
+
   let gridRef: HTMLDivElement | undefined;
 
   return (
@@ -146,8 +148,8 @@ export default function Mixer() {
               class="outline-none"
             >
               {/* Mix column headers */}
-              <div class="mb-2 flex items-stretch gap-2" role="row">
-                <div class="flex w-48 shrink-0 items-stretch justify-end" role="columnheader">
+              <div class="mb-2 grid items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+                <div class="flex items-stretch justify-end" role="columnheader">
                   <MixCreator maxMixes={8} currentCount={mixes().length} />
                 </div>
                 <DragReorder
@@ -187,7 +189,7 @@ export default function Mixer() {
                   onReorder={persistChannelOrder}
                 >
                   {(ch, rowIdx, dragHandle) => (
-                    <div class="flex items-stretch gap-2" role="row">
+                    <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
                       <ChannelLabel
                         descriptor={ch.desc}
                         endpoint={ch.ep}

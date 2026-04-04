@@ -5,11 +5,9 @@
  */
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
-import { useGraph } from "../stores/graphStore";
 import { useLevels } from "../stores/levelsStore";
 import { findEndpoint, findLink, getMixColor, descriptorKey } from "../components/mixerUtils";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
-import type { PwGroupNode } from "../types/graph";
 
 export type EndpointEntry = { desc: EndpointDescriptor; ep: Endpoint };
 
@@ -48,7 +46,6 @@ export interface MixerViewModel {
 
 export function useMixerViewModel(): MixerViewModel {
   const { state, send } = useSession();
-  const graphState = useGraph();
   const levels = useLevels();
 
   // ── helpers ────────────────────────────────────────────────────────────────
@@ -60,10 +57,21 @@ export function useMixerViewModel(): MixerViewModel {
 
   function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
     if (!("channel" in desc)) return { left: 0, right: 0 };
-    const group = graphState.graph.groupNodes[desc.channel] as PwGroupNode | undefined;
-    if (!group?.id) return { left: 0, right: 0 };
-    const p = levels.peaks[String(group.id)];
-    return p ?? { left: 0, right: 0 };
+    // Source channels are logical-only (no PW node). Peaks come from cell sinks
+    // (one per channel x mix pair). Aggregate the max peak across all cell sinks
+    // belonging to this channel by reading cellNodeId from each MixerLink.
+    let maxLeft = 0;
+    let maxRight = 0;
+    for (const link of state.session.links) {
+      if (!("channel" in link.start) || link.start.channel !== desc.channel) continue;
+      if (link.cellNodeId == null) continue;
+      const p = levels.peaks[String(link.cellNodeId)];
+      if (p) {
+        if (p.left > maxLeft) maxLeft = p.left;
+        if (p.right > maxRight) maxRight = p.right;
+      }
+    }
+    return { left: maxLeft, right: maxRight };
   }
 
   // ── raw lists ───────────────────────────────────────────────────────────────

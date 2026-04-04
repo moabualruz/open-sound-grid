@@ -128,7 +128,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   return (
     <div class="w-48 shrink-0 rounded-lg border border-border bg-bg-elevated">
       {/* Row 1: drag handle + icon + name + mute + remove */}
-      <div class="flex items-center gap-1.5 px-2 pt-2">
+      <div class="flex items-center gap-1.5 px-3 pt-2.5">
         <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
         {channelIcon(props.endpoint.displayName)}
 
@@ -184,23 +184,25 @@ export default function ChannelLabel(props: ChannelLabelProps) {
       </div>
 
       {/* VU meter — channel peak level */}
-      <div class="px-2 pt-1">
-        <VuMeter nodeId={props.channel?.outputNodeId ?? undefined} />
+      <div class="px-3 pt-2">
+        <VuMeter peakLeft={props.peakLeft} peakRight={props.peakRight} />
       </div>
 
       {/* Row 2: assigned apps — hidden for auto-created app channels */}
       <Show when={props.channel}>
         {(ch) => (
-          <AppAssignment
-            channelId={"channel" in props.descriptor ? props.descriptor.channel : ""}
-            channel={ch()}
-            apps={props.apps ?? []}
-          />
+          <div class="px-3 py-1.5">
+            <AppAssignment
+              channelId={"channel" in props.descriptor ? props.descriptor.channel : ""}
+              channel={ch()}
+              apps={props.apps ?? []}
+            />
+          </div>
         )}
       </Show>
 
       {/* Row 3: master volume slider(s) */}
-      <div class="px-3 pb-2 pt-1">
+      <div class="px-3 pb-3 pt-2">
         <Show
           when={isStereo()}
           fallback={
