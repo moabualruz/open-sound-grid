@@ -38,7 +38,15 @@ impl CommandHandler for VolumeCommandHandler {
                 session.handle_set_volume(ep_desc, volume, graph, settings, rt, &mut events);
             }
             StateMsg::SetStereoVolume(ep_desc, left, right) => {
-                session.handle_set_stereo_volume(ep_desc, left, right, graph, settings, rt, &mut events);
+                session.handle_set_stereo_volume(
+                    ep_desc,
+                    left,
+                    right,
+                    graph,
+                    settings,
+                    rt,
+                    &mut events,
+                );
             }
             StateMsg::SetMute(ep_desc, muted) => {
                 session.handle_set_mute(ep_desc, muted, graph, settings, rt, &mut events);
@@ -50,7 +58,15 @@ impl CommandHandler for VolumeCommandHandler {
                 session.handle_set_link_volume(source, sink, volume, graph, settings, &mut events);
             }
             StateMsg::SetLinkStereoVolume(source, sink, left, right) => {
-                session.handle_set_link_stereo_volume(source, sink, left, right, graph, settings, &mut events);
+                session.handle_set_link_stereo_volume(
+                    source,
+                    sink,
+                    left,
+                    right,
+                    graph,
+                    settings,
+                    &mut events,
+                );
             }
             _ => unreachable!(),
         }
@@ -211,26 +227,18 @@ impl MixerSession {
         let is_device = matches!(ep_desc, EndpointDescriptor::Device(..));
         if is_device {
             if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
-                events.extend(
-                    nodes
-                        .into_iter()
-                        .map(|n| MixerEvent::MuteChanged {
-                            node_id: n.id,
-                            muted,
-                        }),
-                );
+                events.extend(nodes.into_iter().map(|n| MixerEvent::MuteChanged {
+                    node_id: n.id,
+                    muted,
+                }));
             }
         } else if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
             // Mix: set volume on PW node directly
             let vols = vec![vol_l, vol_r];
-            events.extend(
-                nodes
-                    .into_iter()
-                    .map(|n| MixerEvent::VolumeChanged {
-                        node_id: n.id,
-                        channels: vols.clone(),
-                    }),
-            );
+            events.extend(nodes.into_iter().map(|n| MixerEvent::VolumeChanged {
+                node_id: n.id,
+                channels: vols.clone(),
+            }));
         } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
             // Source channel: fan out effective to cells
             for link in &self.links {

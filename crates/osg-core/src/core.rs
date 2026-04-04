@@ -140,12 +140,7 @@ impl VolumeService for OsgCore {
         self.reducer.emit(StateMsg::SetVolume(endpoint, volume));
     }
 
-    fn set_stereo_volume(
-        &self,
-        endpoint: crate::graph::EndpointDescriptor,
-        left: f32,
-        right: f32,
-    ) {
+    fn set_stereo_volume(&self, endpoint: crate::graph::EndpointDescriptor, left: f32, right: f32) {
         self.reducer
             .emit(StateMsg::SetStereoVolume(endpoint, left, right));
     }

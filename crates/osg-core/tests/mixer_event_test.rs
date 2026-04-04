@@ -1,5 +1,5 @@
-use osg_core::graph::events::MixerEvent;
 use osg_core::graph::ChannelKind;
+use osg_core::graph::events::MixerEvent;
 use ulid::Ulid;
 
 #[test]

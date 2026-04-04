@@ -21,7 +21,6 @@ mod order_handler;
 mod output_handler;
 pub mod reconcile;
 pub mod reducer;
-mod update;
 mod volume_handler;
 
 use thiserror::Error;

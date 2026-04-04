@@ -6,7 +6,7 @@
  * Layout composition only — state lives in useEqState, preset UI in EqPresetManager.
  */
 import { Show } from "solid-js";
-import type { EqConfig } from "../types";
+import type { EqConfig } from "../types/eq";
 import { useEqState, MAX_BANDS } from "./useEqState";
 import EqGraph from "./EqGraph";
 import EqBandPopup from "./EqBandPopup";

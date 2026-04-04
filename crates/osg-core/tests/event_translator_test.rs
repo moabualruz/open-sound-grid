@@ -1,7 +1,7 @@
 // Tests for the event translator (MixerEvent → ToPipewireMessage).
 
-use osg_core::graph::events::MixerEvent;
 use osg_core::graph::ChannelKind;
+use osg_core::graph::events::MixerEvent;
 use osg_core::pw::ToPipewireMessage;
 use osg_core::routing::event_translator;
 use ulid::Ulid;

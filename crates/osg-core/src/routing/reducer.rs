@@ -206,8 +206,7 @@ pub async fn run_reducer(
                     runtime.generation = runtime.generation.wrapping_add(1);
                     let (output_msg, domain_events) =
                         registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
-                    let mut pw_messages =
-                        event_translator::translate_all(&domain_events);
+                    let mut pw_messages = event_translator::translate_all(&domain_events);
                     let diff_events = state.diff(&graph, &current_settings, &mut runtime);
                     pw_messages.extend(event_translator::translate_all(&diff_events));
                     last_reconciled_generation = runtime.generation;

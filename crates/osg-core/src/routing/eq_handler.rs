@@ -33,9 +33,7 @@ impl CommandHandler for EqCommandHandler {
         let events = match msg {
             StateMsg::SetEq(ep_desc, eq) => session.handle_set_eq(ep_desc, eq),
             StateMsg::SetCellEq(source, sink, eq) => session.handle_set_cell_eq(source, sink, eq),
-            StateMsg::SetEffects(ep_desc, effects) => {
-                session.handle_set_effects(ep_desc, effects)
-            }
+            StateMsg::SetEffects(ep_desc, effects) => session.handle_set_effects(ep_desc, effects),
             StateMsg::SetCellEffects(source, sink, effects) => {
                 session.handle_set_cell_effects(source, sink, effects)
             }

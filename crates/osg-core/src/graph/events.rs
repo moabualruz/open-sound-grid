@@ -1,4 +1,4 @@
-// Domain events emitted by MixerSession::update() and ReconciliationService::diff().
+// Domain events emitted by HandlerRegistry::dispatch() and ReconciliationService::diff().
 //
 // An event translator converts these to ToPipewireMessage at the infrastructure
 // boundary. Domain code never references PipeWire types directly.
@@ -22,40 +22,22 @@ pub enum MixerEvent {
     RequestReconciliation,
 
     /// Set per-channel volume on a node (L/R or arbitrary channel count).
-    VolumeChanged {
-        node_id: u32,
-        channels: Vec<f32>,
-    },
+    VolumeChanged { node_id: u32, channels: Vec<f32> },
 
     /// Mute or unmute a node.
-    MuteChanged {
-        node_id: u32,
-        muted: bool,
-    },
+    MuteChanged { node_id: u32, muted: bool },
 
     /// Create a port-level link between two ports.
-    CreatePortLink {
-        start_id: u32,
-        end_id: u32,
-    },
+    CreatePortLink { start_id: u32, end_id: u32 },
 
     /// Create all matching port links between two nodes.
-    CreateNodeLinks {
-        start_id: u32,
-        end_id: u32,
-    },
+    CreateNodeLinks { start_id: u32, end_id: u32 },
 
     /// Remove a port-level link.
-    RemovePortLink {
-        start_id: u32,
-        end_id: u32,
-    },
+    RemovePortLink { start_id: u32, end_id: u32 },
 
     /// Remove all links between two nodes.
-    RemoveNodeLinks {
-        start_id: u32,
-        end_id: u32,
-    },
+    RemoveNodeLinks { start_id: u32, end_id: u32 },
 
     /// Create a channel/mix group node (virtual audio bus) in PipeWire.
     CreateGroupNode {
@@ -66,9 +48,7 @@ pub enum MixerEvent {
     },
 
     /// Remove a channel/mix group node from PipeWire.
-    RemoveGroupNode {
-        ulid: Ulid,
-    },
+    RemoveGroupNode { ulid: Ulid },
 
     /// Set the OS default audio sink.
     SetDefaultSink {
@@ -86,9 +66,7 @@ pub enum MixerEvent {
     },
 
     /// Remove a per-cell volume node and its links.
-    RemoveCellNode {
-        cell_node_id: u32,
-    },
+    RemoveCellNode { cell_node_id: u32 },
 
     /// Redirect an app stream to a channel's virtual sink via direct PW links.
     RedirectStream {
@@ -103,26 +81,16 @@ pub enum MixerEvent {
     },
 
     /// Create the staging sink for glitch-free rerouting (ADR-007).
-    CreateStagingSink {
-        instance_id: Ulid,
-    },
+    CreateStagingSink { instance_id: Ulid },
 
     /// Create an inline pw_filter for EQ + peak metering.
-    CreateFilter {
-        filter_key: String,
-        name: String,
-    },
+    CreateFilter { filter_key: String, name: String },
 
     /// Remove an inline pw_filter by key.
-    RemoveFilter {
-        filter_key: String,
-    },
+    RemoveFilter { filter_key: String },
 
     /// Update EQ parameters on an existing filter.
-    UpdateFilterEq {
-        filter_key: String,
-        eq: EqConfig,
-    },
+    UpdateFilterEq { filter_key: String, eq: EqConfig },
 
     /// Update effects chain parameters on an existing filter.
     UpdateFilterEffects {

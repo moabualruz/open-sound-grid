@@ -12,7 +12,10 @@ use crate::graph::{EffectsConfig, EqConfig};
 // ---------------------------------------------------------------------------
 
 /// Push a `CreateFilter` domain event onto `events`.
-#[expect(dead_code, reason = "reserved for handler use when filter creation is wired up")]
+#[expect(
+    dead_code,
+    reason = "reserved for handler use when filter creation is wired up"
+)]
 pub(crate) fn create_filter_event(events: &mut Vec<MixerEvent>, key: &str, name: &str) {
     events.push(MixerEvent::CreateFilter {
         filter_key: key.to_owned(),
@@ -21,7 +24,10 @@ pub(crate) fn create_filter_event(events: &mut Vec<MixerEvent>, key: &str, name:
 }
 
 /// Push a `RemoveFilter` domain event onto `events`.
-#[expect(dead_code, reason = "reserved for handler use when filter removal is wired up")]
+#[expect(
+    dead_code,
+    reason = "reserved for handler use when filter removal is wired up"
+)]
 pub(crate) fn remove_filter_event(events: &mut Vec<MixerEvent>, key: &str) {
     events.push(MixerEvent::RemoveFilter {
         filter_key: key.to_owned(),

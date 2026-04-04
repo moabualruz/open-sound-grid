@@ -1,7 +1,7 @@
 // Tests for CommandHandler trait and HandlerRegistry dispatch.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use osg_core::graph::events::MixerEvent;
 use osg_core::graph::{
@@ -220,10 +220,6 @@ fn registry_handles_all_state_msg_variants() {
     ];
 
     for msg in &all_msgs {
-        assert!(
-            registry.handles(msg),
-            "No handler registered for {:?}",
-            msg
-        );
+        assert!(registry.handles(msg), "No handler registered for {:?}", msg);
     }
 }

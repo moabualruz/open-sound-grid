@@ -61,6 +61,7 @@ impl HandlerRegistry {
     /// # Panics
     /// Panics if no handler claims the message — every `StateMsg` variant
     /// must be covered by exactly one registered handler.
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch(
         &self,
         session: &mut MixerSession,

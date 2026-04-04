@@ -15,11 +15,7 @@ impl MixerSession {
     // diff_cells — ensure every row×mix pair has a cell node
 
     /// For every (source channel × sink mix) pair, ensure a cell node exists.
-    pub(crate) fn diff_cells(
-        &self,
-        graph: &AudioGraph,
-        rt: &mut RuntimeState,
-    ) -> Vec<MixerEvent> {
+    pub(crate) fn diff_cells(&self, graph: &AudioGraph, rt: &mut RuntimeState) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
         let rows: Vec<_> = self
             .channels
@@ -153,11 +149,7 @@ impl MixerSession {
     ///
     /// This function ensures the monitor-out side of the chain exists.
     /// App→cell links are handled by `diff_app_routing`.
-    pub(crate) fn diff_cell_links(
-        &self,
-        graph: &AudioGraph,
-        rt: &RuntimeState,
-    ) -> Vec<MixerEvent> {
+    pub(crate) fn diff_cell_links(&self, graph: &AudioGraph, rt: &RuntimeState) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
 
         // Build ULID → PW node ID map for sink (mix) channels only.

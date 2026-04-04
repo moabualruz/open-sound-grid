@@ -6,7 +6,7 @@
 import { createSignal, createEffect, createMemo } from "solid-js";
 import type { EqBand } from "./math";
 import { createDefaultBands, createDefaultBand } from "./math";
-import type { EqConfig } from "../types";
+import type { EqConfig } from "../types/eq";
 import type { PresetDef } from "./presets";
 import {
   getPresetsForCategory,

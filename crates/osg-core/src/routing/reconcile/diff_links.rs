@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::graph::{EndpointDescriptor, Link, LinkKey, LinkState, MixerEvent, MixerSession, PortKind, RuntimeState};
+use crate::graph::{
+    EndpointDescriptor, Link, LinkKey, LinkState, MixerEvent, MixerSession, RuntimeState,
+};
 use crate::pw::{AudioGraph, Node as PwNode};
 use itertools::Itertools;
 

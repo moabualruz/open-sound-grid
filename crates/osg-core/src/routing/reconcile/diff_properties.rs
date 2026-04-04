@@ -59,15 +59,12 @@ impl MixerSession {
                     .volume_locked_muted
                     .is_muted()
                     .expect("locked endpoint cannot be MuteMixed");
-                messages.extend(
-                    nodes
-                        .iter()
-                        .filter(|n| n.mute != endpoint_muted)
-                        .map(|n| MixerEvent::MuteChanged {
-                            node_id: n.id,
-                            muted: endpoint_muted,
-                        }),
-                );
+                messages.extend(nodes.iter().filter(|n| n.mute != endpoint_muted).map(|n| {
+                    MixerEvent::MuteChanged {
+                        node_id: n.id,
+                        muted: endpoint_muted,
+                    }
+                }));
             } else if endpoint.volume_locked_muted.is_muted() != Some(true) {
                 // Unlocked + unmuted: pull volume/mute from PW nodes into desired state.
                 // Skip pull when muted — we implement mute as volume=0 on null-audio-sinks

@@ -58,7 +58,13 @@ impl CommandHandler for EndpointCommandHandler {
                 None
             }
             StateMsg::SetEndpointVisible(descriptor, visible) => {
-                session.handle_set_endpoint_visible(descriptor, visible, graph, settings, &mut events);
+                session.handle_set_endpoint_visible(
+                    descriptor,
+                    visible,
+                    graph,
+                    settings,
+                    &mut events,
+                );
                 None
             }
             _ => unreachable!(),
@@ -306,9 +312,7 @@ impl MixerSession {
                 if self.channels.shift_remove(&id).is_none() {
                     warn!("[State] channel {id:?} was not in state");
                 }
-                events.push(MixerEvent::RemoveGroupNode {
-                    ulid: id.inner(),
-                });
+                events.push(MixerEvent::RemoveGroupNode { ulid: id.inner() });
                 events.push(MixerEvent::RemoveFilter {
                     filter_key: id.inner().to_string(),
                 });
@@ -343,9 +347,7 @@ impl MixerSession {
                 self.channels.get_mut(&id),
             ) && let Some(name) = name.filter(|n| *n != endpoint.display_name)
             {
-                events.push(MixerEvent::RemoveGroupNode {
-                    ulid: id.inner(),
-                });
+                events.push(MixerEvent::RemoveGroupNode { ulid: id.inner() });
                 events.push(MixerEvent::RemoveFilter {
                     filter_key: id.inner().to_string(),
                 });
@@ -373,9 +375,7 @@ impl MixerSession {
         if let Some(ch) = self.channels.get_mut(&id)
             && kind != ch.kind
         {
-            events.push(MixerEvent::RemoveGroupNode {
-                ulid: id.inner(),
-            });
+            events.push(MixerEvent::RemoveGroupNode { ulid: id.inner() });
             events.push(MixerEvent::RemoveFilter {
                 filter_key: id.inner().to_string(),
             });
@@ -404,14 +404,10 @@ impl MixerSession {
         // Mute/unmute the PipeWire nodes
         if let Some(nodes) = nodes {
             let muted = !visible;
-            events.extend(
-                nodes
-                    .into_iter()
-                    .map(|n| MixerEvent::MuteChanged {
-                        node_id: n.id,
-                        muted,
-                    }),
-            );
+            events.extend(nodes.into_iter().map(|n| MixerEvent::MuteChanged {
+                node_id: n.id,
+                muted,
+            }));
         }
     }
 }

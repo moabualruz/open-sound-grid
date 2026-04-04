@@ -1,13 +1,14 @@
 // Translates domain events (MixerEvent) into PipeWire infrastructure messages.
 //
 // This is the ONLY place where domain events cross into infrastructure.
-// The reducer calls translate_all() after MixerSession::update() returns
+// The reducer calls translate_all() after HandlerRegistry::dispatch() returns
 // domain events, converting them to ToPipewireMessage for the PW sender.
 
 use crate::graph::events::MixerEvent;
 use crate::pw::ToPipewireMessage;
 
 /// Convert a single domain event into zero or more PipeWire messages.
+#[allow(clippy::too_many_lines)]
 pub fn translate(event: &MixerEvent) -> Vec<ToPipewireMessage> {
     match event {
         MixerEvent::RequestReconciliation => {

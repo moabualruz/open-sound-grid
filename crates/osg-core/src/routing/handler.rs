@@ -16,6 +16,7 @@ pub trait CommandHandler: Send + Sync {
 
     /// Process the message, mutating `session` and `rt` as needed.
     /// Returns an optional output notification and a vec of domain events.
+    #[allow(clippy::too_many_arguments)]
     fn handle(
         &self,
         session: &mut MixerSession,

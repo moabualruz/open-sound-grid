@@ -50,7 +50,8 @@ impl CommandHandler for LinkCommandHandler {
 
 impl MixerSession {
     /// Generate domain events to remove PW links between two endpoints.
-    /// Mirrors `remove_node_link_events` in reconcile.rs.
+    /// Delegates to `remove_node_link_events` in reconcile/helpers.rs (single source of truth).
+    #[allow(clippy::too_many_arguments)]
     fn remove_link_events(
         &self,
         graph: &AudioGraph,
@@ -58,23 +59,7 @@ impl MixerSession {
         sink: EndpointDescriptor,
         settings: &ReconcileSettings,
     ) -> Vec<MixerEvent> {
-        let source_nodes = self
-            .resolve_endpoint(source, graph, settings)
-            .unwrap_or_default();
-        let sink_nodes = self
-            .resolve_endpoint(sink, graph, settings)
-            .unwrap_or_default();
-
-        let mut events = Vec::new();
-        for src in &source_nodes {
-            for snk in &sink_nodes {
-                events.push(MixerEvent::RemoveNodeLinks {
-                    start_id: src.id,
-                    end_id: snk.id,
-                });
-            }
-        }
-        events
+        self.remove_node_link_events(graph, source, sink, settings)
     }
 }
 

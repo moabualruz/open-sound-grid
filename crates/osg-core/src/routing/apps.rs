@@ -6,12 +6,12 @@ use std::collections::HashMap;
 
 use tracing::debug;
 
+use crate::graph::MixerEvent;
 use crate::graph::{
     App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor,
     MixerSession, NodeIdentity, PersistentNodeId, PortKind, ReconcileSettings, RuntimeState,
     SourceType,
 };
-use crate::graph::MixerEvent;
 use crate::pw::{AudioGraph, Node as PwNode};
 
 /// Detect source type from PipeWire node properties.

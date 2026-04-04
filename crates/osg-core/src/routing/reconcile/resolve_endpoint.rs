@@ -1,6 +1,8 @@
 // resolve_endpoint — map EndpointDescriptor to PipeWire nodes
 
-use crate::graph::{ChannelKind, EndpointDescriptor, MixerSession, NodeIdentity, PortKind, ReconcileSettings};
+use crate::graph::{
+    ChannelKind, EndpointDescriptor, MixerSession, NodeIdentity, PortKind, ReconcileSettings,
+};
 use crate::pw::{AudioGraph, Node as PwNode};
 
 impl MixerSession {
