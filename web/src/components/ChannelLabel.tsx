@@ -16,7 +16,7 @@ import {
 } from "lucide-solid";
 import VuMeter from "./VuMeter";
 import AppAssignment from "./AppAssignment";
-import type { EndpointDescriptor, Endpoint, Channel, App } from "../types";
+import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
 

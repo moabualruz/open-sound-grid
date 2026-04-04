@@ -12,7 +12,7 @@ import DragReorder from "./DragReorder";
 import { Settings } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
-import type { Endpoint, EndpointDescriptor } from "../types";
+import type { Endpoint, EndpointDescriptor } from "../types/session";
 import { getMixColor, findEndpoint, findLink } from "./mixerUtils";
 import { useKeyboardNav } from "./useKeyboardNav";
 import { useMixOutputs } from "./useMixOutputs";

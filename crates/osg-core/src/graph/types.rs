@@ -9,6 +9,8 @@ pub use super::endpoint::*;
 pub use super::eq_config::*;
 pub use super::identifiers::*;
 pub use super::link::*;
+pub use super::node_identity::*;
+pub use super::port_kind::*;
 pub use super::session::*;
 pub use super::utils::*;
 pub use super::volume_state::*;

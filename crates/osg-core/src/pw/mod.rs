@@ -32,6 +32,28 @@ pub use object::PortKind;
 use mainloop::init_mainloop;
 pub use port_mapper::map_ports;
 
+// ---------------------------------------------------------------------------
+// From conversions: domain ↔ infrastructure
+// ---------------------------------------------------------------------------
+
+impl From<crate::graph::PortKind> for PortKind {
+    fn from(k: crate::graph::PortKind) -> Self {
+        match k {
+            crate::graph::PortKind::Source => Self::Source,
+            crate::graph::PortKind::Sink => Self::Sink,
+        }
+    }
+}
+
+impl From<PortKind> for crate::graph::PortKind {
+    fn from(k: PortKind) -> Self {
+        match k {
+            PortKind::Source => Self::Source,
+            PortKind::Sink => Self::Sink,
+        }
+    }
+}
+
 /// Errors originating from the PipeWire backend.
 #[derive(Error, Debug)]
 pub enum PwError {

@@ -13,11 +13,10 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkKey, LinkState,
-    MixerSession, ReconcileSettings, RuntimeState, VolumeLockMuteState, average_volumes,
-    volumes_mixed,
+    ChannelKind, EndpointDescriptor, Link, LinkKey, LinkState, MixerSession, NodeIdentity,
+    PortKind, ReconcileSettings, RuntimeState, VolumeLockMuteState, average_volumes, volumes_mixed,
 };
-use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, ToPipewireMessage};
 use itertools::Itertools;
 
 // ---------------------------------------------------------------------------
@@ -87,9 +86,9 @@ impl MixerSession {
             .values()
             .flat_map(|node| {
                 [
-                    node.has_port_kind(PortKind::Source)
+                    node.has_port_kind(PortKind::Source.into())
                         .then_some((node.id, PortKind::Source)),
-                    node.has_port_kind(PortKind::Sink)
+                    node.has_port_kind(PortKind::Sink.into())
                         .then_some((node.id, PortKind::Sink)),
                 ]
             })
@@ -130,7 +129,7 @@ impl MixerSession {
             .into_iter()
             .filter_map(|(id, kind)| {
                 let node = graph.nodes.get(&id)?;
-                Some((id, kind, node.identifier.clone()))
+                Some((id, kind, NodeIdentity::from(&node.identifier)))
             })
             .collect();
 
@@ -388,27 +387,12 @@ impl MixerSession {
                 continue;
             };
             match are_endpoints_connected(source, sink, &node_links) {
-                Some(true) => self.links.push(Link {
-                    start: source_desc,
-                    end: sink_desc,
-                    state: LinkState::ConnectedUnlocked,
-                    cell_volume: 1.0,
-                    cell_volume_left: 1.0,
-                    cell_volume_right: 1.0,
-                    cell_node_id: None,
-                    cell_eq: EqConfig::default(),
-                    cell_effects: EffectsConfig::default(),
-                }),
+                Some(true) => self
+                    .links
+                    .push(Link::connected_unlocked(source_desc, sink_desc)),
                 None => self.links.push(Link {
-                    start: source_desc,
-                    end: sink_desc,
                     state: LinkState::PartiallyConnected,
-                    cell_volume: 1.0,
-                    cell_volume_left: 1.0,
-                    cell_volume_right: 1.0,
-                    cell_node_id: None,
-                    cell_eq: EqConfig::default(),
-                    cell_effects: EffectsConfig::default(),
+                    ..Link::connected_unlocked(source_desc, sink_desc)
                 }),
                 Some(false) => {}
             }
@@ -431,7 +415,7 @@ impl MixerSession {
             EndpointDescriptor::EphemeralNode(id, kind) => graph
                 .nodes
                 .get(&id)
-                .filter(|node| node.has_port_kind(kind))
+                .filter(|node| node.has_port_kind(kind.into()))
                 .map(|node| vec![node]),
 
             EndpointDescriptor::PersistentNode(_id, _kind) => {
@@ -478,7 +462,10 @@ impl MixerSession {
                 let nodes: Vec<&PwNode> = graph
                     .nodes
                     .values()
-                    .filter(|node| app.matches(&node.identifier, kind))
+                    .filter(|node| {
+                        let ni: NodeIdentity = (&node.identifier).into();
+                        app.matches(&ni, kind)
+                    })
                     .filter(|node| {
                         kind != PortKind::Source
                             || settings.app_sources_include_monitors
@@ -591,17 +578,7 @@ impl MixerSession {
                     .any(|l| l.start == *source && l.end == *sink);
                 if !exists {
                     tracing::debug!("[State] ensure_default_links: adding {source:?} → {sink:?}");
-                    self.links.push(Link {
-                        start: *source,
-                        end: *sink,
-                        state: LinkState::ConnectedUnlocked,
-                        cell_volume: 1.0,
-                        cell_volume_left: 1.0,
-                        cell_volume_right: 1.0,
-                        cell_eq: EqConfig::default(),
-                        cell_effects: EffectsConfig::default(),
-                        cell_node_id: None,
-                    });
+                    self.links.push(Link::connected_unlocked(*source, *sink));
                 }
             }
         }
@@ -628,15 +605,17 @@ fn are_nodes_connected(
         return Some(false);
     }
 
+    let pw_source: crate::pw::PortKind = PortKind::Source.into();
+    let pw_sink: crate::pw::PortKind = PortKind::Sink.into();
     if source
         .ports
         .iter()
-        .filter(|(_, kind, _)| *kind == PortKind::Source)
+        .filter(|(_, kind, _)| *kind == pw_source)
         .all(|(id, _, _)| relevant_links.iter().any(|link| link.start_port == *id))
         || sink
             .ports
             .iter()
-            .filter(|(_, kind, _)| *kind == PortKind::Sink)
+            .filter(|(_, kind, _)| *kind == pw_sink)
             .all(|(id, _, _)| relevant_links.iter().any(|link| link.end_port == *id))
     {
         return Some(true);

@@ -8,14 +8,14 @@ use tracing::debug;
 
 use crate::graph::{
     App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor,
-    MixerSession, PersistentNodeId, ReconcileSettings, RuntimeState, SourceType,
+    MixerSession, NodeIdentity, PersistentNodeId, PortKind, ReconcileSettings, RuntimeState,
+    SourceType,
 };
-use crate::pw::identifier::NodeIdentifier;
-use crate::pw::{AudioGraph, Node as PwNode, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, Node as PwNode, ToPipewireMessage};
 
 /// Detect source type from PipeWire node properties.
-fn detect_source_type(id: &NodeIdentifier) -> SourceType {
-    let node_name = id.node_name().unwrap_or("");
+fn detect_source_type(id: &NodeIdentity) -> SourceType {
+    let node_name = id.node_name.as_deref().unwrap_or("");
     // Our own nodes
     if node_name.starts_with("osg.") {
         return SourceType::AppStream;
@@ -110,7 +110,10 @@ impl MixerSession {
                     n.identifier.application_name.as_deref() == Some(&app_name)
                         && n.identifier.binary_name.as_deref() == Some(&binary)
                 })
-                .map(|n| detect_source_type(&n.identifier))
+                .map(|n| {
+                    let id: NodeIdentity = (&n.identifier).into();
+                    detect_source_type(&id)
+                })
                 .unwrap_or_default();
 
             // ADR-007: App channels are logical-only — no PW node.
@@ -155,13 +158,13 @@ impl MixerSession {
                     .as_ref()
                     .filter(|n| !n.is_empty()),
             ) {
-                if node.has_port_kind(PortKind::Source) {
+                if node.has_port_kind(PortKind::Source.into()) {
                     discovered.insert(
                         (app_name.clone(), binary.clone(), PortKind::Source),
                         node.identifier.icon_name().to_owned(),
                     );
                 }
-                if node.has_port_kind(PortKind::Sink) {
+                if node.has_port_kind(PortKind::Sink.into()) {
                     discovered.insert(
                         (app_name.clone(), binary.clone(), PortKind::Sink),
                         node.identifier.icon_name().to_owned(),
@@ -186,7 +189,10 @@ impl MixerSession {
         let id = self
             .persistent_nodes
             .iter()
-            .find(|(_, (identifier, nk))| *nk == kind && identifier.matches(&node.identifier))
+            .find(|(_, (identifier, nk))| {
+                let ni: NodeIdentity = (&node.identifier).into();
+                *nk == kind && identifier.matches(&ni)
+            })
             .map(|(id, _)| *id);
 
         if let Some(id) = id {
@@ -194,7 +200,7 @@ impl MixerSession {
         } else {
             let id = PersistentNodeId::new();
             self.persistent_nodes
-                .insert(id, (node.identifier.clone(), kind));
+                .insert(id, (NodeIdentity::from(&node.identifier), kind));
             EndpointDescriptor::PersistentNode(id, kind)
         }
     }
@@ -215,7 +221,7 @@ impl MixerSession {
             .nodes
             .values()
             .find(|n| n.identifier.node_name() == Some(source_name))
-            .map(|n| n.identifier.human_name(PortKind::Source).to_owned())
+            .map(|n| n.identifier.human_name(PortKind::Source.into()).to_owned())
             .unwrap_or_else(|| source_name.clone());
         let new_name = format!("EE - {source_display}");
         for ep in self.endpoints.values_mut() {

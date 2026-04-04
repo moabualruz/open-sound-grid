@@ -1,7 +1,8 @@
 import { createStore } from "solid-js/store";
 import { createEffect } from "solid-js";
 import { getOutputDevices } from "./MixHeader";
-import type { EndpointDescriptor, Endpoint } from "../types";
+import type { EndpointDescriptor, Endpoint } from "../types/session";
+import { descriptorKey } from "./mixerUtils";
 
 export interface MixEntry {
   desc: EndpointDescriptor;
@@ -36,13 +37,13 @@ export function useMixOutputs(
       const ch = channels[m.desc.channel];
       if (ch?.outputNodeId) {
         const dev = allDevs.find((d) => d.pwNodeId === ch.outputNodeId);
-        if (dev) setMixOutputs(JSON.stringify(m.desc), dev.deviceId);
+        if (dev) setMixOutputs(descriptorKey(m.desc), dev.deviceId);
       }
     }
 
     const monitorMix = getMixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
     if (monitorMix) {
-      const monitorKey = JSON.stringify(monitorMix.desc);
+      const monitorKey = descriptorKey(monitorMix.desc);
       if (!mixOutputs[monitorKey]) {
         const defaultName = graph.defaultSinkName;
         const defaultDev = defaultName ? allDevs.find((d) => d.deviceId === defaultName) : null;
@@ -74,12 +75,12 @@ export function useMixOutputs(
     }
     setMixOutputs(mixKey, deviceId);
 
-    const desc: EndpointDescriptor = JSON.parse(mixKey);
-    if ("channel" in desc) {
+    if (mixKey.startsWith("channel:")) {
+      const channelId = mixKey.slice("channel:".length);
       const graph = getGraph();
       const allDevs = getOutputDevices(graph.devices, graph.nodes);
       const dev = deviceId ? allDevs.find((d) => d.deviceId === deviceId) : null;
-      send({ type: "setMixOutput", channel: desc.channel, outputNodeId: dev?.pwNodeId ?? null });
+      send({ type: "setMixOutput", channel: channelId, outputNodeId: dev?.pwNodeId ?? null });
     }
   }
 

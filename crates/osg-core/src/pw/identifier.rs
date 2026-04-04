@@ -225,3 +225,30 @@ impl NodeIdentifier {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Domain conversion: NodeIdentifier → NodeIdentity
+// ---------------------------------------------------------------------------
+
+impl From<&NodeIdentifier> for crate::graph::NodeIdentity {
+    fn from(id: &NodeIdentifier) -> Self {
+        Self {
+            node_name: id.node_name.clone(),
+            node_nick: id.node_nick.clone(),
+            node_description: id.node_description.clone(),
+            object_path: id.object_path.clone(),
+            application_name: id.application_name.clone(),
+            binary_name: id.binary_name.clone(),
+            media_class: id.media_class.clone(),
+            device_api: id.device_api.clone(),
+            device_form_factor: id.device_form_factor.clone(),
+            osg_instance: id.osg_instance.clone(),
+        }
+    }
+}
+
+impl From<NodeIdentifier> for crate::graph::NodeIdentity {
+    fn from(id: NodeIdentifier) -> Self {
+        Self::from(&id)
+    }
+}

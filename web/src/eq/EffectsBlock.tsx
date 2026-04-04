@@ -15,7 +15,7 @@
  * └───────────────┴────────────┴───────┴──────┴──────┘
  */
 import { createSignal, Show, For, untrack } from "solid-js";
-import type { EffectsConfig } from "../types";
+import type { EffectsConfig } from "../types/effects";
 import {
   getEffectsForType,
   defaultEffectsConfig,

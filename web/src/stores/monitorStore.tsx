@@ -4,7 +4,8 @@
  */
 import { createContext, useContext, type ParentProps, type JSX } from "solid-js";
 import { createStore } from "solid-js/store";
-import type { EndpointDescriptor } from "../types";
+import type { EndpointDescriptor } from "../types/session";
+import { descriptorsEqual } from "../components/mixerUtils";
 
 interface MonitorState {
   monitoredCell: { source: EndpointDescriptor; target: EndpointDescriptor } | null;
@@ -35,8 +36,8 @@ export function MonitorProvider(props: ParentProps): JSX.Element {
     isCellMonitored(source, target) {
       return (
         state.monitoredCell !== null &&
-        JSON.stringify(state.monitoredCell.source) === JSON.stringify(source) &&
-        JSON.stringify(state.monitoredCell.target) === JSON.stringify(target)
+        descriptorsEqual(state.monitoredCell.source, source) &&
+        descriptorsEqual(state.monitoredCell.target, target)
       );
     },
   };

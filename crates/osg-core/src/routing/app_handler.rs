@@ -7,6 +7,42 @@ use tracing::debug;
 use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
+/// Build `CreateNodeLinks` messages linking each stream to the staging sink.
+fn stage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<ToPipewireMessage> {
+    stream_ids
+        .iter()
+        .map(|&id| ToPipewireMessage::CreateNodeLinks {
+            start_id: id,
+            end_id: staging_id,
+        })
+        .collect()
+}
+
+/// Build `RemoveNodeLinks` messages unlinking each stream from the staging sink.
+fn unstage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<ToPipewireMessage> {
+    stream_ids
+        .iter()
+        .map(|&id| ToPipewireMessage::RemoveNodeLinks {
+            start_id: id,
+            end_id: staging_id,
+        })
+        .collect()
+}
+
+/// Collect PipeWire node IDs for all source streams belonging to an app assignment.
+fn collect_app_stream_ids(assignment: &AppAssignment, graph: &AudioGraph) -> Vec<u32> {
+    graph
+        .nodes
+        .values()
+        .filter(|n| {
+            n.identifier.application_name.as_deref() == Some(&assignment.application_name)
+                && n.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
+                && n.has_port_kind(PortKind::Source)
+        })
+        .map(|n| n.id)
+        .collect()
+}
+
 impl MixerSession {
     /// Handle `StateMsg::AssignApp` — assign an app to a channel and park its auto-channel.
     ///
@@ -37,16 +73,7 @@ impl MixerSession {
         ch.assigned_apps.push(assignment.clone());
 
         // Collect app stream node IDs for staging sink linking
-        let app_stream_ids: Vec<u32> = graph
-            .nodes
-            .values()
-            .filter(|n| {
-                n.identifier.application_name.as_deref() == Some(&assignment.application_name)
-                    && n.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
-                    && n.has_port_kind(PortKind::Source)
-            })
-            .map(|n| n.id)
-            .collect();
+        let app_stream_ids = collect_app_stream_ids(&assignment, graph);
 
         // ADR-007: Reconciler's diff_app_routing handles actual linking
         // to cell sinks on the next tick. No immediate redirect needed.
@@ -66,12 +93,7 @@ impl MixerSession {
             // Staging sink: link app streams to staging BEFORE unlinking from old cells.
             // This prevents audio glitches from having no output destination.
             if let Some(staging_id) = rt.staging_node_id {
-                for &stream_id in &app_stream_ids {
-                    pw_messages.push(ToPipewireMessage::CreateNodeLinks {
-                        start_id: stream_id,
-                        end_id: staging_id,
-                    });
-                }
+                pw_messages.extend(stage_streams(&app_stream_ids, staging_id));
             }
 
             // ADR-007: Don't destroy the auto-channel's cells/filters —
@@ -102,12 +124,7 @@ impl MixerSession {
 
             // Remove staging links — the reconciler will link to new cells
             if let Some(staging_id) = rt.staging_node_id {
-                for &stream_id in &app_stream_ids {
-                    pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                        start_id: stream_id,
-                        end_id: staging_id,
-                    });
-                }
+                pw_messages.extend(unstage_streams(&app_stream_ids, staging_id));
             }
 
             // Hide the auto-channel but keep it in the model
@@ -137,25 +154,11 @@ impl MixerSession {
         ch.assigned_apps.retain(|a| a != &assignment);
 
         // Collect app stream node IDs for staging sink linking
-        let app_stream_ids: Vec<u32> = graph
-            .nodes
-            .values()
-            .filter(|n| {
-                n.identifier.application_name.as_deref() == Some(&assignment.application_name)
-                    && n.identifier.binary_name.as_deref() == Some(&assignment.binary_name)
-                    && n.has_port_kind(PortKind::Source)
-            })
-            .map(|n| n.id)
-            .collect();
+        let app_stream_ids = collect_app_stream_ids(&assignment, graph);
 
         // Staging sink: link app streams to staging BEFORE clearing old redirects
         if let Some(staging_id) = rt.staging_node_id {
-            for &stream_id in &app_stream_ids {
-                pw_messages.push(ToPipewireMessage::CreateNodeLinks {
-                    start_id: stream_id,
-                    end_id: staging_id,
-                });
-            }
+            pw_messages.extend(stage_streams(&app_stream_ids, staging_id));
         }
 
         // ADR-007: Clear links from app streams to all cell sinks for this channel
@@ -185,12 +188,7 @@ impl MixerSession {
 
         // Remove staging links — the auto-channel restore or reconciler handles new links
         if let Some(staging_id) = rt.staging_node_id {
-            for &stream_id in &app_stream_ids {
-                pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                    start_id: stream_id,
-                    end_id: staging_id,
-                });
-            }
+            pw_messages.extend(unstage_streams(&app_stream_ids, staging_id));
         }
         // Restore hidden auto-channel if it exists
         let auto_id = self

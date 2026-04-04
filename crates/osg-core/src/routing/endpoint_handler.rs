@@ -6,10 +6,10 @@
 use tracing::warn;
 
 use crate::graph::{
-    Channel, ChannelId, ChannelKind, EffectsConfig, Endpoint, EndpointDescriptor, EqConfig, Link,
-    LinkState, MixerSession, ReconcileSettings, RuntimeState, average_volumes,
+    Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, Link, MixerSession,
+    NodeIdentity, PortKind, ReconcileSettings, RuntimeState, average_volumes,
 };
-use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::messages::StateOutputMsg;
 
 impl MixerSession {
@@ -21,12 +21,15 @@ impl MixerSession {
         graph: &AudioGraph,
         rt: &mut RuntimeState,
     ) -> Option<StateOutputMsg> {
-        let node = graph.nodes.get(&id).filter(|n| n.has_port_kind(kind))?;
+        let node = graph
+            .nodes
+            .get(&id)
+            .filter(|n| n.has_port_kind(kind.into()))?;
         let descriptor = EndpointDescriptor::EphemeralNode(id, kind);
         rt.candidates
             .retain(|(cid, ck, _)| *cid != id || *ck != kind);
         let endpoint = Endpoint::new(descriptor)
-            .with_display_name(node.identifier.human_name(kind).to_owned())
+            .with_display_name(node.identifier.human_name(kind.into()).to_owned())
             .with_icon_name(node.identifier.icon_name().to_string())
             .with_details(
                 node.identifier
@@ -53,7 +56,10 @@ impl MixerSession {
             .apps
             .iter()
             .filter(|(app_id, _)| rt.app_is_active(app_id))
-            .filter(|(_, a)| a.matches(&node.identifier, kind))
+            .filter(|(_, a)| {
+                let ni: NodeIdentity = (&node.identifier).into();
+                a.matches(&ni, kind)
+            })
             .map(|(app_id, _)| *app_id)
             .collect();
         for app_id in active_app_ids {
@@ -117,17 +123,7 @@ impl MixerSession {
                 )
                 .collect();
             for src in sources {
-                self.links.push(Link {
-                    start: src,
-                    end: descriptor,
-                    state: LinkState::ConnectedUnlocked,
-                    cell_volume: 1.0,
-                    cell_volume_left: 1.0,
-                    cell_volume_right: 1.0,
-                    cell_eq: EqConfig::default(),
-                    cell_effects: EffectsConfig::default(),
-                    cell_node_id: None,
-                });
+                self.links.push(Link::connected_unlocked(src, descriptor));
                 rt.set_link_pending((src, descriptor), true);
             }
         } else {
@@ -139,17 +135,7 @@ impl MixerSession {
                 .map(|(cid, _)| EndpointDescriptor::Channel(*cid))
                 .collect();
             for sink in sinks {
-                self.links.push(Link {
-                    start: descriptor,
-                    end: sink,
-                    state: LinkState::ConnectedUnlocked,
-                    cell_volume: 1.0,
-                    cell_volume_left: 1.0,
-                    cell_volume_right: 1.0,
-                    cell_eq: EqConfig::default(),
-                    cell_effects: EffectsConfig::default(),
-                    cell_node_id: None,
-                });
+                self.links.push(Link::connected_unlocked(descriptor, sink));
                 rt.set_link_pending((descriptor, sink), true);
             }
         }
@@ -183,7 +169,10 @@ impl MixerSession {
                     self.resolve_endpoint(*ep, graph, settings)
                         .into_iter()
                         .flatten()
-                        .any(|n| app.matches(&n.identifier, kind))
+                        .any(|n| {
+                            let ni: NodeIdentity = (&n.identifier).into();
+                            app.matches(&ni, kind)
+                        })
                 }
                 _ => false,
             })
@@ -247,7 +236,7 @@ impl MixerSession {
                                 == Some(&assignment.application_name)
                                 && node.identifier.binary_name.as_deref()
                                     == Some(&assignment.binary_name)
-                                && node.has_port_kind(PortKind::Source)
+                                && node.has_port_kind(PortKind::Source.into())
                             {
                                 for &cell_id in &cell_ids {
                                     pw_messages.push(ToPipewireMessage::ClearRedirect {

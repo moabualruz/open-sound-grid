@@ -6,7 +6,7 @@ import { createSignal, For } from "solid-js";
 import { X, Save } from "lucide-solid";
 import type { PresetDef } from "./presets";
 import { saveCustomPreset } from "./presets";
-import type { EqConfig } from "../types";
+import type { EqConfig } from "../types/eq";
 
 interface PresetSaveDialogProps {
   currentEq: EqConfig;

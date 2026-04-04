@@ -1,7 +1,8 @@
 import { createContext, useContext, onCleanup } from "solid-js";
 import type { ParentProps } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import type { MixerSession, Command } from "../types";
+import type { MixerSession } from "../types/session";
+import type { Command } from "../types/commands";
 
 const EMPTY_SESSION: MixerSession = {
   activeSources: [],

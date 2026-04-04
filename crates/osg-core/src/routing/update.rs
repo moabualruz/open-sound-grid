@@ -18,12 +18,12 @@ impl MixerSession {
 
         let output = match message {
             StateMsg::AddEphemeralNode(id, kind) => {
-                self.handle_add_ephemeral_node(id, kind, graph, rt)
+                self.handle_add_ephemeral_node(id, kind.into(), graph, rt)
             }
             StateMsg::AddChannel(name, kind) => {
                 self.handle_add_channel(name, kind, rt, &mut pw_messages)
             }
-            StateMsg::AddApp(id, kind) => self.handle_add_app(id, kind, graph, settings, rt),
+            StateMsg::AddApp(id, kind) => self.handle_add_app(id, kind.into(), graph, settings, rt),
             StateMsg::RemoveEndpoint(ep) => {
                 self.handle_remove_endpoint(ep, graph, settings, rt, &mut pw_messages)
             }

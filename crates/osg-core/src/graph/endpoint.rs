@@ -2,11 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pw::PortKind;
-
 use super::effects_config::EffectsConfig;
 use super::eq_config::EqConfig;
 use super::identifiers::{AppId, ChannelId, DeviceId, PersistentNodeId};
+use super::port_kind::PortKind;
 use super::volume_state::VolumeLockMuteState;
 
 // ---------------------------------------------------------------------------

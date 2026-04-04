@@ -9,17 +9,17 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::pw::{NodeIdentifier, PortKind};
-
 use super::endpoint::EndpointDescriptor;
 use super::identifiers::{AppId, ChannelId};
 use super::link::LinkKey;
+use super::node_identity::NodeIdentity;
+use super::port_kind::PortKind;
 
 #[derive(Debug, Default)]
 pub struct RuntimeState {
     // ---- MixerSession-level runtime fields --------------------------------
     /// PW nodes not claimed by any endpoint — offered as candidates in the UI.
-    pub candidates: Vec<(u32, PortKind, NodeIdentifier)>,
+    pub candidates: Vec<(u32, PortKind, NodeIdentity)>,
 
     /// PipeWire node ID of the OS default audio sink.
     /// Updated from PipeWire metadata `default.audio.sink`.

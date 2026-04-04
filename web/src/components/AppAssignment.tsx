@@ -1,7 +1,7 @@
 import { Show, For, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { X, Plus, Speaker } from "lucide-solid";
-import type { Channel, App, AppAssignment as AppAssignmentType } from "../types";
+import type { Channel, App, AppAssignment as AppAssignmentType } from "../types/session";
 
 interface AppAssignmentProps {
   channelId: string;

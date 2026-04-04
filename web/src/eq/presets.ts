@@ -2,7 +2,7 @@
  * Built-in EQ presets grouped by category.
  * Each preset uses exactly 5 bands for clean UI display.
  */
-import type { EqConfig, EqBand as SerializedBand, FilterType } from "../types";
+import type { EqConfig, EqBand as SerializedBand, FilterType } from "../types/eq";
 
 export interface PresetDef {
   id: string;

@@ -54,6 +54,31 @@ pub enum LinkState {
     DisconnectedLocked,
 }
 
+impl Link {
+    /// Create a new link with `ConnectedUnlocked` state and default volumes/EQ/effects.
+    pub fn connected_unlocked(start: EndpointDescriptor, end: EndpointDescriptor) -> Self {
+        Self {
+            start,
+            end,
+            state: LinkState::ConnectedUnlocked,
+            cell_volume: 1.0,
+            cell_volume_left: 1.0,
+            cell_volume_right: 1.0,
+            cell_node_id: None,
+            cell_eq: EqConfig::default(),
+            cell_effects: EffectsConfig::default(),
+        }
+    }
+
+    /// Create a new link with `DisconnectedLocked` state and default volumes/EQ/effects.
+    pub fn disconnected_locked(start: EndpointDescriptor, end: EndpointDescriptor) -> Self {
+        Self {
+            state: LinkState::DisconnectedLocked,
+            ..Self::connected_unlocked(start, end)
+        }
+    }
+}
+
 impl LinkState {
     pub fn is_locked(self) -> bool {
         matches!(self, Self::ConnectedLocked | Self::DisconnectedLocked)

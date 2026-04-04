@@ -1,6 +1,6 @@
 import { createContext, useContext, onCleanup, type ParentProps } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import type { AudioGraph } from "../types";
+import type { AudioGraph } from "../types/graph";
 
 const EMPTY_GRAPH: AudioGraph = {
   groupNodes: {},

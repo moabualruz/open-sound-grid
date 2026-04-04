@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use crate::pw::{NodeIdentifier, PortKind};
-
 use super::channel::{App, Channel, Device};
 use super::endpoint::{Endpoint, EndpointDescriptor};
 use super::identifiers::{AppId, ChannelId, DeviceId, PersistentNodeId};
 use super::link::Link;
+use super::node_identity::NodeIdentity;
+use super::port_kind::PortKind;
 
 /// The user's desired audio state. Aggregate root (DDD write model).
 /// PipeWire: no direct equivalent — this is our domain model.
@@ -31,7 +31,7 @@ pub struct MixerSession {
     pub links: Vec<Link>,
     /// Mapping from persistent node IDs to their identifiers.
     #[serde(default)]
-    pub persistent_nodes: HashMap<PersistentNodeId, (NodeIdentifier, PortKind)>,
+    pub persistent_nodes: HashMap<PersistentNodeId, (NodeIdentity, PortKind)>,
     #[serde(default)]
     pub apps: HashMap<AppId, App>,
     #[serde(default)]

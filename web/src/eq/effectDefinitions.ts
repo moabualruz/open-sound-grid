@@ -1,4 +1,4 @@
-import type { EffectsConfig } from "../types";
+import type { EffectsConfig } from "../types/effects";
 
 export type SourceType = "app" | "cell" | "mix" | "mic";
 

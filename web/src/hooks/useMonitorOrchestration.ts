@@ -4,7 +4,9 @@
  */
 import { onCleanup } from "solid-js";
 import { computeMutedLinks, computeRestoreVolumes } from "../eq/monitorLogic";
-import type { Command, EndpointDescriptor, MixerLink, MixerSession } from "../types";
+import type { Command } from "../types/commands";
+import type { EndpointDescriptor, MixerLink, MixerSession } from "../types/session";
+import { descriptorsEqual } from "../components/mixerUtils";
 
 interface MonitorApi {
   state: { monitoredCell: { source: EndpointDescriptor; target: EndpointDescriptor } | null };
@@ -17,10 +19,6 @@ export interface MonitorOrchestration {
   toggleMonitoring: () => void;
   enableMonitoring: () => void;
   disableMonitoring: () => void;
-}
-
-function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 interface Options {

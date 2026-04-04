@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::pw::{NodeIdentifier, PortKind};
-
 use super::endpoint::EndpointDescriptor;
 use super::identifiers::AppId;
+use super::node_identity::NodeIdentity;
+use super::port_kind::PortKind;
 
 /// The kind of virtual audio bus. Owned by the domain layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -114,7 +114,7 @@ impl App {
         }
     }
 
-    pub fn matches(&self, identifier: &NodeIdentifier, kind: PortKind) -> bool {
+    pub fn matches(&self, identifier: &NodeIdentity, kind: PortKind) -> bool {
         self.kind == kind
             && identifier.application_name.as_ref() == Some(&self.name)
             && identifier.binary_name.as_ref() == Some(&self.binary)

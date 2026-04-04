@@ -5,10 +5,9 @@
 use tracing::warn;
 
 use crate::graph::{
-    EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession, ReconcileSettings,
-    RuntimeState,
+    EndpointDescriptor, Link, LinkState, MixerSession, PortKind, ReconcileSettings, RuntimeState,
 };
-use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, ToPipewireMessage};
 
 impl MixerSession {
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -76,17 +75,7 @@ impl MixerSession {
                 rt.set_link_pending(link_key, true);
             }
         } else {
-            self.links.push(Link {
-                start: source,
-                end: sink,
-                state: LinkState::ConnectedUnlocked,
-                cell_volume: 1.0,
-                cell_volume_left: 1.0,
-                cell_volume_right: 1.0,
-                cell_node_id: None,
-                cell_eq: EqConfig::default(),
-                cell_effects: EffectsConfig::default(),
-            });
+            self.links.push(Link::connected_unlocked(source, sink));
             if !msgs.is_empty() {
                 rt.set_link_pending(link_key, true);
             }
@@ -171,17 +160,7 @@ impl MixerSession {
                 self.links[i].state = LinkState::ConnectedLocked;
             }
             (None, true) => {
-                self.links.push(Link {
-                    start: source,
-                    end: sink,
-                    state: LinkState::DisconnectedLocked,
-                    cell_volume: 1.0,
-                    cell_volume_left: 1.0,
-                    cell_volume_right: 1.0,
-                    cell_node_id: None,
-                    cell_eq: EqConfig::default(),
-                    cell_effects: EffectsConfig::default(),
-                });
+                self.links.push(Link::disconnected_locked(source, sink));
             }
             (_, true) => {}
 

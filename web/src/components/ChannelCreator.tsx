@@ -14,7 +14,7 @@ import {
   Volume2,
   PenLine,
 } from "lucide-solid";
-import type { PwNode, PwDevice, AudioGraph } from "../types";
+import type { PwNode, PwDevice, AudioGraph } from "../types/graph";
 
 const CHANNEL_TEMPLATES = [
   { name: "Music", icon: Music, kind: "duplex" as const },

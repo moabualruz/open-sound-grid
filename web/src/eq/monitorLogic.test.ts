@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeMutedLinks, computeRestoreVolumes } from "./monitorLogic";
-import type { MixerLink, EndpointDescriptor } from "../types";
+import type { MixerLink, EndpointDescriptor } from "../types/session";
 
 // Helper to create a link
 function link(source: string, target: string, volume: number): MixerLink {

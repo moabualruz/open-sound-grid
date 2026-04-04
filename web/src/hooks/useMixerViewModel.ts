@@ -7,21 +7,18 @@ import { createEffect, createMemo, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import { useLevels } from "../stores/levelsStore";
-import { findEndpoint, findLink, getMixColor } from "../components/mixerUtils";
-import type { Endpoint, EndpointDescriptor, PwGroupNode } from "../types";
+import { findEndpoint, findLink, getMixColor, descriptorKey } from "../components/mixerUtils";
+import type { Endpoint, EndpointDescriptor } from "../types/session";
+import type { PwGroupNode } from "../types/graph";
 
 export type EndpointEntry = { desc: EndpointDescriptor; ep: Endpoint };
 
 export { getMixColor, findEndpoint, findLink };
 
-function descKey(d: EndpointDescriptor): string {
-  return JSON.stringify(d);
-}
-
 function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): EndpointEntry[] {
   if (order.length === 0) return items;
-  const orderKeys = order.map(descKey);
-  const byKey = new Map(items.map((item) => [descKey(item.desc), item]));
+  const orderKeys = order.map(descriptorKey);
+  const byKey = new Map(items.map((item) => [descriptorKey(item.desc), item]));
   const ordered: EndpointEntry[] = [];
   for (const key of orderKeys) {
     const item = byKey.get(key);
@@ -137,5 +134,5 @@ export function useMixerViewModel(): MixerViewModel {
     send({ type: "setMixOrder", order });
   }
 
-  return { channels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder };
+  return { channels, mixes, getPeaks, descKey: descriptorKey, persistChannelOrder, persistMixOrder };
 }

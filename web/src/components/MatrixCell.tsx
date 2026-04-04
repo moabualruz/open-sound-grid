@@ -6,7 +6,7 @@ import { useMonitor } from "../stores/monitorStore";
 import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
 import VuMeter from "./VuMeter";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
-import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
+import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
 
 /** Imperative actions exposed to the parent grid for keyboard shortcuts. */
 export interface MatrixCellActions {

@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import type { MatrixCellActions } from "./MatrixCell";
-import type { EndpointDescriptor } from "../types";
+import type { EndpointDescriptor } from "../types/session";
 
 export interface KeyboardNavCell {
   desc: EndpointDescriptor;

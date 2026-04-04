@@ -12,7 +12,8 @@ import {
   ChevronDown,
   SlidersVertical,
 } from "lucide-solid";
-import type { EndpointDescriptor, Endpoint, PwDevice, PwNode } from "../types";
+import type { EndpointDescriptor, Endpoint } from "../types/session";
+import type { PwDevice, PwNode } from "../types/graph";
 
 const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
 

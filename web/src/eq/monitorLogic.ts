@@ -2,7 +2,8 @@
  * Pure functions for monitor-solo computation.
  * No framework dependencies — easily testable.
  */
-import type { EndpointDescriptor, MixerLink } from "../types";
+import type { EndpointDescriptor, MixerLink } from "../types/session";
+import { descriptorsEqual } from "../components/mixerUtils";
 
 export interface MonitorMuteResult {
   /** Links to mute (volume set to 0). */
@@ -77,8 +78,4 @@ export function computeRestoreVolumes(
   }
 
   return { commands };
-}
-
-function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
