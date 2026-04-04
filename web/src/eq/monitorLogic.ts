@@ -8,7 +8,11 @@ export interface MonitorMuteResult {
   /** Links to mute (volume set to 0). */
   linksToMute: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number }[];
   /** The monitored link to boost to 100%. */
-  monitoredLink: { source: EndpointDescriptor; target: EndpointDescriptor; prevVolume: number } | null;
+  monitoredLink: {
+    source: EndpointDescriptor;
+    target: EndpointDescriptor;
+    prevVolume: number;
+  } | null;
 }
 
 export interface RestoreVolumeResult {

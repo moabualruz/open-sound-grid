@@ -194,6 +194,13 @@ All state is immutable by default. Every mutation produces a new snapshot publis
 - **Tailwind v4** — CSS-first config, utility classes
 - **Style Dictionary v5 + DTCG JSON** — design tokens source of truth in `web/tokens/tokens.json`, generates CSS custom properties for any future frontend
 - **Storybook 10** — component documentation and visual spec for future desktop reimplementation
+- **Vitest** — unit testing for pure frontend logic
+
+### Frontend testing
+
+- **Vitest** — unit tests for pure functions (`web/src/**/*.test.ts`)
+- **@solidjs/testing-library** — component tests
+- Run: `cd web && npx vitest run`
 
 ### Dependencies
 
@@ -220,6 +227,15 @@ PR template (recommended, not enforced):
 ### Effects architecture (ADR-007)
 
 Effects are post-cell and post-mix only. No per-channel effects. Each cell sink and each mix sink has an always-resident `pw_filter` EQ created at startup. Filters are bypass-toggled via atomic flag — no graph mutations at runtime. Input pre-processing (mic gate, de-essing) = separate inputs page, not mixer matrix.
+
+### Monitor solo
+
+Frontend-only feature (no backend state). Implemented in `web/src/eq/EqPage.tsx` with shared state in `web/src/stores/monitorStore.tsx`. Pure logic in `web/src/eq/monitorLogic.ts`.
+
+- **Cell monitoring**: Mutes ALL other links across ALL mixes, boosts monitored cell to 100%. Restores from current state (not stale snapshot) on disable.
+- **Mix monitoring**: Mutes all other mix endpoints, unmutes the monitored mix.
+- **UI feedback**: MatrixCell shows glowing ring + headphone icon on monitored cell, dims muted-by-monitor cells.
+- **Auto-disable**: Fires on page navigation via `onCleanup`.
 
 ### PipeWire integration
 

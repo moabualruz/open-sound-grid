@@ -5,6 +5,8 @@
  * actual audio processing happens in PipeWire filter-chain on the server.
  */
 
+import { BAND_COLORS } from "./bandColors";
+
 export type FilterType = "peaking" | "lowShelf" | "highShelf" | "lowPass" | "highPass" | "notch";
 
 export interface EqBand {
@@ -234,19 +236,8 @@ export function formatFreq(hz: number): string {
   return `${Math.round(hz)}Hz`;
 }
 
-/** Default band colors (Sonar-style). */
-export const BAND_COLORS = [
-  "#b07fe0", // purple
-  "#e08850", // orange
-  "#5090e0", // blue
-  "#60c060", // green
-  "#40b0a0", // teal
-  "#e06090", // pink
-  "#50c8e0", // cyan
-  "#e0c050", // yellow
-  "#e05050", // red
-  "#a0d050", // lime
-];
+/** Default band colors (Sonar-style) — re-exported from shared module. */
+export { BAND_COLORS } from "./bandColors";
 
 /** Create a default band at a given frequency. */
 export function createDefaultBand(id: number, freq: number): EqBand {

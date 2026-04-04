@@ -195,7 +195,7 @@ pub struct EffectsConfig {
 
 /// Opaque ID for a persistent (name-matched) node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(transparent)]
 pub struct PersistentNodeId(Ulid);
 
 #[allow(clippy::new_without_default)]
@@ -211,7 +211,7 @@ impl PersistentNodeId {
 
 /// Unique ID for a Channel. PipeWire: GroupNode ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(transparent)]
 pub struct ChannelId(Ulid);
 
 #[allow(clippy::new_without_default)]
@@ -227,7 +227,7 @@ impl ChannelId {
 
 /// Unique ID for a detected audio app. PipeWire: Client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(transparent)]
 pub struct AppId(Ulid);
 
 #[allow(clippy::new_without_default)]
@@ -239,7 +239,7 @@ impl AppId {
 
 /// Opaque ID for a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(transparent)]
 pub struct DeviceId(Ulid);
 
 // ---------------------------------------------------------------------------
@@ -443,7 +443,8 @@ pub struct Link {
     /// PipeWire node ID of the cell's volume-control node (null-audio-sink).
     /// Each cell gets its own PW node so volume can be controlled per-route.
     /// Route: channel → cell_node (volume here) → mix
-    #[serde(skip)]
+    /// Transient: populated at runtime by reconciliation, stripped before persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell_node_id: Option<u32>,
     /// Transient: a link command is in-flight to PipeWire.
     #[serde(skip)]
@@ -582,7 +583,7 @@ pub enum SourceType {
     HardwareLineIn,
     /// Virtual source (EasyEffects, loopback).
     VirtualSource,
-    /// Application playback stream (browser, game, music).
+    /// App playback stream (browser, game, music).
     #[default]
     AppStream,
 }
@@ -687,20 +688,28 @@ pub struct Device;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MixerSession {
+    #[serde(default)]
     pub active_sources: Vec<EndpointDescriptor>,
+    #[serde(default)]
     pub active_sinks: Vec<EndpointDescriptor>,
     #[serde(
+        default,
         serialize_with = "crate::graph::serde_helpers::serialize_map_as_vec",
         deserialize_with = "crate::graph::serde_helpers::deserialize_map_from_vec"
     )]
     pub endpoints: HashMap<EndpointDescriptor, Endpoint>,
     #[serde(skip)]
     pub candidates: Vec<(u32, PortKind, NodeIdentifier)>,
+    #[serde(default)]
     pub links: Vec<Link>,
     /// Mapping from persistent node IDs to their identifiers.
+    #[serde(default)]
     pub persistent_nodes: HashMap<PersistentNodeId, (NodeIdentifier, PortKind)>,
+    #[serde(default)]
     pub apps: HashMap<AppId, App>,
+    #[serde(default)]
     pub devices: HashMap<DeviceId, Device>,
+    #[serde(default)]
     pub channels: IndexMap<ChannelId, Channel>,
     /// User-defined display order for source channels (rows).
     #[serde(default)]
@@ -716,6 +725,11 @@ pub struct MixerSession {
     /// Prevents duplicate creation in the reconciliation loop.
     #[serde(skip)]
     pub created_cells: std::collections::HashSet<String>,
+    /// Monotonically increasing counter bumped on every `update()` call.
+    /// The reducer uses this to skip reconciliation when only graph events
+    /// arrive but the desired state hasn't changed.
+    #[serde(skip)]
+    pub generation: u64,
 }
 
 // ---------------------------------------------------------------------------

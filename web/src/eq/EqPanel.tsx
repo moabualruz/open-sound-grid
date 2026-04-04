@@ -4,14 +4,23 @@
  * No position-based feature branching.
  */
 import { createSignal, createEffect, Show, For, createMemo } from "solid-js";
+import { Save } from "lucide-solid";
 import type { EqBand } from "./math";
 import { createDefaultBands, createDefaultBand } from "./math";
 import type { EqConfig } from "../types";
 import type { PresetDef } from "./presets";
-import { getPresetsForCategory, DEFAULT_FAVORITES, BUILT_IN_PRESETS } from "./presets";
+import {
+  getPresetsForCategory,
+  DEFAULT_FAVORITES,
+  BUILT_IN_PRESETS,
+  getCustomPresets,
+} from "./presets";
 import EqGraph from "./EqGraph";
 import EqBandPopup from "./EqBandPopup";
 import EqMacroSliders from "./EqMacroSliders";
+import PresetGallery from "./PresetGallery";
+import PresetSaveDialog from "./PresetSaveDialog";
+import { BAND_COLORS } from "./bandColors";
 
 const MAX_BANDS = 10;
 const FAVORITES_STORAGE_KEY = "osg-favorite-presets";
@@ -41,10 +50,6 @@ function toSerializedBands(bands: EqBand[]): EqConfig["bands"] {
 
 /** Convert serialized EqConfig bands back to internal EqBand format. */
 function fromSerializedBands(bands: EqConfig["bands"]): EqBand[] {
-  const BAND_COLORS = [
-    "#e08850", "#5090e0", "#60c060", "#40b0a0", "#e06090",
-    "#50c8e0", "#e0c050", "#e05050", "#a0d050",
-  ];
   return bands.map((b, i) => ({
     id: i,
     enabled: b.enabled,
@@ -66,7 +71,13 @@ function buildMacroBands(bass: number, voice: number, treble: number): EqConfig[
     macroBands.push({ enabled: true, filterType: "peaking", frequency: 2500, gain: voice, q: 0.8 });
   }
   if (treble !== 0) {
-    macroBands.push({ enabled: true, filterType: "highShelf", frequency: 6000, gain: treble, q: 0.7 });
+    macroBands.push({
+      enabled: true,
+      filterType: "highShelf",
+      frequency: 6000,
+      gain: treble,
+      q: 0.7,
+    });
   }
   return macroBands;
 }
@@ -75,7 +86,9 @@ function loadFavoriteIds(): string[] {
   try {
     const stored = localStorage.getItem(FAVORITES_STORAGE_KEY);
     if (stored) return JSON.parse(stored) as string[];
-  } catch { /* ignore parse errors */ }
+  } catch {
+    /* ignore parse errors */
+  }
   return DEFAULT_FAVORITES;
 }
 
@@ -91,6 +104,17 @@ export default function EqPanel(props: EqPanelProps) {
   const [treble, setTreble] = createSignal(0);
   const [lastPresetId, setLastPresetId] = createSignal<string | null>(null);
   const [showGallery, setShowGallery] = createSignal(false);
+  const [showSaveDialog, setShowSaveDialog] = createSignal(false);
+  const [favoriteIds, setFavoriteIds] = createSignal<string[]>(loadFavoriteIds());
+
+  const favoritesSet = createMemo(() => new Set(favoriteIds()));
+
+  const toggleFavorite = (id: string) => {
+    const current = favoriteIds();
+    const next = current.includes(id) ? current.filter((f) => f !== id) : [...current, id];
+    setFavoriteIds(next);
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next));
+  };
 
   const selectedBand = () => bands().find((b) => b.id === selectedBandId());
   const canAddBand = () => bands().length < MAX_BANDS;
@@ -154,7 +178,9 @@ export default function EqPanel(props: EqPanelProps) {
   const resetToLastPreset = () => {
     const presetId = lastPresetId();
     if (!presetId) return;
-    const preset = BUILT_IN_PRESETS.find((p) => p.id === presetId);
+    const preset =
+      BUILT_IN_PRESETS.find((p) => p.id === presetId) ??
+      getCustomPresets().find((p) => p.id === presetId);
     if (preset) applyPreset(preset);
   };
 
@@ -167,7 +193,9 @@ export default function EqPanel(props: EqPanelProps) {
       return;
     }
     if (!value) return;
-    const preset = BUILT_IN_PRESETS.find((p) => p.id === value);
+    const preset =
+      BUILT_IN_PRESETS.find((p) => p.id === value) ??
+      getCustomPresets().find((p) => p.id === value);
     if (preset) applyPreset(preset);
   };
 
@@ -259,6 +287,16 @@ export default function EqPanel(props: EqPanelProps) {
             </button>
           </Show>
 
+          {/* Save as custom preset */}
+          <button
+            class="rounded px-1 py-0.5 transition-colors"
+            style={{ color: "var(--color-text-muted)", background: "transparent" }}
+            onClick={() => setShowSaveDialog(true)}
+            title="Save as custom preset"
+          >
+            <Save size={11} />
+          </button>
+
           {/* Import / Export */}
           <button
             class="rounded px-1.5 py-0.5 text-[10px] transition-colors"
@@ -316,25 +354,34 @@ export default function EqPanel(props: EqPanelProps) {
         </div>
       </div>
 
-      {/* Gallery signal placeholder — gallery component comes later */}
+      {/* Preset gallery modal */}
       <Show when={showGallery()}>
-        <div
-          class="px-3 py-2 text-[10px] flex items-center justify-between"
-          style={{
-            "background-color": "var(--color-bg-secondary)",
-            color: "var(--color-text-muted)",
-            "border-bottom": "1px solid var(--color-border)",
+        <PresetGallery
+          category={props.category ?? "app"}
+          onApply={(preset) => {
+            applyPreset(preset);
+            setShowGallery(false);
           }}
-        >
-          <span>Preset gallery (coming soon)</span>
-          <button
-            class="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ color: "var(--color-text-secondary)" }}
-            onClick={() => setShowGallery(false)}
-          >
-            Close
-          </button>
-        </div>
+          onClose={() => setShowGallery(false)}
+          favorites={favoritesSet()}
+          onToggleFavorite={toggleFavorite}
+        />
+      </Show>
+
+      {/* Save preset dialog */}
+      <Show when={showSaveDialog()}>
+        <PresetSaveDialog
+          currentEq={{
+            enabled: enabled(),
+            bands: [...toSerializedBands(bands()), ...buildMacroBands(bass(), voice(), treble())],
+          }}
+          defaultCategory={props.category ?? "app"}
+          onClose={() => setShowSaveDialog(false)}
+          onSaved={(preset) => {
+            setLastPresetId(preset.id);
+            setShowSaveDialog(false);
+          }}
+        />
       </Show>
 
       {/* EQ Graph */}

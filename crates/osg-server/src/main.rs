@@ -135,16 +135,28 @@ async fn handle_ws_session(mut socket: ws::WebSocket, state: Arc<AppState>) {
         return;
     }
 
-    // Stream session updates
+    // Rate-limited session broadcast (30 fps). Buffer the latest state change
+    // and send on tick to avoid flooding the frontend during rapid mutations
+    // (e.g., volume slider drag producing 60+ updates/s).
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(33));
+    let mut pending = false;
     loop {
-        if rx.changed().await.is_err() {
-            break;
-        }
-        let session = rx.borrow_and_update().clone();
-        if let Ok(json) = serde_json::to_string(&*session)
-            && socket.send(ws::Message::Text(json.into())).await.is_err()
-        {
-            break;
+        tokio::select! {
+            result = rx.changed() => {
+                if result.is_err() {
+                    break;
+                }
+                pending = true;
+            }
+            _ = interval.tick(), if pending => {
+                let session = rx.borrow_and_update().clone();
+                if let Ok(json) = serde_json::to_string(&*session)
+                    && socket.send(ws::Message::Text(json.into())).await.is_err()
+                {
+                    break;
+                }
+                pending = false;
+            }
         }
     }
 }

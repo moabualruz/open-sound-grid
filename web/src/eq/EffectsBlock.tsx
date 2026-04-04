@@ -2,20 +2,22 @@
  * Effects blocks — non-EQ processing that varies by source type.
  *
  * Source type determines which effects are available:
- * ┌───────────────┬────────────┬───────┬──────┐
- * │ Effect        │ App/Device │ Cell  │ Mix  │
- * ├───────────────┼────────────┼───────┼──────┤
- * │ Compressor    │ YES        │ YES   │ YES  │
- * │ Limiter       │ —          │ —     │ YES  │
- * │ Smart Volume  │ YES        │ —     │ YES  │
- * │ Volume Boost  │ YES        │ YES   │ YES  │
- * │ Spatial Audio │ —          │ —     │ YES  │
- * └───────────────┴────────────┴───────┴──────┘
+ * ┌───────────────┬────────────┬───────┬──────┬──────┐
+ * │ Effect        │ App/Device │ Cell  │ Mix  │ Mic  │
+ * ├───────────────┼────────────┼───────┼──────┼──────┤
+ * │ Noise Gate    │ —          │ —     │ —    │ YES  │
+ * │ De-Esser      │ —          │ —     │ —    │ YES  │
+ * │ Compressor    │ YES        │ YES   │ YES  │ YES  │
+ * │ Limiter       │ —          │ —     │ YES  │ —    │
+ * │ Smart Volume  │ YES        │ —     │ YES  │ —    │
+ * │ Volume Boost  │ YES        │ YES   │ YES  │ YES  │
+ * │ Spatial Audio │ —          │ —     │ YES  │ —    │
+ * └───────────────┴────────────┴───────┴──────┴──────┘
  */
 import { createSignal, Show, For, untrack } from "solid-js";
 import type { EffectsConfig } from "../types";
 
-export type SourceType = "app" | "cell" | "mix";
+export type SourceType = "app" | "cell" | "mix" | "mic";
 
 interface ControlDef {
   id: string;
@@ -48,10 +50,89 @@ interface EffectDef {
 
 const EFFECTS: EffectDef[] = [
   {
+    id: "gate",
+    label: "Noise Gate",
+    description: "Silences signal below threshold — removes background noise",
+    availableOn: ["mic"],
+    controls: [
+      {
+        id: "threshold",
+        label: "Threshold",
+        min: -80,
+        max: -20,
+        step: 1,
+        defaultValue: -60,
+        unit: "dB",
+      },
+      {
+        id: "hold",
+        label: "Hold",
+        min: 10,
+        max: 500,
+        step: 10,
+        defaultValue: 100,
+        unit: "ms",
+      },
+      {
+        id: "attack",
+        label: "Attack",
+        min: 0.1,
+        max: 10,
+        step: 0.1,
+        defaultValue: 0.5,
+        unit: "ms",
+      },
+      {
+        id: "release",
+        label: "Release",
+        min: 10,
+        max: 500,
+        step: 10,
+        defaultValue: 50,
+        unit: "ms",
+      },
+    ],
+  },
+  {
+    id: "deEsser",
+    label: "De-Esser",
+    description: "Reduces sibilance (harsh s/t/sh sounds)",
+    availableOn: ["mic"],
+    controls: [
+      {
+        id: "frequency",
+        label: "Frequency",
+        min: 4000,
+        max: 10000,
+        step: 100,
+        defaultValue: 6000,
+        unit: "Hz",
+      },
+      {
+        id: "threshold",
+        label: "Threshold",
+        min: -40,
+        max: 0,
+        step: 1,
+        defaultValue: -20,
+        unit: "dB",
+      },
+      {
+        id: "reduction",
+        label: "Reduction",
+        min: -12,
+        max: 0,
+        step: 0.5,
+        defaultValue: -6,
+        unit: "dB",
+      },
+    ],
+  },
+  {
     id: "compressor",
     label: "Compressor",
     description: "Reduces dynamic range — evens out loud and quiet",
-    availableOn: ["app", "cell", "mix"],
+    availableOn: ["app", "cell", "mix", "mic"],
     controls: [
       {
         id: "threshold",
@@ -131,7 +212,7 @@ const EFFECTS: EffectDef[] = [
     id: "volumeBoost",
     label: "Volume Boost",
     description: "Extra gain amplification beyond 100%",
-    availableOn: ["app", "cell", "mix"],
+    availableOn: ["app", "cell", "mix", "mic"],
     controls: [
       { id: "boost", label: "Boost", min: 0, max: 12, step: 0.5, defaultValue: 0, unit: "dB" },
     ],
@@ -217,6 +298,17 @@ function buildEffectsConfig(
     };
   }
 
+  const gate = cardStates.get("gate");
+  if (gate) {
+    config.gate = {
+      enabled: gate.enabled,
+      threshold: gate.values.threshold ?? base.gate.threshold,
+      hold: gate.values.hold ?? base.gate.hold,
+      attack: gate.values.attack ?? base.gate.attack,
+      release: gate.values.release ?? base.gate.release,
+    };
+  }
+
   const deEsser = cardStates.get("deEsser");
   if (deEsser) {
     config.deEsser = {
@@ -241,7 +333,7 @@ export default function EffectsBlock(props: EffectsBlockProps) {
   const baseConfig = () => props.initialEffects ?? defaultEffectsConfig();
 
   /** Effect IDs that have backend DSP mapping. */
-  const MAPPED_EFFECTS = new Set(["compressor", "limiter", "deEsser", "volumeBoost"]);
+  const MAPPED_EFFECTS = new Set(["compressor", "limiter", "deEsser", "gate", "volumeBoost"]);
 
   function handleCardChange(effectId: string, enabled: boolean, values: Record<string, number>) {
     cardStates.set(effectId, { enabled, values });
@@ -281,9 +373,19 @@ function getInitialFromConfig(
   config: EffectsConfig | undefined,
 ): { enabled: boolean; values: Record<string, number> } | null {
   if (!config) return null;
+  if (effectId === "gate") {
+    const g = config.gate;
+    return {
+      enabled: g.enabled,
+      values: { threshold: g.threshold, hold: g.hold, attack: g.attack, release: g.release },
+    };
+  }
   if (effectId === "compressor") {
     const c = config.compressor;
-    return { enabled: c.enabled, values: { threshold: c.threshold, ratio: c.ratio, attack: c.attack, release: c.release } };
+    return {
+      enabled: c.enabled,
+      values: { threshold: c.threshold, ratio: c.ratio, attack: c.attack, release: c.release },
+    };
   }
   if (effectId === "limiter") {
     const l = config.limiter;
@@ -291,7 +393,10 @@ function getInitialFromConfig(
   }
   if (effectId === "deEsser") {
     const d = config.deEsser;
-    return { enabled: d.enabled, values: { frequency: d.frequency, threshold: d.threshold, reduction: d.reduction } };
+    return {
+      enabled: d.enabled,
+      values: { frequency: d.frequency, threshold: d.threshold, reduction: d.reduction },
+    };
   }
   if (effectId === "volumeBoost") {
     const b = config.boost ?? 0;
@@ -376,7 +481,12 @@ function EffectCard(props: EffectCardProps) {
           >
             {props.effect.label}
             <Show when={isComingSoon()}>
-              <span class="ml-1 text-[8px] normal-case" style={{ color: "var(--color-text-muted)" }}>(Coming Soon)</span>
+              <span
+                class="ml-1 text-[8px] normal-case"
+                style={{ color: "var(--color-text-muted)" }}
+              >
+                (Coming Soon)
+              </span>
             </Show>
           </span>
         </div>

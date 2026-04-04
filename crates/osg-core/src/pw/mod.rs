@@ -2,7 +2,9 @@
 
 pub mod biquad;
 mod cell;
+mod effects_dsp;
 pub mod filter;
+mod group_nodes;
 pub mod identifier;
 mod mainloop;
 mod object;

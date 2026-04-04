@@ -122,6 +122,8 @@ export interface MixerLink {
   cellVolume: number;
   cellVolumeLeft: number;
   cellVolumeRight: number;
+  /** PipeWire node ID of the cell's null-audio-sink (for VU metering). */
+  cellNodeId?: number | null;
   cellEq?: EqConfig;
   cellEffects?: EffectsConfig;
 }
@@ -131,6 +133,8 @@ export interface AppAssignment {
   binaryName: string;
 }
 
+export type SourceType = "hardwareMic" | "hardwareLineIn" | "virtualSource" | "appStream";
+
 export interface Channel {
   id: string;
   kind: GroupNodeKind;
@@ -138,6 +142,7 @@ export interface Channel {
   assignedApps: AppAssignment[];
   autoApp: boolean;
   allowAppAssignment: boolean;
+  sourceType?: SourceType;
 }
 
 export interface App {

@@ -194,7 +194,8 @@ pub fn build_node_volume_pod(channel_volumes: Vec<f32>) -> (ParamType, PodBytes)
         SpaTypes::ObjectParamProps,
         ParamType::Props,
         Property::new(SPA_PROP_channelVolumes, Value::ValueArray(ValueArray::Float(vols))),
-    }).serialize();
+    })
+    .serialize();
     (ParamType::Props, pod)
 }
 

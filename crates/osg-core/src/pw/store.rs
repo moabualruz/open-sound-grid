@@ -300,10 +300,9 @@ impl Store {
             return;
         };
 
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .expect(&format!("node {id} must exist when receiving its param update"));
+        let node = self.nodes.get_mut(&id).expect(&format!(
+            "node {id} must exist when receiving its param update"
+        ));
 
         // deserialize the pod
         let (_, value) = PodDeserializer::deserialize_any_from(pod.as_bytes())
@@ -324,13 +323,10 @@ impl Store {
         let Some(props) = node_info.props() else {
             return;
         };
-        let node = self
-            .nodes
-            .get_mut(&node_info.id())
-            .expect(&format!(
-                "node {} must exist when receiving its info update",
-                node_info.id()
-            ));
+        let node = self.nodes.get_mut(&node_info.id()).expect(&format!(
+            "node {} must exist when receiving its info update",
+            node_info.id()
+        ));
         if let EndpointId::Device { device_index, .. } = &mut node.endpoint
             && let Some(idx) = props
                 .get("card.profile.device")
@@ -415,10 +411,9 @@ impl Store {
         index: u32,
         pod: Option<&Pod>,
     ) {
-        let device = self
-            .devices
-            .get_mut(&id)
-            .expect(&format!("device {id} must exist when receiving its param update"));
+        let device = self.devices.get_mut(&id).expect(&format!(
+            "device {id} must exist when receiving its param update"
+        ));
 
         // If index is 0, clear as we assume more routes will be coming later if there are more
         if index == 0 {

@@ -5,18 +5,17 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::mpsc, thread::JoinH
 use std::sync::Arc;
 
 use pipewire::{
-    context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, metadata::Metadata,
-    properties::properties, proxy::ProxyT, registry::RegistryRc, spa::param::ParamType,
-    types::ObjectType,
+    core::CoreRc, keys::*, metadata::Metadata, properties::properties, proxy::ProxyT,
+    registry::RegistryRc, types::ObjectType,
 };
 use tracing::{debug, trace, warn};
 use ulid::Ulid;
 
 use super::{
+    AudioGraph, FromPipewireMessage, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
+    ToPipewireMessage,
     object::Port,
-    store::{map_ports, Store},
-    AudioGraph, FromPipewireMessage, GroupNodeKind, PortKind, PwError, ToPipewireMessage,
-    OSG_APP_ID, OSG_APP_NAME,
+    store::{Store, map_ports},
 };
 
 /// # Master
@@ -342,146 +341,10 @@ impl Master {
     }
 }
 
-pub fn init_node_listeners(
-    store: Rc<RefCell<Store>>,
-    sender: pipewire::channel::Sender<ToPipewireMessage>,
-    id: u32,
-) {
-    if let Some(node) = store.clone().borrow_mut().nodes.get_mut(&id) {
-        node.listener = Some(
-            node.proxy
-                .add_listener_local()
-                .info({
-                    let store = store.clone();
-                    let sender = sender.clone();
-                    move |info| {
-                        store.borrow_mut().update_node_info(info);
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                })
-                .param({
-                    move |_, type_, _, _, pod| {
-                        let Ok(mut store_borrow) = store.try_borrow_mut() else {
-                            warn!(
-                                "[PW] re-entrant borrow in param callback for node {id}, skipping"
-                            );
-                            return;
-                        };
-                        store_borrow.update_node_param(type_, id, pod);
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                })
-                .register(),
-        );
-        node.proxy
-            .enum_params(0, Some(ParamType::Props), 0, u32::MAX);
-        node.proxy.subscribe_params(&[ParamType::Props]);
-    }
-}
-
-pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
-    if let Some(device) = store.clone().borrow_mut().devices.get_mut(&id) {
-        device.listener = Some(
-            device
-                .proxy
-                .add_listener_local()
-                .param({
-                    move |_seq, type_, index, _next, pod| {
-                        let Ok(mut store_borrow) = store.try_borrow_mut() else {
-                            warn!("[PW] re-entrant borrow in param callback for device {id}, skipping");
-                            return;
-                        };
-                        store_borrow.update_device_param(type_, id, index, pod);
-                    }
-                })
-                .register(),
-        );
-        device
-            .proxy
-            .enum_params(0, Some(ParamType::Route), 0, u32::MAX);
-        device.proxy.subscribe_params(&[ParamType::Route]);
-    }
-}
-
-/// Bind and listen for PipeWire metadata `default.audio.sink` changes.
-/// Stores the metadata proxy in `metadata_out` so it can be used to set the default sink.
-#[allow(clippy::too_many_arguments)]
-fn init_metadata_listener(
-    registry: &RegistryRc,
-    store: Rc<RefCell<Store>>,
-    sender: pipewire::channel::Sender<ToPipewireMessage>,
-    metadata_out: &Rc<RefCell<Option<Metadata>>>,
-    metadata_listeners: &Rc<RefCell<Vec<pipewire::metadata::MetadataListener>>>,
-    global: &pipewire::registry::GlobalObject<&pipewire::spa::utils::dict::DictRef>,
-) {
-    // Only bind the "default" metadata — it has default.audio.sink/source
-    let is_default = global
-        .props
-        .map(|p| p.get("metadata.name") == Some("default"))
-        .unwrap_or(false);
-    if !is_default {
-        return;
-    }
-
-    let Ok(metadata) = registry.bind::<Metadata, _>(global) else {
-        warn!("[PW] failed to bind metadata object {}", global.id);
-        return;
-    };
-    debug!("[PW] bound 'default' metadata object (id={})", global.id);
-    let listener = metadata
-        .add_listener_local()
-        .property({
-            let store = store.clone();
-            let sender = sender.clone();
-            move |_subject, key, _type, value| {
-                let parse_name = |v: &str| -> Option<String> {
-                    serde_json::from_str::<serde_json::Value>(v)
-                        .ok()
-                        .and_then(|v| v.get("name")?.as_str().map(String::from))
-                };
-                match key {
-                    Some("default.audio.sink") => {
-                        let name = value.and_then(parse_name);
-                        debug!("default.audio.sink changed: {name:?}");
-                        store.borrow_mut().default_sink_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                    Some("default.audio.source") => {
-                        let name = value.and_then(parse_name);
-                        debug!("default.audio.source changed: {name:?}");
-                        store.borrow_mut().default_source_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                    _ => {}
-                }
-                0
-            }
-        })
-        .register();
-
-    // Store the proxy so we can call set_property later.
-    // Keep the listener alive in the vec — dropping it would stop events.
-    *metadata_out.borrow_mut() = Some(metadata);
-    metadata_listeners.borrow_mut().push(listener);
-}
-
-/// Initialize PipeWire mainloop, context, core, and registry.
-fn init_pipewire() -> Result<(MainLoopRc, ContextRc, CoreRc, RegistryRc), PwError> {
-    let mainloop = MainLoopRc::new(None)
-        .map_err(|e| PwError::ConnectionFailed(format!("mainloop init: {e}")))?;
-    let context = ContextRc::new(&mainloop, None)
-        .map_err(|e| PwError::ConnectionFailed(format!("context init: {e}")))?;
-    let pw_core = context
-        .connect_rc(Some(properties! {
-            *MEDIA_CATEGORY => "Manager",
-            *APP_ICON_NAME => OSG_APP_ID,
-        }))
-        .map_err(|e| PwError::ConnectionFailed(format!("core connect: {e}")))?;
-    let registry = pw_core
-        .get_registry_rc()
-        .map_err(|e| PwError::ConnectionFailed(format!("registry: {e}")))?;
-    Ok((mainloop, context, pw_core, registry))
-}
+// Listener init and PW setup functions live in group_nodes.rs.
+use super::group_nodes::{
+    init_device_listeners, init_metadata_listener, init_node_listeners, init_pipewire,
+};
 
 /// Create the Master and register all registry/core listeners.
 fn setup_master(
@@ -560,9 +423,10 @@ pub(super) fn init_mainloop(
                             .nodes
                             .iter()
                             .filter(|(_, n)| {
-                                n.identifier
-                                    .node_name()
-                                    .is_some_and(|name| name.starts_with("osg."))
+                                n.identifier.node_name().is_some_and(|name| {
+                                    name.starts_with("osg.")
+                                        && !name.starts_with("osg.staging.")
+                                })
                             })
                             .map(|(id, _)| *id)
                             .collect();
@@ -583,7 +447,21 @@ pub(super) fn init_mainloop(
                             if let Some(node_id) = filter.node_id() {
                                 peak_store.get_or_insert(node_id).store(l, r);
                             }
-                            if let Ok(ulid) = key.parse::<Ulid>() {
+                            // Cell filter keys: "{ch_ulid}-to-{mix_ulid}"
+                            // Store peak under the cell sink's PW node ID for VU metering.
+                            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-") {
+                                let s = store.borrow();
+                                if let Some(&cell_pw_id) =
+                                    s.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
+                                {
+                                    peak_store.get_or_insert(cell_pw_id).store(l, r);
+                                }
+                            }
+                            // Mix filter keys: "mix.{ulid}" — store peak under the mix PW node.
+                            if let Some(ulid) = key
+                                .strip_prefix("mix.")
+                                .and_then(|s| s.parse::<Ulid>().ok())
+                            {
                                 let s = store.borrow();
                                 if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
                                     n.identifier

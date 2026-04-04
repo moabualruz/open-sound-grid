@@ -2,7 +2,7 @@
 
 use pipewire::spa::{
     param::ParamType,
-    pod::{deserialize::PodDeserializer, Pod, Value, ValueArray},
+    pod::{Pod, Value, ValueArray, deserialize::PodDeserializer},
 };
 
 fn deserialize_volumes(pod_bytes: &[u8]) -> Option<Vec<f32>> {

@@ -7,6 +7,8 @@
 //   4. PipeWire graph updates are debounced (16ms) and fed back into the diff
 
 mod apps;
+mod cell_reconcile;
+mod eq_handlers;
 pub mod messages;
 pub mod reconcile;
 pub mod reducer;

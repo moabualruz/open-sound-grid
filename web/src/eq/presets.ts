@@ -429,5 +429,41 @@ export const DEFAULT_FAVORITES = [
 ];
 
 export function getPresetsForCategory(category: PresetDef["category"]): PresetDef[] {
-  return BUILT_IN_PRESETS.filter((p) => p.category === category);
+  return [
+    ...BUILT_IN_PRESETS.filter((p) => p.category === category),
+    ...getCustomPresets(category),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// Custom presets (localStorage)
+// ---------------------------------------------------------------------------
+
+const CUSTOM_PRESETS_KEY = "osg-custom-presets";
+
+export function getCustomPresets(category?: PresetDef["category"]): PresetDef[] {
+  try {
+    const stored = localStorage.getItem(CUSTOM_PRESETS_KEY);
+    if (!stored) return [];
+    const all = JSON.parse(stored) as PresetDef[];
+    return category ? all.filter((p) => p.category === category) : all;
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomPreset(preset: PresetDef): void {
+  const existing = getCustomPresets();
+  const idx = existing.findIndex((p) => p.id === preset.id);
+  if (idx >= 0) {
+    existing[idx] = preset;
+  } else {
+    existing.push(preset);
+  }
+  localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(existing));
+}
+
+export function deleteCustomPreset(id: string): void {
+  const existing = getCustomPresets().filter((p) => p.id !== id);
+  localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(existing));
 }

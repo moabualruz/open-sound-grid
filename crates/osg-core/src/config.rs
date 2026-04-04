@@ -12,6 +12,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use crate::graph::{MixerSession, ReconcileSettings};
+use crate::migration;
 
 const APP_ID: &str = "open-sound-grid";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -59,8 +60,17 @@ fn config_dir() -> Option<PathBuf> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentState {
-    version: String,
-    state: MixerSession,
+    pub(crate) version: String,
+    pub(crate) state: MixerSession,
+}
+
+impl Default for PersistentState {
+    fn default() -> Self {
+        Self {
+            version: migration::CURRENT_VERSION.to_owned(),
+            state: MixerSession::default(),
+        }
+    }
 }
 
 impl PersistentState {
@@ -68,11 +78,16 @@ impl PersistentState {
     pub fn from_state(mut state: MixerSession) -> Self {
         // Only persist locked links.
         state.links.retain(|link| link.state.is_locked());
+        // Strip transient runtime fields from links before persistence.
+        for link in &mut state.links {
+            link.cell_node_id = None;
+            link.pending = false;
+        }
         // Only persist active applications.
         state.apps.retain(|_, app| app.is_active);
 
         Self {
-            version: APP_VERSION.to_string(),
+            version: migration::CURRENT_VERSION.to_owned(),
             state,
         }
     }
@@ -81,7 +96,10 @@ impl PersistentState {
         self.state
     }
 
-    pub fn save(&self) -> Result<(), ConfigError> {
+    pub fn save(&mut self) -> Result<(), ConfigError> {
+        // Always stamp the current migration version before writing.
+        self.version = migration::CURRENT_VERSION.to_owned();
+
         let dir = data_dir().ok_or(ConfigError::DataDirNotFound)?;
         let app_dir = dir.join(APP_ID);
         fs::create_dir_all(&app_dir)?;
@@ -98,7 +116,7 @@ impl PersistentState {
         let dir = data_dir().ok_or(ConfigError::DataDirNotFound)?;
         let path = dir.join(APP_ID).join("state.toml");
         let content = fs::read_to_string(&path)?;
-        Ok(toml::from_str(&content)?)
+        migration::migrate(&content)
     }
 }
 

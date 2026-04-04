@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use crate::graph::{
     Channel, ChannelId, ChannelKind, EffectsConfig, Endpoint, EndpointDescriptor, EqConfig, Link,
@@ -18,6 +18,7 @@ impl MixerSession {
         message: StateMsg,
         settings: &ReconcileSettings,
     ) -> (Option<StateOutputMsg>, Vec<ToPipewireMessage>) {
+        self.generation = self.generation.wrapping_add(1);
         let mut pw_messages = Vec::new();
         let output = 'handler: {
             match message {
@@ -81,8 +82,11 @@ impl MixerSession {
                     );
                     // ADR-007: Only mixes get PW nodes. Source channels are logical.
                     if kind == ChannelKind::Sink {
-                        pw_messages
-                            .push(ToPipewireMessage::CreateGroupNode(name, id.inner(), kind));
+                        pw_messages.push(ToPipewireMessage::CreateGroupNode(
+                            name,
+                            id.inner(),
+                            kind,
+                        ));
                     }
                     // Auto-create active links to all existing counterparts.
                     // New source channel → all existing sinks. New sink → all existing sources + apps.
@@ -195,9 +199,12 @@ impl MixerSession {
                             // ADR-007: Clear links from app streams to cell sinks
                             if let Some(ch) = self.channels.get(&id) {
                                 let prefix = format!("osg.cell.{}-to-", id.inner());
-                                let cell_ids: Vec<u32> = graph.nodes.iter()
+                                let cell_ids: Vec<u32> = graph
+                                    .nodes
+                                    .iter()
                                     .filter_map(|(&nid, n)| {
-                                        n.identifier.node_name()
+                                        n.identifier
+                                            .node_name()
                                             .filter(|name| name.starts_with(&prefix))
                                             .map(|_| nid)
                                     })
@@ -211,10 +218,12 @@ impl MixerSession {
                                             && node.has_port_kind(PortKind::Source)
                                         {
                                             for &cell_id in &cell_ids {
-                                                pw_messages.push(ToPipewireMessage::ClearRedirect {
-                                                    stream_node_id: node.id,
-                                                    target_node_id: cell_id,
-                                                });
+                                                pw_messages.push(
+                                                    ToPipewireMessage::ClearRedirect {
+                                                        stream_node_id: node.id,
+                                                        target_node_id: cell_id,
+                                                    },
+                                                );
                                             }
                                         }
                                     }
@@ -366,15 +375,19 @@ impl MixerSession {
                     if is_device {
                         if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
                             pw_messages.extend(
-                                nodes.into_iter().map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
+                                nodes
+                                    .into_iter()
+                                    .map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
                             );
                         }
                     } else if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
                         // Mix: set volume on PW node directly
                         let vols = vec![vol_l, vol_r];
-                        pw_messages.extend(nodes.into_iter().map(|n| {
-                            ToPipewireMessage::NodeVolume(n.id, vols.clone())
-                        }));
+                        pw_messages.extend(
+                            nodes
+                                .into_iter()
+                                .map(|n| ToPipewireMessage::NodeVolume(n.id, vols.clone())),
+                        );
                     } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
                         // Source channel: fan out effective to cells
                         for link in &self.links {
@@ -660,7 +673,9 @@ impl MixerSession {
                         link.cell_volume_right = v;
                     }
                     // ADR-007: effective = channel_vol × cell_vol
-                    let ch_vol = self.endpoints.get(&source)
+                    let ch_vol = self
+                        .endpoints
+                        .get(&source)
                         .map(|ep| ep.volume)
                         .unwrap_or(1.0);
                     let eff = v * ch_vol;
@@ -696,42 +711,11 @@ impl MixerSession {
                     None
                 }
                 StateMsg::SetMixOutput(channel_id, output_node_id) => {
-                    if let Some(ch) = self.channels.get_mut(&channel_id) {
-                        let old_output = ch.output_node_id;
-                        ch.output_node_id = output_node_id;
-
-                        // Remove old links if previously assigned
-                        if let (Some(pw_id), Some(old_id)) = (ch.pipewire_id, old_output) {
-                            pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                                start_id: pw_id,
-                                end_id: old_id,
-                            });
-                        }
-
-                        // Create new links to the output device
-                        if let (Some(pw_id), Some(new_id)) = (ch.pipewire_id, output_node_id) {
-                            pw_messages.push(ToPipewireMessage::CreateNodeLinks {
-                                start_id: pw_id,
-                                end_id: new_id,
-                            });
-                        }
-
-                        // If this is the Monitor mix, update OS default sink
-                        let desc = EndpointDescriptor::Channel(channel_id);
-                        let is_monitor = self
-                            .endpoints
-                            .get(&desc)
-                            .map(|ep| ep.display_name.to_lowercase().contains("monitor"))
-                            .unwrap_or(false);
-                        if is_monitor
-                            && let Some(new_id) = output_node_id
-                            && let Some(node) = graph.nodes.get(&new_id)
-                            && let Some(name) = node.identifier.node_name()
-                        {
-                            pw_messages
-                                .push(ToPipewireMessage::SetDefaultSink(name.to_owned(), new_id));
-                        }
-                    }
+                    pw_messages.extend(self.handle_set_mix_output(
+                        channel_id,
+                        output_node_id,
+                        graph,
+                    ));
                     None
                 }
                 StateMsg::SetEndpointVisible(descriptor, visible) => {
@@ -764,135 +748,11 @@ impl MixerSession {
                     None
                 }
                 StateMsg::AssignApp(channel_id, assignment) => {
-                    let Some(ch) = self.channels.get_mut(&channel_id) else {
-                        warn!("[State] cannot assign app: channel {channel_id:?} not found");
-                        break 'handler None;
-                    };
-
-                    // Don't add duplicates
-                    if ch.assigned_apps.contains(&assignment) {
-                        break 'handler None;
-                    }
-
-                    ch.assigned_apps.push(assignment.clone());
-                    // ADR-007: Reconciler's diff_app_routing handles actual linking
-                    // to cell sinks on the next tick. No immediate redirect needed.
-                    // Destroy the app's auto-channel — it will be recreated on unassign
-                    let auto_id = self
-                        .channels
-                        .iter()
-                        .find(|(_, c)| {
-                            c.auto_app
-                                && c.assigned_apps.iter().any(|a| {
-                                    a.application_name == assignment.application_name
-                                        && a.binary_name == assignment.binary_name
-                                })
-                        })
-                        .map(|(id, _)| *id);
-                    if let Some(id) = auto_id {
-                        // ADR-007: Don't destroy the auto-channel's cells/filters —
-                        // just unlink apps from them. Cells keep their volume/EQ state
-                        // and get relinked when the app is ungrouped.
-                        let prefix = format!("osg.cell.{}-to-", id.inner());
-                        for (&nid, n) in &graph.nodes {
-                            if n.identifier
-                                .node_name()
-                                .is_some_and(|name| name.starts_with(&prefix))
-                            {
-                                for app_node in graph.nodes.values() {
-                                    if graph.links.values().any(|l| {
-                                        l.start_node == app_node.id && l.end_node == nid
-                                    }) {
-                                        pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                                            start_id: app_node.id,
-                                            end_id: nid,
-                                        });
-                                    }
-                                }
-                                // Set cell volume to 0 so it's silent while parked
-                                pw_messages.push(ToPipewireMessage::NodeVolume(nid, vec![0.0, 0.0]));
-                            }
-                        }
-                        // Hide the auto-channel but keep it in the model
-                        if let Some(ep) = self
-                            .endpoints
-                            .get_mut(&EndpointDescriptor::Channel(id))
-                        {
-                            ep.visible = false;
-                        }
-                    }
+                    pw_messages.extend(self.handle_assign_app(channel_id, assignment, graph));
                     None
                 }
                 StateMsg::UnassignApp(channel_id, assignment) => {
-                    let Some(ch) = self.channels.get_mut(&channel_id) else {
-                        warn!("[State] cannot unassign app: channel {channel_id:?} not found");
-                        break 'handler None;
-                    };
-
-                    ch.assigned_apps.retain(|a| a != &assignment);
-
-                    // ADR-007: Clear links from app streams to all cell sinks for this channel
-                    let prefix = format!("osg.cell.{}-to-", channel_id.inner());
-                    let cell_ids: Vec<u32> = graph.nodes.iter()
-                        .filter_map(|(&nid, n)| {
-                            n.identifier.node_name()
-                                .filter(|name| name.starts_with(&prefix))
-                                .map(|_| nid)
-                        })
-                        .collect();
-                    for node in graph.nodes.values() {
-                        if node.identifier.application_name.as_deref()
-                            == Some(&assignment.application_name)
-                            && node.identifier.binary_name.as_deref()
-                                == Some(&assignment.binary_name)
-                            && node.has_port_kind(PortKind::Source)
-                        {
-                            for &cell_id in &cell_ids {
-                                pw_messages.push(ToPipewireMessage::ClearRedirect {
-                                    stream_node_id: node.id,
-                                    target_node_id: cell_id,
-                                });
-                            }
-                            debug!(
-                                "[State] cleared redirect for {} (node {})",
-                                assignment.application_name, node.id
-                            );
-                        }
-                    }
-                    // Restore hidden auto-channel if it exists
-                    let auto_id = self.channels.iter().find(|(_, c)| {
-                        c.auto_app
-                            && !c.assigned_apps.is_empty()
-                            && c.assigned_apps.iter().any(|a| {
-                                a.application_name == assignment.application_name
-                                    && a.binary_name == assignment.binary_name
-                            })
-                    }).map(|(id, _)| *id);
-                    if let Some(id) = auto_id {
-                        if let Some(ep) = self
-                            .endpoints
-                            .get_mut(&EndpointDescriptor::Channel(id))
-                        {
-                            ep.visible = true;
-                        }
-                        // Restore cell volumes from endpoint state
-                        let vol = self.endpoints
-                            .get(&EndpointDescriptor::Channel(id))
-                            .map(|ep| (ep.volume_left, ep.volume_right))
-                            .unwrap_or((1.0, 1.0));
-                        let auto_prefix = format!("osg.cell.{}-to-", id.inner());
-                        for (&nid, n) in &graph.nodes {
-                            if n.identifier.node_name()
-                                .is_some_and(|name| name.starts_with(&auto_prefix))
-                            {
-                                pw_messages.push(ToPipewireMessage::NodeVolume(
-                                    nid, vec![vol.0, vol.1],
-                                ));
-                            }
-                        }
-                    }
-                    // Force graph update so reconciler relinks
-                    pw_messages.push(ToPipewireMessage::Update);
+                    pw_messages.extend(self.handle_unassign_app(channel_id, assignment, graph));
                     None
                 }
                 StateMsg::SetDefaultOutputNode(node_id) => {
@@ -900,91 +760,19 @@ impl MixerSession {
                     None
                 }
                 StateMsg::SetEq(ep_desc, eq) => {
-                    if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
-                        ep.eq = eq.clone();
-                    }
-                    // Dispatch EQ to PW filter — mix filters keyed as "mix.{ulid}"
-                    let filter_key = match ep_desc {
-                        EndpointDescriptor::Channel(id) => {
-                            let ch = self.channels.get(&id);
-                            if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
-                                format!("mix.{}", id.inner())
-                            } else {
-                                String::new() // source channels have no direct filter
-                            }
-                        }
-                        _ => String::new(),
-                    };
-                    if !filter_key.is_empty() {
-                        pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
-                    }
+                    pw_messages.extend(self.handle_set_eq(ep_desc, eq));
                     None
                 }
                 StateMsg::SetCellEq(source, sink, eq) => {
-                    if let Some(l) = self
-                        .links
-                        .iter_mut()
-                        .find(|l| l.start == source && l.end == sink)
-                    {
-                        l.cell_eq = eq.clone();
-                    }
-                    // Dispatch EQ to cell's PW filter
-                    let filter_key = match (&source, &sink) {
-                        (EndpointDescriptor::Channel(ch), EndpointDescriptor::Channel(mx)) => {
-                            format!("{}-to-{}", ch.inner(), mx.inner())
-                        }
-                        _ => String::new(),
-                    };
-                    if !filter_key.is_empty() {
-                        pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
-                    }
+                    pw_messages.extend(self.handle_set_cell_eq(source, sink, eq));
                     None
                 }
                 StateMsg::SetEffects(ep_desc, effects) => {
-                    if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
-                        ep.effects = effects.clone();
-                    }
-                    // Dispatch effects to PW filter — mix filters keyed as "mix.{ulid}"
-                    let filter_key = match ep_desc {
-                        EndpointDescriptor::Channel(id) => {
-                            let ch = self.channels.get(&id);
-                            if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
-                                format!("mix.{}", id.inner())
-                            } else {
-                                String::new()
-                            }
-                        }
-                        _ => String::new(),
-                    };
-                    if !filter_key.is_empty() {
-                        pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                            filter_key,
-                            effects,
-                        });
-                    }
+                    pw_messages.extend(self.handle_set_effects(ep_desc, effects));
                     None
                 }
                 StateMsg::SetCellEffects(source, sink, effects) => {
-                    if let Some(l) = self
-                        .links
-                        .iter_mut()
-                        .find(|l| l.start == source && l.end == sink)
-                    {
-                        l.cell_effects = effects.clone();
-                    }
-                    // Dispatch effects to cell's PW filter
-                    let filter_key = match (&source, &sink) {
-                        (EndpointDescriptor::Channel(ch), EndpointDescriptor::Channel(mx)) => {
-                            format!("{}-to-{}", ch.inner(), mx.inner())
-                        }
-                        _ => String::new(),
-                    };
-                    if !filter_key.is_empty() {
-                        pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                            filter_key,
-                            effects,
-                        });
-                    }
+                    pw_messages.extend(self.handle_set_cell_effects(source, sink, effects));
                     None
                 }
             }

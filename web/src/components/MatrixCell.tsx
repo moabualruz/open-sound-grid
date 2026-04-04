@@ -37,7 +37,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   // Monitor state: is this cell being monitored, or muted by monitoring?
   const isMonitored = () =>
     monitor.state.monitoredCell !== null &&
-    JSON.stringify(monitor.state.monitoredCell!.source) === JSON.stringify(props.sourceDescriptor) &&
+    JSON.stringify(monitor.state.monitoredCell!.source) ===
+      JSON.stringify(props.sourceDescriptor) &&
     JSON.stringify(monitor.state.monitoredCell!.target) === JSON.stringify(props.sinkDescriptor);
 
   // A cell is muted by monitoring if monitoring is active and this is not the monitored cell
@@ -321,9 +322,9 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
         </Show>
       </div>
 
-      {/* VU meter — cell node ID will be provided once filters are wired */}
+      {/* VU meter — reads peak levels from the cell's PipeWire node */}
       <div class="px-3 pb-1">
-        <VuMeter nodeId={undefined} />
+        <VuMeter nodeId={props.link?.cellNodeId ?? undefined} />
       </div>
     </div>
   );

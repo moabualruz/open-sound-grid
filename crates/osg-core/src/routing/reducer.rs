@@ -16,8 +16,10 @@ use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
-/// Debounce interval for PipeWire graph updates (≈60 Hz).
-const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(16);
+/// Debounce interval for PipeWire graph updates (20 Hz).
+/// 50ms balances responsiveness with CPU cost — graph events arrive in bursts
+/// and the reconciler only needs the final snapshot per burst.
+const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 // ---------------------------------------------------------------------------
 // Public handle
@@ -150,9 +152,10 @@ pub async fn run_reducer(
     tokio::spawn(async move {
         let mut graph: Box<AudioGraph> = Box::default();
         let settings = settings_clone;
+        let mut last_reconciled_generation: u64 = 0;
 
         let save = |state: &MixerSession, s: &ReconcileSettings| {
-            let ps = PersistentState::from_state(state.clone());
+            let mut ps = PersistentState::from_state(state.clone());
             if let Err(err) = ps.save() {
                 warn!("[Reducer] save state error: {err:#}");
             }
@@ -194,6 +197,7 @@ pub async fn run_reducer(
                     let (output_msg, mut pw_messages) =
                         state.update(&graph, msg, &current_settings);
                     pw_messages.extend(state.diff(&graph, &current_settings));
+                    last_reconciled_generation = state.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {
@@ -212,10 +216,19 @@ pub async fn run_reducer(
                 }
                 ReducerMsg::GraphUpdate(new_graph) => {
                     graph = new_graph;
+                    let current_generation = state_tx.borrow().generation;
+
+                    // Skip reconciliation when the desired state hasn't changed
+                    // since the last reconcile — only graph events arrived.
+                    if current_generation == last_reconciled_generation {
+                        continue;
+                    }
+
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
                     state.rename_easyeffects_channels(&graph);
                     let pw_messages = state.diff(&graph, &current_settings);
+                    last_reconciled_generation = state.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {
@@ -229,6 +242,7 @@ pub async fn run_reducer(
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
                     let pw_messages = state.diff(&graph, &current_settings);
+                    last_reconciled_generation = state.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {

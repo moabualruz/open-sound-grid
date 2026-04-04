@@ -10,8 +10,8 @@ use crate::graph::{
     App, AppAssignment, Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor,
     MixerSession, PersistentNodeId, ReconcileSettings, SourceType,
 };
-use crate::pw::{AudioGraph, Node as PwNode, PortKind, ToPipewireMessage};
 use crate::pw::identifier::NodeIdentifier;
+use crate::pw::{AudioGraph, Node as PwNode, PortKind, ToPipewireMessage};
 
 /// Detect source type from PipeWire node properties.
 fn detect_source_type(id: &NodeIdentifier) -> SourceType {

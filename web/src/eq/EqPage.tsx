@@ -116,7 +116,8 @@ export default function EqPage(props: EqPageProps) {
         if (!("channel" in desc)) continue;
         const ch = state.session.channels[desc.channel];
         if (!ch || ch.kind !== "sink") continue;
-        const isMuted = ep.volumeLockedMuted === "mutedLocked" || ep.volumeLockedMuted === "mutedUnlocked";
+        const isMuted =
+          ep.volumeLockedMuted === "mutedLocked" || ep.volumeLockedMuted === "mutedUnlocked";
         if (descriptorsEqual(desc, thisMixDesc)) {
           if (isMuted) {
             mutedEndpoints.push({ endpoint: desc, wasMuted: true });
@@ -137,7 +138,12 @@ export default function EqPage(props: EqPageProps) {
     // Restore cell link volumes by re-reading current state
     const restore = computeRestoreVolumes(state.session.links, mutedLinkIds);
     for (const cmd of restore.commands) {
-      props.send({ type: "setLinkVolume", source: cmd.source, target: cmd.target, volume: cmd.volume });
+      props.send({
+        type: "setLinkVolume",
+        source: cmd.source,
+        target: cmd.target,
+        volume: cmd.volume,
+      });
     }
     mutedLinkIds = [];
 
@@ -217,8 +223,12 @@ export default function EqPage(props: EqPageProps) {
         <button
           class="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition-all duration-150"
           style={{
-            "background-color": isMonitoringActive() ? props.target.color : "var(--color-bg-elevated)",
-            color: isMonitoringActive() ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+            "background-color": isMonitoringActive()
+              ? props.target.color
+              : "var(--color-bg-elevated)",
+            color: isMonitoringActive()
+              ? "var(--color-text-primary)"
+              : "var(--color-text-secondary)",
             border: `1px solid ${isMonitoringActive() ? props.target.color : "var(--color-border)"}`,
           }}
           onClick={toggleMonitoring}
@@ -246,6 +256,7 @@ export default function EqPage(props: EqPageProps) {
           color={props.target.color}
           initialEq={props.target.initialEq}
           onEqChange={handleEqChange}
+          category={props.target.sourceType === "mic" ? "mic" : props.target.sourceType}
         />
         <EffectsBlock
           sourceType={props.target.sourceType}

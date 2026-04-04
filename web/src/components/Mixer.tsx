@@ -228,11 +228,15 @@ export default function Mixer() {
     const srcName = srcEp?.customName ?? srcEp?.displayName ?? "?";
     const sinkName = sinkEp?.customName ?? sinkEp?.displayName ?? "?";
     const link = state.session.links.find(
-      (l) => JSON.stringify(l.start) === JSON.stringify(source) && JSON.stringify(l.end) === JSON.stringify(sink),
+      (l) =>
+        JSON.stringify(l.start) === JSON.stringify(source) &&
+        JSON.stringify(l.end) === JSON.stringify(sink),
     );
+    const isMic =
+      "channel" in source && state.session.channels[source.channel]?.sourceType === "hardwareMic";
     setEqTarget({
       label: `${srcName} → ${sinkName}`,
-      sourceType: "cell",
+      sourceType: isMic ? "mic" : "cell",
       color: "var(--color-source-cell)",
       cellSource: source,
       cellTarget: sink,
