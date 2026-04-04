@@ -12,17 +12,24 @@ use super::master::Master;
 use super::{AudioGraph, FromPipewireMessage, PwError, ToPipewireMessage, store::Store};
 
 /// Create the Master and register all registry/core listeners.
+/// Returns (Master, registry_listener, remove_listener, core_listener).
+/// Callers MUST keep the listeners alive — dropping them stops PW event delivery.
 fn setup_master(
     store: Rc<RefCell<Store>>,
     pw_core: pipewire::core::CoreRc,
     registry: pipewire::registry::RegistryRc,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
-) -> Master {
+) -> (
+    Master,
+    pipewire::registry::Listener,
+    pipewire::registry::Listener,
+    pipewire::core::Listener,
+) {
     let master = Master::new(store, pw_core, registry, sender);
-    let _listener = master.registry_listener();
-    let _remove_listener = master.registry_remove_listener();
-    let _core_listeners = master.init_core_listeners();
-    master
+    let listener = master.registry_listener();
+    let remove_listener = master.registry_remove_listener();
+    let core_listeners = master.init_core_listeners();
+    (master, listener, remove_listener, core_listeners)
 }
 
 // Message handler closure is inherently a large match on 18 ToPipewireMessage variants.
@@ -66,7 +73,8 @@ pub(super) fn init_mainloop(
             }
         };
 
-        let master = setup_master(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
+        let (master, _registry_listener, _remove_listener, _core_listener) =
+            setup_master(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
 
         let startup_cleanup_done = Rc::new(RefCell::new(false));
         let active_filters: Rc<RefCell<HashMap<String, super::filter::OsgFilter>>> =
