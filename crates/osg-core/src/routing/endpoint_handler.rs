@@ -11,7 +11,61 @@ use crate::graph::{
     NodeIdentity, PortKind, ReconcileSettings, RuntimeState, average_volumes,
 };
 use crate::pw::AudioGraph;
-use crate::routing::messages::StateOutputMsg;
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for endpoint lifecycle messages.
+pub struct EndpointCommandHandler;
+
+impl CommandHandler for EndpointCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(
+            msg,
+            StateMsg::AddEphemeralNode(..)
+                | StateMsg::AddChannel(..)
+                | StateMsg::RemoveEndpoint(..)
+                | StateMsg::RenameEndpoint(..)
+                | StateMsg::ChangeChannelKind(..)
+                | StateMsg::SetEndpointVisible(..)
+        )
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+        settings: &ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        let mut events = Vec::new();
+        let output = match msg {
+            StateMsg::AddEphemeralNode(id, kind) => {
+                session.handle_add_ephemeral_node(id, kind.into(), graph, rt)
+            }
+            StateMsg::AddChannel(name, kind) => {
+                session.handle_add_channel(name, kind, rt, &mut events)
+            }
+            StateMsg::RemoveEndpoint(ep) => {
+                session.handle_remove_endpoint(ep, graph, settings, rt, &mut events)
+            }
+            StateMsg::RenameEndpoint(descriptor, name) => {
+                session.handle_rename_endpoint(descriptor, name, rt, &mut events);
+                None
+            }
+            StateMsg::ChangeChannelKind(id, kind) => {
+                session.handle_change_channel_kind(id, kind, rt, &mut events);
+                None
+            }
+            StateMsg::SetEndpointVisible(descriptor, visible) => {
+                session.handle_set_endpoint_visible(descriptor, visible, graph, settings, &mut events);
+                None
+            }
+            _ => unreachable!(),
+        };
+        (output, events)
+    }
+}
 
 impl MixerSession {
     #[allow(clippy::too_many_arguments)]

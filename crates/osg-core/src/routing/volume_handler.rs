@@ -5,6 +5,58 @@
 use crate::graph::events::MixerEvent;
 use crate::graph::{EndpointDescriptor, MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::AudioGraph;
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for volume-related messages.
+pub struct VolumeCommandHandler;
+
+impl CommandHandler for VolumeCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(
+            msg,
+            StateMsg::SetVolume(..)
+                | StateMsg::SetStereoVolume(..)
+                | StateMsg::SetMute(..)
+                | StateMsg::SetVolumeLocked(..)
+                | StateMsg::SetLinkVolume(..)
+                | StateMsg::SetLinkStereoVolume(..)
+        )
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+        settings: &ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        let mut events = Vec::new();
+        match msg {
+            StateMsg::SetVolume(ep_desc, volume) => {
+                session.handle_set_volume(ep_desc, volume, graph, settings, rt, &mut events);
+            }
+            StateMsg::SetStereoVolume(ep_desc, left, right) => {
+                session.handle_set_stereo_volume(ep_desc, left, right, graph, settings, rt, &mut events);
+            }
+            StateMsg::SetMute(ep_desc, muted) => {
+                session.handle_set_mute(ep_desc, muted, graph, settings, rt, &mut events);
+            }
+            StateMsg::SetVolumeLocked(ep_desc, locked) => {
+                session.handle_set_volume_locked(ep_desc, locked, graph, settings, rt, &mut events);
+            }
+            StateMsg::SetLinkVolume(source, sink, volume) => {
+                session.handle_set_link_volume(source, sink, volume, graph, settings, &mut events);
+            }
+            StateMsg::SetLinkStereoVolume(source, sink, left, right) => {
+                session.handle_set_link_stereo_volume(source, sink, left, right, graph, settings, &mut events);
+            }
+            _ => unreachable!(),
+        }
+        (None, events)
+    }
+}
 
 impl MixerSession {
     #[allow(clippy::too_many_arguments)]

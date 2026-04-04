@@ -1,12 +1,51 @@
 // App-assignment command handlers extracted from eq_handlers.rs.
 //
-// Handles: AssignApp, UnassignApp (staging sink choreography)
+// Handles: AssignApp, UnassignApp (staging sink choreography), AddApp
 
 use tracing::debug;
 
 use crate::graph::events::MixerEvent;
 use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::{AudioGraph, PortKind};
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for app-related messages.
+pub struct AppCommandHandler;
+
+impl CommandHandler for AppCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(
+            msg,
+            StateMsg::AddApp(..) | StateMsg::AssignApp(..) | StateMsg::UnassignApp(..)
+        )
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+        settings: &crate::graph::ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        match msg {
+            StateMsg::AddApp(id, kind) => {
+                let output = session.handle_add_app(id, kind.into(), graph, settings, rt);
+                (output, Vec::new())
+            }
+            StateMsg::AssignApp(channel_id, assignment) => {
+                let events = session.handle_assign_app(channel_id, assignment, graph, rt);
+                (None, events)
+            }
+            StateMsg::UnassignApp(channel_id, assignment) => {
+                let events = session.handle_unassign_app(channel_id, assignment, graph, rt);
+                (None, events)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
 
 /// Build `CreateNodeLinks` events linking each stream to the staging sink.
 fn stage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<MixerEvent> {

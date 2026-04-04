@@ -9,14 +9,15 @@ use std::sync::{
     mpsc::{self, Sender},
 };
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tracing::debug;
 
-use crate::graph::ReconcileSettings;
+use crate::graph::{MixerSession, ReconcileSettings};
 use crate::pw::{
     AudioGraph, FilterHandleStore, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore,
 };
 use crate::routing::{ReducerHandle, StateMsg, debounced_graph_sender, run_reducer};
+use crate::traits::{GraphObserver, RoutingService, VolumeService};
 
 /// The public entry point for PipeWire orchestration.
 ///
@@ -127,5 +128,53 @@ impl OsgCore {
     /// Get the shared filter handle store for EQ control and peak reading.
     pub fn filter_store(&self) -> &FilterHandleStore {
         &self.filter_store
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service trait implementations
+// ---------------------------------------------------------------------------
+
+impl VolumeService for OsgCore {
+    fn set_volume(&self, endpoint: crate::graph::EndpointDescriptor, volume: f32) {
+        self.reducer.emit(StateMsg::SetVolume(endpoint, volume));
+    }
+
+    fn set_stereo_volume(
+        &self,
+        endpoint: crate::graph::EndpointDescriptor,
+        left: f32,
+        right: f32,
+    ) {
+        self.reducer
+            .emit(StateMsg::SetStereoVolume(endpoint, left, right));
+    }
+
+    fn set_mute(&self, endpoint: crate::graph::EndpointDescriptor, muted: bool) {
+        self.reducer.emit(StateMsg::SetMute(endpoint, muted));
+    }
+}
+
+impl GraphObserver for OsgCore {
+    fn snapshot(&self) -> AudioGraph {
+        self.snapshot()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<AudioGraph> {
+        self.subscribe()
+    }
+}
+
+impl RoutingService for OsgCore {
+    fn command(&self, msg: StateMsg) {
+        self.reducer.emit(msg);
+    }
+
+    fn state(&self) -> Arc<MixerSession> {
+        self.reducer.state()
+    }
+
+    fn subscribe_state(&self) -> watch::Receiver<Arc<MixerSession>> {
+        self.reducer.subscribe_state()
     }
 }

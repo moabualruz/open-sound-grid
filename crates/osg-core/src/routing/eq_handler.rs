@@ -5,6 +5,45 @@
 use crate::graph::events::MixerEvent;
 use crate::graph::{ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, MixerSession};
 use crate::routing::filter_lifecycle;
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for EQ and effects messages.
+pub struct EqCommandHandler;
+
+impl CommandHandler for EqCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(
+            msg,
+            StateMsg::SetEq(..)
+                | StateMsg::SetCellEq(..)
+                | StateMsg::SetEffects(..)
+                | StateMsg::SetCellEffects(..)
+        )
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        _graph: &crate::pw::AudioGraph,
+        _rt: &mut crate::graph::RuntimeState,
+        _settings: &crate::graph::ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        let events = match msg {
+            StateMsg::SetEq(ep_desc, eq) => session.handle_set_eq(ep_desc, eq),
+            StateMsg::SetCellEq(source, sink, eq) => session.handle_set_cell_eq(source, sink, eq),
+            StateMsg::SetEffects(ep_desc, effects) => {
+                session.handle_set_effects(ep_desc, effects)
+            }
+            StateMsg::SetCellEffects(source, sink, effects) => {
+                session.handle_set_cell_effects(source, sink, effects)
+            }
+            _ => unreachable!(),
+        };
+        (None, events)
+    }
+}
 
 impl MixerSession {
     /// Handle `StateMsg::SetEq` — update endpoint EQ and dispatch to PW filter.

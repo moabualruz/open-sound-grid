@@ -5,6 +5,34 @@
 use crate::graph::events::MixerEvent;
 use crate::graph::{ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
 use crate::pw::AudioGraph;
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for output routing messages.
+pub struct OutputCommandHandler;
+
+impl CommandHandler for OutputCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(msg, StateMsg::SetMixOutput(..))
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+        _settings: &crate::graph::ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        match msg {
+            StateMsg::SetMixOutput(channel_id, output_node_id) => {
+                let events = session.handle_set_mix_output(channel_id, output_node_id, graph, rt);
+                (None, events)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
 
 impl MixerSession {
     /// Handle `StateMsg::SetMixOutput` — change a mix's hardware output.

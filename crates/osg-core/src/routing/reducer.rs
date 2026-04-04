@@ -15,6 +15,7 @@ use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
 use crate::routing::event_translator;
+use crate::routing::handler_registry::HandlerRegistry;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
 /// Debounce interval for PipeWire graph updates (20 Hz).
@@ -159,6 +160,7 @@ pub async fn run_reducer(
         let mut graph: Box<AudioGraph> = Box::default();
         let mut runtime = RuntimeState::default();
         let settings = settings_clone;
+        let registry = HandlerRegistry::new();
         let mut last_reconciled_generation: u64 = 0;
 
         let save = |state: &MixerSession, rt: &RuntimeState, s: &ReconcileSettings| {
@@ -201,8 +203,9 @@ pub async fn run_reducer(
                 ReducerMsg::Update(msg) => {
                     let mut state = state_tx.borrow().as_ref().clone();
                     let current_settings = settings.read().await.clone();
+                    runtime.generation = runtime.generation.wrapping_add(1);
                     let (output_msg, domain_events) =
-                        state.update(&graph, msg, &current_settings, &mut runtime);
+                        registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
                     let mut pw_messages =
                         event_translator::translate_all(&domain_events);
                     let diff_events = state.diff(&graph, &current_settings, &mut runtime);

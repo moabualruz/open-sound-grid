@@ -13,6 +13,8 @@ mod endpoint_handler;
 mod eq_handler;
 pub mod event_translator;
 pub(crate) mod filter_lifecycle;
+pub mod handler;
+pub mod handler_registry;
 mod link_handler;
 pub mod messages;
 mod order_handler;

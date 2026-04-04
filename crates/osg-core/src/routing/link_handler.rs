@@ -1,6 +1,6 @@
 // Link command handlers extracted from update.rs.
 //
-// Handles: Link, RemoveLink, SetLinkLocked, SetLinkVolume, SetLinkStereoVolume
+// Handles: Link, RemoveLink, SetLinkLocked
 
 use tracing::warn;
 
@@ -9,6 +9,44 @@ use crate::graph::{
     EndpointDescriptor, Link, LinkState, MixerSession, PortKind, ReconcileSettings, RuntimeState,
 };
 use crate::pw::AudioGraph;
+use crate::routing::handler::CommandHandler;
+use crate::routing::messages::{StateMsg, StateOutputMsg};
+
+/// Command handler for link-related messages.
+pub struct LinkCommandHandler;
+
+impl CommandHandler for LinkCommandHandler {
+    fn handles(&self, msg: &StateMsg) -> bool {
+        matches!(
+            msg,
+            StateMsg::Link(..) | StateMsg::RemoveLink(..) | StateMsg::SetLinkLocked(..)
+        )
+    }
+
+    fn handle(
+        &self,
+        session: &mut MixerSession,
+        msg: StateMsg,
+        graph: &AudioGraph,
+        rt: &mut RuntimeState,
+        settings: &ReconcileSettings,
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
+        let mut events = Vec::new();
+        match msg {
+            StateMsg::Link(source, sink) => {
+                session.handle_link(source, sink, rt, &mut events);
+            }
+            StateMsg::RemoveLink(source, sink) => {
+                session.handle_remove_link(source, sink, graph, settings, &mut events);
+            }
+            StateMsg::SetLinkLocked(source, sink, locked) => {
+                session.handle_set_link_locked(source, sink, locked, rt);
+            }
+            _ => unreachable!(),
+        }
+        (None, events)
+    }
+}
 
 impl MixerSession {
     /// Generate domain events to remove PW links between two endpoints.
