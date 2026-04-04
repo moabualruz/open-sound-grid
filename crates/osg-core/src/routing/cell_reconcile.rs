@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use crate::graph::{ChannelKind, EndpointDescriptor, MixerSession, RuntimeState};
-use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
+use crate::graph::{ChannelKind, EndpointDescriptor, MixerEvent, MixerSession, RuntimeState};
+use crate::pw::{AudioGraph, PortKind};
 
 impl MixerSession {
     // diff_cells — ensure every row×mix pair has a cell node
@@ -19,7 +19,7 @@ impl MixerSession {
         &self,
         graph: &AudioGraph,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
         let rows: Vec<_> = self
             .channels
@@ -56,7 +56,7 @@ impl MixerSession {
                         .get(&EndpointDescriptor::Channel(**mix_id))
                         .map(|e| e.display_name.as_str())
                         .unwrap_or("?");
-                    messages.push(ToPipewireMessage::CreateCellNode {
+                    messages.push(MixerEvent::CreateCellNode {
                         name: format!("{rn}→{mn}"),
                         cell_id,
                         channel_ulid: row_id.inner().to_string(),
@@ -73,7 +73,7 @@ impl MixerSession {
     /// Link each assigned app stream node to all matching cell sinks.
     /// Source channels are logical-only (ADR-007).
     #[allow(clippy::too_many_lines)] // Match-driven routing logic for app→cell linking
-    pub(crate) fn diff_app_routing(&self, graph: &AudioGraph) -> Vec<ToPipewireMessage> {
+    pub(crate) fn diff_app_routing(&self, graph: &AudioGraph) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
 
         for (channel_id, channel) in &self.channels {
@@ -128,13 +128,13 @@ impl MixerSession {
                     }
                     if !missing.is_empty() {
                         // First: redirect to cell[0] which removes WP stale links
-                        messages.push(ToPipewireMessage::RedirectStream {
+                        messages.push(MixerEvent::RedirectStream {
                             stream_node_id: app_node.id,
                             target_node_id: missing[0],
                         });
                         // Then: create links to remaining cells (RedirectStream already handles [0])
                         for &cell_id in &missing[1..] {
-                            messages.push(ToPipewireMessage::CreateNodeLinks {
+                            messages.push(MixerEvent::CreateNodeLinks {
                                 start_id: app_node.id,
                                 end_id: cell_id,
                             });
@@ -157,7 +157,7 @@ impl MixerSession {
         &self,
         graph: &AudioGraph,
         rt: &RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
 
         // Build ULID → PW node ID map for sink (mix) channels only.
@@ -257,13 +257,13 @@ impl MixerSession {
     }
 
     /// Emit a `CreateNodeLinks` if `from → to` link is missing.
-    pub(crate) fn ensure_link(graph: &AudioGraph, from: u32, to: u32) -> Option<ToPipewireMessage> {
+    pub(crate) fn ensure_link(graph: &AudioGraph, from: u32, to: u32) -> Option<MixerEvent> {
         let exists = graph
             .links
             .values()
             .any(|l| l.start_node == from && l.end_node == to);
         if !exists && graph.nodes.contains_key(&from) && graph.nodes.contains_key(&to) {
-            Some(ToPipewireMessage::CreateNodeLinks {
+            Some(MixerEvent::CreateNodeLinks {
                 start_id: from,
                 end_id: to,
             })

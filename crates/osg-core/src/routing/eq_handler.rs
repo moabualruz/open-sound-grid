@@ -2,8 +2,8 @@
 //
 // Handles: SetEq, SetCellEq, SetEffects, SetCellEffects
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, MixerSession};
-use crate::pw::ToPipewireMessage;
 use crate::routing::filter_lifecycle;
 
 impl MixerSession {
@@ -12,8 +12,8 @@ impl MixerSession {
         &mut self,
         ep_desc: EndpointDescriptor,
         eq: EqConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
             ep.eq = eq.clone();
         }
@@ -30,9 +30,9 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            filter_lifecycle::update_eq(&mut pw_messages, &filter_key, eq);
+            filter_lifecycle::update_eq_event(&mut events, &filter_key, eq);
         }
-        pw_messages
+        events
     }
 
     /// Handle `StateMsg::SetCellEq` — update link EQ and dispatch to cell filter.
@@ -41,8 +41,8 @@ impl MixerSession {
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         eq: EqConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         if let Some(l) = self
             .links
             .iter_mut()
@@ -58,9 +58,9 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            filter_lifecycle::update_eq(&mut pw_messages, &filter_key, eq);
+            filter_lifecycle::update_eq_event(&mut events, &filter_key, eq);
         }
-        pw_messages
+        events
     }
 
     /// Handle `StateMsg::SetEffects` — update endpoint effects and dispatch to PW filter.
@@ -68,8 +68,8 @@ impl MixerSession {
         &mut self,
         ep_desc: EndpointDescriptor,
         effects: EffectsConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
             ep.effects = effects.clone();
         }
@@ -86,9 +86,9 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            filter_lifecycle::update_effects(&mut pw_messages, &filter_key, effects);
+            filter_lifecycle::update_effects_event(&mut events, &filter_key, effects);
         }
-        pw_messages
+        events
     }
 
     /// Handle `StateMsg::SetCellEffects` — update link effects and dispatch to cell filter.
@@ -97,8 +97,8 @@ impl MixerSession {
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         effects: EffectsConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         if let Some(l) = self
             .links
             .iter_mut()
@@ -114,8 +114,8 @@ impl MixerSession {
             _ => String::new(),
         };
         if !filter_key.is_empty() {
-            filter_lifecycle::update_effects(&mut pw_messages, &filter_key, effects);
+            filter_lifecycle::update_effects_event(&mut events, &filter_key, effects);
         }
-        pw_messages
+        events
     }
 }

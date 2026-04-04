@@ -2,8 +2,9 @@
 //
 // Handles: SetVolume, SetStereoVolume, SetMute, SetVolumeLocked
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{EndpointDescriptor, MixerSession, ReconcileSettings, RuntimeState};
-use crate::pw::{AudioGraph, ToPipewireMessage};
+use crate::pw::AudioGraph;
 
 impl MixerSession {
     #[allow(clippy::too_many_arguments)]
@@ -14,7 +15,7 @@ impl MixerSession {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> bool {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
         let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
@@ -31,13 +32,16 @@ impl MixerSession {
                 .into_iter()
                 .map(|n| {
                     let len = n.channel_volumes.len().max(2);
-                    ToPipewireMessage::NodeVolume(n.id, vec![volume; len])
+                    MixerEvent::VolumeChanged {
+                        node_id: n.id,
+                        channels: vec![volume; len],
+                    }
                 })
                 .collect();
             if !msgs.is_empty() {
                 rt.set_volume_pending(ep_desc, true);
             }
-            pw_messages.extend(msgs);
+            events.extend(msgs);
         } else if let EndpointDescriptor::Channel(ch_id) = ep_desc {
             // ADR-007: Source channel volume → fan out effective to all cells
             for link in &self.links {
@@ -45,8 +49,10 @@ impl MixerSession {
                     let eff_l = volume * link.cell_volume_left;
                     let eff_r = volume * link.cell_volume_right;
                     for cell_id in self.find_cell_node_ids(ep_desc, link.end, graph, settings) {
-                        pw_messages
-                            .push(ToPipewireMessage::NodeVolume(cell_id, vec![eff_l, eff_r]));
+                        events.push(MixerEvent::VolumeChanged {
+                            node_id: cell_id,
+                            channels: vec![eff_l, eff_r],
+                        });
                     }
                 }
             }
@@ -64,7 +70,7 @@ impl MixerSession {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
         let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
@@ -84,13 +90,16 @@ impl MixerSession {
                     } else {
                         vec![(left + right) / 2.0]
                     };
-                    ToPipewireMessage::NodeVolume(n.id, vols)
+                    MixerEvent::VolumeChanged {
+                        node_id: n.id,
+                        channels: vols,
+                    }
                 })
                 .collect();
             if !msgs.is_empty() {
                 rt.set_volume_pending(ep_desc, true);
             }
-            pw_messages.extend(msgs);
+            events.extend(msgs);
         } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
             // ADR-007: Source channel stereo volume → fan out to cells
             for link in &self.links {
@@ -98,8 +107,10 @@ impl MixerSession {
                     let eff_l = left * link.cell_volume_left;
                     let eff_r = right * link.cell_volume_right;
                     for cell_id in self.find_cell_node_ids(ep_desc, link.end, graph, settings) {
-                        pw_messages
-                            .push(ToPipewireMessage::NodeVolume(cell_id, vec![eff_l, eff_r]));
+                        events.push(MixerEvent::VolumeChanged {
+                            node_id: cell_id,
+                            channels: vec![eff_l, eff_r],
+                        });
                     }
                 }
             }
@@ -114,7 +125,7 @@ impl MixerSession {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> bool {
         // Update endpoint state
         {
@@ -148,19 +159,25 @@ impl MixerSession {
         let is_device = matches!(ep_desc, EndpointDescriptor::Device(..));
         if is_device {
             if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
-                pw_messages.extend(
+                events.extend(
                     nodes
                         .into_iter()
-                        .map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
+                        .map(|n| MixerEvent::MuteChanged {
+                            node_id: n.id,
+                            muted,
+                        }),
                 );
             }
         } else if let Some(nodes) = self.resolve_endpoint(ep_desc, graph, settings) {
             // Mix: set volume on PW node directly
             let vols = vec![vol_l, vol_r];
-            pw_messages.extend(
+            events.extend(
                 nodes
                     .into_iter()
-                    .map(|n| ToPipewireMessage::NodeVolume(n.id, vols.clone())),
+                    .map(|n| MixerEvent::VolumeChanged {
+                        node_id: n.id,
+                        channels: vols.clone(),
+                    }),
             );
         } else if matches!(ep_desc, EndpointDescriptor::Channel(_)) {
             // Source channel: fan out effective to cells
@@ -169,8 +186,10 @@ impl MixerSession {
                     let eff_l = vol_l * link.cell_volume_left;
                     let eff_r = vol_r * link.cell_volume_right;
                     for cell_id in self.find_cell_node_ids(ep_desc, link.end, graph, settings) {
-                        pw_messages
-                            .push(ToPipewireMessage::NodeVolume(cell_id, vec![eff_l, eff_r]));
+                        events.push(MixerEvent::VolumeChanged {
+                            node_id: cell_id,
+                            channels: vec![eff_l, eff_r],
+                        });
                     }
                 }
             }
@@ -186,7 +205,7 @@ impl MixerSession {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> bool {
         let nodes = self.resolve_endpoint(ep_desc, graph, settings);
         let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
@@ -218,17 +237,15 @@ impl MixerSession {
             endpoint.volume_mixed = false;
             let msgs: Vec<_> = nodes
                 .iter()
-                .map(|n| {
-                    ToPipewireMessage::NodeVolume(
-                        n.id,
-                        vec![endpoint.volume; n.channel_volumes.len()],
-                    )
+                .map(|n| MixerEvent::VolumeChanged {
+                    node_id: n.id,
+                    channels: vec![endpoint.volume; n.channel_volumes.len()],
                 })
                 .collect();
             if !msgs.is_empty() {
                 rt.set_volume_pending(ep_desc, true);
             }
-            pw_messages.extend(msgs);
+            events.extend(msgs);
         } else {
             endpoint.volume_locked_muted = endpoint.volume_locked_muted.unlock();
         }

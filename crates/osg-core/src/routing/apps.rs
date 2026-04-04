@@ -11,7 +11,8 @@ use crate::graph::{
     MixerSession, NodeIdentity, PersistentNodeId, PortKind, ReconcileSettings, RuntimeState,
     SourceType,
 };
-use crate::pw::{AudioGraph, Node as PwNode, ToPipewireMessage};
+use crate::graph::MixerEvent;
+use crate::pw::{AudioGraph, Node as PwNode};
 
 /// Detect source type from PipeWire node properties.
 fn detect_source_type(id: &NodeIdentity) -> SourceType {
@@ -84,7 +85,7 @@ impl MixerSession {
         &mut self,
         graph: &crate::pw::AudioGraph,
         rt: &RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let messages = Vec::new();
         let output_apps: Vec<_> = self
             .apps

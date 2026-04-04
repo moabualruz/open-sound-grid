@@ -4,10 +4,41 @@
 
 use tracing::warn;
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{
     EndpointDescriptor, Link, LinkState, MixerSession, PortKind, ReconcileSettings, RuntimeState,
 };
-use crate::pw::{AudioGraph, ToPipewireMessage};
+use crate::pw::AudioGraph;
+
+impl MixerSession {
+    /// Generate domain events to remove PW links between two endpoints.
+    /// Mirrors `remove_node_link_events` in reconcile.rs.
+    fn remove_link_events(
+        &self,
+        graph: &AudioGraph,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        settings: &ReconcileSettings,
+    ) -> Vec<MixerEvent> {
+        let source_nodes = self
+            .resolve_endpoint(source, graph, settings)
+            .unwrap_or_default();
+        let sink_nodes = self
+            .resolve_endpoint(sink, graph, settings)
+            .unwrap_or_default();
+
+        let mut events = Vec::new();
+        for src in &source_nodes {
+            for snk in &sink_nodes {
+                events.push(MixerEvent::RemoveNodeLinks {
+                    start_id: src.id,
+                    end_id: snk.id,
+                });
+            }
+        }
+        events
+    }
+}
 
 impl MixerSession {
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -16,7 +47,7 @@ impl MixerSession {
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> bool {
         if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
             warn!("[State] cannot link {source:?} -> {sink:?}: wrong direction");
@@ -48,7 +79,7 @@ impl MixerSession {
         };
         // ADR-007: cell sinks keyed by ULID, not PW node ID
         let cell_id = format!("osg.cell.{src_ulid}-to-{snk_ulid}");
-        msgs.push(ToPipewireMessage::CreateCellNode {
+        msgs.push(MixerEvent::CreateCellNode {
             name: format!("{source_name}→{sink_name}"),
             cell_id,
             channel_ulid: src_ulid.clone(),
@@ -81,7 +112,7 @@ impl MixerSession {
             }
         }
 
-        pw_messages.extend(msgs);
+        events.extend(msgs);
         true
     }
 
@@ -92,7 +123,7 @@ impl MixerSession {
         sink: EndpointDescriptor,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> bool {
         if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
             warn!("[State] cannot unlink {source:?} -> {sink:?}: wrong direction");
@@ -101,7 +132,7 @@ impl MixerSession {
 
         // Destroy cell nodes for this route
         for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-            pw_messages.push(ToPipewireMessage::RemoveCellNode {
+            events.push(MixerEvent::RemoveCellNode {
                 cell_node_id: cell_id,
             });
         }
@@ -118,16 +149,16 @@ impl MixerSession {
         match self.links[pos].state {
             LinkState::PartiallyConnected | LinkState::ConnectedUnlocked => {
                 self.links.swap_remove(pos);
-                pw_messages.extend(self.remove_pipewire_node_links(graph, source, sink, settings));
+                events.extend(self.remove_link_events(graph, source, sink, settings));
             }
             LinkState::ConnectedLocked => {
                 self.links[pos].state = LinkState::DisconnectedLocked;
-                let msgs = self.remove_pipewire_node_links(graph, source, sink, settings);
-                if !msgs.is_empty() {
+                let link_events = self.remove_link_events(graph, source, sink, settings);
+                if !link_events.is_empty() {
                     // Note: link_pending tracked in rt, but handle_remove_link doesn't take rt.
                     // The pending state will be resolved on the next reconcile pass.
                 }
-                pw_messages.extend(msgs);
+                events.extend(link_events);
             }
             LinkState::DisconnectedLocked => {}
         }
@@ -184,7 +215,7 @@ impl MixerSession {
         volume: f32,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         let v = volume.clamp(0.0, 1.0);
         if let Some(link) = self
@@ -204,7 +235,10 @@ impl MixerSession {
             .unwrap_or(1.0);
         let eff = v * ch_vol;
         for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-            pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![eff, eff]));
+            events.push(MixerEvent::VolumeChanged {
+                node_id: cell_id,
+                channels: vec![eff, eff],
+            });
         }
     }
 
@@ -217,7 +251,7 @@ impl MixerSession {
         right: f32,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         if let Some(link) = self
             .links
@@ -237,10 +271,10 @@ impl MixerSession {
         let ch_l = ch_ep.map(|ep| ep.volume_left).unwrap_or(1.0);
         let ch_r = ch_ep.map(|ep| ep.volume_right).unwrap_or(1.0);
         for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
-            pw_messages.push(ToPipewireMessage::NodeVolume(
-                cell_id,
-                vec![l * ch_l, r * ch_r],
-            ));
+            events.push(MixerEvent::VolumeChanged {
+                node_id: cell_id,
+                channels: vec![l * ch_l, r * ch_r],
+            });
         }
     }
 }

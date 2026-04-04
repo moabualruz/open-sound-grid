@@ -4,25 +4,26 @@
 
 use tracing::debug;
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
-use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
+use crate::pw::{AudioGraph, PortKind};
 
-/// Build `CreateNodeLinks` messages linking each stream to the staging sink.
-fn stage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<ToPipewireMessage> {
+/// Build `CreateNodeLinks` events linking each stream to the staging sink.
+fn stage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<MixerEvent> {
     stream_ids
         .iter()
-        .map(|&id| ToPipewireMessage::CreateNodeLinks {
+        .map(|&id| MixerEvent::CreateNodeLinks {
             start_id: id,
             end_id: staging_id,
         })
         .collect()
 }
 
-/// Build `RemoveNodeLinks` messages unlinking each stream from the staging sink.
-fn unstage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<ToPipewireMessage> {
+/// Build `RemoveNodeLinks` events unlinking each stream from the staging sink.
+fn unstage_streams(stream_ids: &[u32], staging_id: u32) -> Vec<MixerEvent> {
     stream_ids
         .iter()
-        .map(|&id| ToPipewireMessage::RemoveNodeLinks {
+        .map(|&id| MixerEvent::RemoveNodeLinks {
             start_id: id,
             end_id: staging_id,
         })
@@ -58,16 +59,16 @@ impl MixerSession {
         assignment: AppAssignment,
         graph: &AudioGraph,
         rt: &RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
             tracing::warn!("[State] cannot assign app: channel {channel_id:?} not found");
-            return pw_messages;
+            return events;
         };
 
         // Don't add duplicates
         if ch.assigned_apps.contains(&assignment) {
-            return pw_messages;
+            return events;
         }
 
         ch.assigned_apps.push(assignment.clone());
@@ -93,7 +94,7 @@ impl MixerSession {
             // Staging sink: link app streams to staging BEFORE unlinking from old cells.
             // This prevents audio glitches from having no output destination.
             if let Some(staging_id) = rt.staging_node_id {
-                pw_messages.extend(stage_streams(&app_stream_ids, staging_id));
+                events.extend(stage_streams(&app_stream_ids, staging_id));
             }
 
             // ADR-007: Don't destroy the auto-channel's cells/filters —
@@ -111,20 +112,23 @@ impl MixerSession {
                             .values()
                             .any(|l| l.start_node == stream_id && l.end_node == nid)
                         {
-                            pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+                            events.push(MixerEvent::RemoveNodeLinks {
                                 start_id: stream_id,
                                 end_id: nid,
                             });
                         }
                     }
                     // Set cell volume to 0 so it's silent while parked
-                    pw_messages.push(ToPipewireMessage::NodeVolume(nid, vec![0.0, 0.0]));
+                    events.push(MixerEvent::VolumeChanged {
+                        node_id: nid,
+                        channels: vec![0.0, 0.0],
+                    });
                 }
             }
 
             // Remove staging links — the reconciler will link to new cells
             if let Some(staging_id) = rt.staging_node_id {
-                pw_messages.extend(unstage_streams(&app_stream_ids, staging_id));
+                events.extend(unstage_streams(&app_stream_ids, staging_id));
             }
 
             // Hide the auto-channel but keep it in the model
@@ -132,7 +136,7 @@ impl MixerSession {
                 ep.visible = false;
             }
         }
-        pw_messages
+        events
     }
 
     /// Handle `StateMsg::UnassignApp` — unassign an app from a channel and restore auto-channel.
@@ -144,11 +148,11 @@ impl MixerSession {
         assignment: AppAssignment,
         graph: &AudioGraph,
         rt: &RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
             tracing::warn!("[State] cannot unassign app: channel {channel_id:?} not found");
-            return pw_messages;
+            return events;
         };
 
         ch.assigned_apps.retain(|a| a != &assignment);
@@ -158,7 +162,7 @@ impl MixerSession {
 
         // Staging sink: link app streams to staging BEFORE clearing old redirects
         if let Some(staging_id) = rt.staging_node_id {
-            pw_messages.extend(stage_streams(&app_stream_ids, staging_id));
+            events.extend(stage_streams(&app_stream_ids, staging_id));
         }
 
         // ADR-007: Clear links from app streams to all cell sinks for this channel
@@ -175,7 +179,7 @@ impl MixerSession {
             .collect();
         for &stream_id in &app_stream_ids {
             for &cell_id in &cell_ids {
-                pw_messages.push(ToPipewireMessage::ClearRedirect {
+                events.push(MixerEvent::ClearRedirect {
                     stream_node_id: stream_id,
                     target_node_id: cell_id,
                 });
@@ -188,7 +192,7 @@ impl MixerSession {
 
         // Remove staging links — the auto-channel restore or reconciler handles new links
         if let Some(staging_id) = rt.staging_node_id {
-            pw_messages.extend(unstage_streams(&app_stream_ids, staging_id));
+            events.extend(unstage_streams(&app_stream_ids, staging_id));
         }
         // Restore hidden auto-channel if it exists
         let auto_id = self
@@ -219,12 +223,15 @@ impl MixerSession {
                     .node_name()
                     .is_some_and(|name| name.starts_with(&auto_prefix))
                 {
-                    pw_messages.push(ToPipewireMessage::NodeVolume(nid, vec![vol.0, vol.1]));
+                    events.push(MixerEvent::VolumeChanged {
+                        node_id: nid,
+                        channels: vec![vol.0, vol.1],
+                    });
                 }
             }
         }
         // Force graph update so reconciler relinks
-        pw_messages.push(ToPipewireMessage::Update);
-        pw_messages
+        events.push(MixerEvent::RequestReconciliation);
+        events
     }
 }

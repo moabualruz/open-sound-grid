@@ -5,11 +5,12 @@
 
 use tracing::warn;
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{
     Channel, ChannelId, ChannelKind, Endpoint, EndpointDescriptor, Link, MixerSession,
     NodeIdentity, PortKind, ReconcileSettings, RuntimeState, average_volumes,
 };
-use crate::pw::{AudioGraph, ToPipewireMessage};
+use crate::pw::AudioGraph;
 use crate::routing::messages::StateOutputMsg;
 
 impl MixerSession {
@@ -76,7 +77,7 @@ impl MixerSession {
         name: String,
         kind: ChannelKind,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> Option<StateOutputMsg> {
         let id = ChannelId::new();
         let descriptor = EndpointDescriptor::Channel(id);
@@ -99,12 +100,12 @@ impl MixerSession {
         // ADR-007: Only mixes get PW nodes. Source channels are logical.
         if kind == ChannelKind::Sink {
             rt.set_channel_pending(id, true);
-            pw_messages.push(ToPipewireMessage::CreateGroupNode(
+            events.push(MixerEvent::CreateGroupNode {
                 name,
-                id.inner(),
-                kind.into(),
-                rt.instance_id,
-            ));
+                ulid: id.inner(),
+                kind,
+                instance_id: rt.instance_id,
+            });
         }
         // Auto-create active links to all existing counterparts.
         // New source channel → all existing sinks. New sink → all existing sources + apps.
@@ -198,7 +199,7 @@ impl MixerSession {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) -> Option<StateOutputMsg> {
         if self.endpoints.remove(&ep).is_none() {
             warn!("[State] cannot remove endpoint {ep:?}: not found");
@@ -239,7 +240,7 @@ impl MixerSession {
                                 && node.has_port_kind(PortKind::Source.into())
                             {
                                 for &cell_id in &cell_ids {
-                                    pw_messages.push(ToPipewireMessage::ClearRedirect {
+                                    events.push(MixerEvent::ClearRedirect {
                                         stream_node_id: node.id,
                                         target_node_id: cell_id,
                                     });
@@ -251,8 +252,10 @@ impl MixerSession {
                 if self.channels.shift_remove(&id).is_none() {
                     warn!("[State] channel {id:?} was not in state");
                 }
-                pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
-                pw_messages.push(ToPipewireMessage::RemoveFilter {
+                events.push(MixerEvent::RemoveGroupNode {
+                    ulid: id.inner(),
+                });
+                events.push(MixerEvent::RemoveFilter {
                     filter_key: id.inner().to_string(),
                 });
             }
@@ -278,7 +281,7 @@ impl MixerSession {
         descriptor: EndpointDescriptor,
         name: Option<String>,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         if let EndpointDescriptor::Channel(id) = descriptor {
             if let (Some(endpoint), Some(_ch)) = (
@@ -286,8 +289,10 @@ impl MixerSession {
                 self.channels.get_mut(&id),
             ) && let Some(name) = name.filter(|n| *n != endpoint.display_name)
             {
-                pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
-                pw_messages.push(ToPipewireMessage::RemoveFilter {
+                events.push(MixerEvent::RemoveGroupNode {
+                    ulid: id.inner(),
+                });
+                events.push(MixerEvent::RemoveFilter {
                     filter_key: id.inner().to_string(),
                 });
                 endpoint.display_name = name;
@@ -309,13 +314,15 @@ impl MixerSession {
         id: ChannelId,
         kind: ChannelKind,
         rt: &mut RuntimeState,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         if let Some(ch) = self.channels.get_mut(&id)
             && kind != ch.kind
         {
-            pw_messages.push(ToPipewireMessage::RemoveGroupNode(id.inner()));
-            pw_messages.push(ToPipewireMessage::RemoveFilter {
+            events.push(MixerEvent::RemoveGroupNode {
+                ulid: id.inner(),
+            });
+            events.push(MixerEvent::RemoveFilter {
                 filter_key: id.inner().to_string(),
             });
             ch.kind = kind;
@@ -330,7 +337,7 @@ impl MixerSession {
         visible: bool,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
-        pw_messages: &mut Vec<ToPipewireMessage>,
+        events: &mut Vec<MixerEvent>,
     ) {
         let nodes = self.resolve_endpoint(descriptor, graph, settings);
         if let Some(endpoint) = self.endpoints.get_mut(&descriptor) {
@@ -343,10 +350,13 @@ impl MixerSession {
         // Mute/unmute the PipeWire nodes
         if let Some(nodes) = nodes {
             let muted = !visible;
-            pw_messages.extend(
+            events.extend(
                 nodes
                     .into_iter()
-                    .map(|n| ToPipewireMessage::NodeMute(n.id, muted)),
+                    .map(|n| MixerEvent::MuteChanged {
+                        node_id: n.id,
+                        muted,
+                    }),
             );
         }
     }

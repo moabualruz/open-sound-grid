@@ -134,5 +134,12 @@ export function useMixerViewModel(): MixerViewModel {
     send({ type: "setMixOrder", order });
   }
 
-  return { channels, mixes, getPeaks, descKey: descriptorKey, persistChannelOrder, persistMixOrder };
+  return {
+    channels,
+    mixes,
+    getPeaks,
+    descKey: descriptorKey,
+    persistChannelOrder,
+    persistMixOrder,
+  };
 }

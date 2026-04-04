@@ -27,9 +27,15 @@ interface EqPanelProps {
 
 export default function EqPanel(props: EqPanelProps) {
   const s = useEqState({
-    get initialEq() { return props.initialEq; },
-    get category() { return props.category; },
-    get onEqChange() { return props.onEqChange; },
+    get initialEq() {
+      return props.initialEq;
+    },
+    get category() {
+      return props.category;
+    },
+    get onEqChange() {
+      return props.onEqChange;
+    },
   });
 
   const category = () => props.category ?? "app";

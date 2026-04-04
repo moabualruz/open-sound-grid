@@ -14,6 +14,7 @@ use crate::config::{PersistentSettings, PersistentState};
 use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
+use crate::routing::event_translator;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
 /// Debounce interval for PipeWire graph updates (20 Hz).
@@ -200,9 +201,12 @@ pub async fn run_reducer(
                 ReducerMsg::Update(msg) => {
                     let mut state = state_tx.borrow().as_ref().clone();
                     let current_settings = settings.read().await.clone();
-                    let (output_msg, mut pw_messages) =
+                    let (output_msg, domain_events) =
                         state.update(&graph, msg, &current_settings, &mut runtime);
-                    pw_messages.extend(state.diff(&graph, &current_settings, &mut runtime));
+                    let mut pw_messages =
+                        event_translator::translate_all(&domain_events);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    pw_messages.extend(event_translator::translate_all(&diff_events));
                     last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
@@ -233,7 +237,8 @@ pub async fn run_reducer(
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
                     state.rename_easyeffects_channels(&graph);
-                    let pw_messages = state.diff(&graph, &current_settings, &mut runtime);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    let pw_messages = event_translator::translate_all(&diff_events);
                     last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
@@ -254,7 +259,8 @@ pub async fn run_reducer(
                 ReducerMsg::SettingsChanged => {
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
-                    let pw_messages = state.diff(&graph, &current_settings, &mut runtime);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    let pw_messages = event_translator::translate_all(&diff_events);
                     last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {

@@ -1,10 +1,11 @@
+use crate::graph::events::MixerEvent;
 use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
-use crate::pw::{AudioGraph, ToPipewireMessage};
+use crate::pw::AudioGraph;
 use crate::routing::messages::{StateMsg, StateOutputMsg};
 
 impl MixerSession {
     /// Process a single state-mutation message. Returns an optional output
-    /// notification and a vec of PipeWire commands to send immediately.
+    /// notification and a vec of domain events to translate into PipeWire commands.
     #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -12,23 +13,23 @@ impl MixerSession {
         message: StateMsg,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-    ) -> (Option<StateOutputMsg>, Vec<ToPipewireMessage>) {
+    ) -> (Option<StateOutputMsg>, Vec<MixerEvent>) {
         rt.generation = rt.generation.wrapping_add(1);
-        let mut pw_messages = Vec::new();
+        let mut events = Vec::new();
 
         let output = match message {
             StateMsg::AddEphemeralNode(id, kind) => {
                 self.handle_add_ephemeral_node(id, kind.into(), graph, rt)
             }
             StateMsg::AddChannel(name, kind) => {
-                self.handle_add_channel(name, kind, rt, &mut pw_messages)
+                self.handle_add_channel(name, kind, rt, &mut events)
             }
             StateMsg::AddApp(id, kind) => self.handle_add_app(id, kind.into(), graph, settings, rt),
             StateMsg::RemoveEndpoint(ep) => {
-                self.handle_remove_endpoint(ep, graph, settings, rt, &mut pw_messages)
+                self.handle_remove_endpoint(ep, graph, settings, rt, &mut events)
             }
             StateMsg::SetVolume(ep_desc, volume) => {
-                self.handle_set_volume(ep_desc, volume, graph, settings, rt, &mut pw_messages);
+                self.handle_set_volume(ep_desc, volume, graph, settings, rt, &mut events);
                 None
             }
             StateMsg::SetStereoVolume(ep_desc, left, right) => {
@@ -39,12 +40,12 @@ impl MixerSession {
                     graph,
                     settings,
                     rt,
-                    &mut pw_messages,
+                    &mut events,
                 );
                 None
             }
             StateMsg::SetMute(ep_desc, muted) => {
-                self.handle_set_mute(ep_desc, muted, graph, settings, rt, &mut pw_messages);
+                self.handle_set_mute(ep_desc, muted, graph, settings, rt, &mut events);
                 None
             }
             StateMsg::SetVolumeLocked(ep_desc, locked) => {
@@ -54,16 +55,16 @@ impl MixerSession {
                     graph,
                     settings,
                     rt,
-                    &mut pw_messages,
+                    &mut events,
                 );
                 None
             }
             StateMsg::Link(source, sink) => {
-                self.handle_link(source, sink, rt, &mut pw_messages);
+                self.handle_link(source, sink, rt, &mut events);
                 None
             }
             StateMsg::RemoveLink(source, sink) => {
-                self.handle_remove_link(source, sink, graph, settings, &mut pw_messages);
+                self.handle_remove_link(source, sink, graph, settings, &mut events);
                 None
             }
             StateMsg::SetLinkLocked(source, sink, locked) => {
@@ -71,11 +72,11 @@ impl MixerSession {
                 None
             }
             StateMsg::ChangeChannelKind(id, kind) => {
-                self.handle_change_channel_kind(id, kind, rt, &mut pw_messages);
+                self.handle_change_channel_kind(id, kind, rt, &mut events);
                 None
             }
             StateMsg::RenameEndpoint(descriptor, name) => {
-                self.handle_rename_endpoint(descriptor, name, rt, &mut pw_messages);
+                self.handle_rename_endpoint(descriptor, name, rt, &mut events);
                 None
             }
             StateMsg::SetLinkVolume(source, sink, volume) => {
@@ -85,7 +86,7 @@ impl MixerSession {
                     volume,
                     graph,
                     settings,
-                    &mut pw_messages,
+                    &mut events,
                 );
                 None
             }
@@ -97,12 +98,12 @@ impl MixerSession {
                     right,
                     graph,
                     settings,
-                    &mut pw_messages,
+                    &mut events,
                 );
                 None
             }
             StateMsg::SetMixOutput(channel_id, output_node_id) => {
-                pw_messages.extend(self.handle_set_mix_output(
+                events.extend(self.handle_set_mix_output(
                     channel_id,
                     output_node_id,
                     graph,
@@ -116,7 +117,7 @@ impl MixerSession {
                     visible,
                     graph,
                     settings,
-                    &mut pw_messages,
+                    &mut events,
                 );
                 None
             }
@@ -129,11 +130,11 @@ impl MixerSession {
                 None
             }
             StateMsg::AssignApp(channel_id, assignment) => {
-                pw_messages.extend(self.handle_assign_app(channel_id, assignment, graph, rt));
+                events.extend(self.handle_assign_app(channel_id, assignment, graph, rt));
                 None
             }
             StateMsg::UnassignApp(channel_id, assignment) => {
-                pw_messages.extend(self.handle_unassign_app(channel_id, assignment, graph, rt));
+                events.extend(self.handle_unassign_app(channel_id, assignment, graph, rt));
                 None
             }
             StateMsg::SetDefaultOutputNode(node_id) => {
@@ -141,23 +142,23 @@ impl MixerSession {
                 None
             }
             StateMsg::SetEq(ep_desc, eq) => {
-                pw_messages.extend(self.handle_set_eq(ep_desc, eq));
+                events.extend(self.handle_set_eq(ep_desc, eq));
                 None
             }
             StateMsg::SetCellEq(source, sink, eq) => {
-                pw_messages.extend(self.handle_set_cell_eq(source, sink, eq));
+                events.extend(self.handle_set_cell_eq(source, sink, eq));
                 None
             }
             StateMsg::SetEffects(ep_desc, effects) => {
-                pw_messages.extend(self.handle_set_effects(ep_desc, effects));
+                events.extend(self.handle_set_effects(ep_desc, effects));
                 None
             }
             StateMsg::SetCellEffects(source, sink, effects) => {
-                pw_messages.extend(self.handle_set_cell_effects(source, sink, effects));
+                events.extend(self.handle_set_cell_effects(source, sink, effects));
                 None
             }
         };
 
-        (output, pw_messages)
+        (output, events)
     }
 }

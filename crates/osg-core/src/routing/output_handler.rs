@@ -2,8 +2,9 @@
 //
 // Handles: SetMixOutput (hardware output routing)
 
+use crate::graph::events::MixerEvent;
 use crate::graph::{ChannelId, EndpointDescriptor, MixerSession, RuntimeState};
-use crate::pw::{AudioGraph, ToPipewireMessage};
+use crate::pw::AudioGraph;
 
 impl MixerSession {
     /// Handle `StateMsg::SetMixOutput` — change a mix's hardware output.
@@ -14,10 +15,10 @@ impl MixerSession {
         output_node_id: Option<u32>,
         graph: &AudioGraph,
         rt: &RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
+    ) -> Vec<MixerEvent> {
+        let mut events = Vec::new();
         let Some(ch) = self.channels.get_mut(&channel_id) else {
-            return pw_messages;
+            return events;
         };
         let old_output = ch.output_node_id;
         ch.output_node_id = output_node_id;
@@ -26,7 +27,7 @@ impl MixerSession {
 
         // Remove old links if previously assigned
         if let (Some(pw_id), Some(old_id)) = (pw_id, old_output) {
-            pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
+            events.push(MixerEvent::RemoveNodeLinks {
                 start_id: pw_id,
                 end_id: old_id,
             });
@@ -34,7 +35,7 @@ impl MixerSession {
 
         // Create new links to the output device
         if let (Some(pw_id), Some(new_id)) = (pw_id, output_node_id) {
-            pw_messages.push(ToPipewireMessage::CreateNodeLinks {
+            events.push(MixerEvent::CreateNodeLinks {
                 start_id: pw_id,
                 end_id: new_id,
             });
@@ -52,8 +53,11 @@ impl MixerSession {
             && let Some(node) = graph.nodes.get(&new_id)
             && let Some(name) = node.identifier.node_name()
         {
-            pw_messages.push(ToPipewireMessage::SetDefaultSink(name.to_owned(), new_id));
+            events.push(MixerEvent::SetDefaultSink {
+                node_name: name.to_owned(),
+                pipewire_node_id: new_id,
+            });
         }
-        pw_messages
+        events
     }
 }

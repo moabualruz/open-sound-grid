@@ -1,7 +1,7 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 //
 // The correction loop: diff the desired state (`MixerSession`) against the
-// PipeWire reality (`AudioGraph`) and emit `ToPipewireMessage` commands to bring
+// PipeWire reality (`AudioGraph`) and emit `MixerEvent` domain events to bring
 // reality in line with intent.
 //
 // Key concepts:
@@ -13,10 +13,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::graph::{
-    ChannelKind, EndpointDescriptor, Link, LinkKey, LinkState, MixerSession, NodeIdentity,
-    PortKind, ReconcileSettings, RuntimeState, VolumeLockMuteState, average_volumes, volumes_mixed,
+    ChannelKind, EndpointDescriptor, Link, LinkKey, LinkState, MixerEvent, MixerSession,
+    NodeIdentity, PortKind, ReconcileSettings, RuntimeState, VolumeLockMuteState, average_volumes,
+    volumes_mixed,
 };
-use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode, ToPipewireMessage};
+use crate::pw::{AudioGraph, Link as PwLink, Node as PwNode};
 use itertools::Itertools;
 
 // ---------------------------------------------------------------------------
@@ -41,7 +42,7 @@ impl ReconciliationService {
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         state.diff(graph, settings, rt)
     }
 }
@@ -51,13 +52,13 @@ impl ReconciliationService {
 // ---------------------------------------------------------------------------
 
 impl MixerSession {
-    /// Run the full reconciliation pass. Returns PipeWire commands to execute.
+    /// Run the full reconciliation pass. Returns domain events for the infrastructure layer.
     pub fn diff(
         &mut self,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let endpoint_nodes = self.diff_nodes(graph, settings, rt);
         let mut messages = self.auto_create_app_channels(graph, rt);
         self.ensure_default_links();
@@ -146,7 +147,7 @@ impl MixerSession {
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
         _graph: &AudioGraph,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
             let channel_kind = self
@@ -174,7 +175,7 @@ impl MixerSession {
                         .endpoints
                         .get(&endpoint_desc)
                         .expect(&format!("endpoint for channel {id:?} must exist"));
-                    messages.push(ToPipewireMessage::CreateFilter {
+                    messages.push(MixerEvent::CreateFilter {
                         filter_key: format!("mix.{}", id.inner()),
                         name: format!("EQ: {}", ep.display_name),
                     });
@@ -190,12 +191,12 @@ impl MixerSession {
                         .endpoints
                         .get(&endpoint_desc)
                         .expect(&format!("endpoint for channel {id:?} must exist"));
-                    messages.push(ToPipewireMessage::CreateGroupNode(
-                        ep.display_name.clone(),
-                        id.inner(),
-                        channel.kind.into(),
-                        rt.instance_id,
-                    ));
+                    messages.push(MixerEvent::CreateGroupNode {
+                        name: ep.display_name.clone(),
+                        ulid: id.inner(),
+                        kind: channel.kind,
+                        instance_id: rt.instance_id,
+                    });
                 }
             }
         }
@@ -212,7 +213,7 @@ impl MixerSession {
         &mut self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
 
         for (ep_desc, nodes) in endpoint_nodes {
@@ -244,11 +245,9 @@ impl MixerSession {
                     nodes
                         .iter()
                         .filter(|n| n.channel_volumes.iter().any(|cv| *cv != endpoint.volume))
-                        .map(|n| {
-                            ToPipewireMessage::NodeVolume(
-                                n.id,
-                                vec![endpoint.volume; n.channel_volumes.len()],
-                            )
+                        .map(|n| MixerEvent::VolumeChanged {
+                            node_id: n.id,
+                            channels: vec![endpoint.volume; n.channel_volumes.len()],
                         }),
                 );
                 // Push desired mute state.
@@ -262,7 +261,10 @@ impl MixerSession {
                     nodes
                         .iter()
                         .filter(|n| n.mute != endpoint_muted)
-                        .map(|n| ToPipewireMessage::NodeMute(n.id, endpoint_muted)),
+                        .map(|n| MixerEvent::MuteChanged {
+                            node_id: n.id,
+                            muted: endpoint_muted,
+                        }),
                 );
             } else if endpoint.volume_locked_muted.is_muted() != Some(true) {
                 // Unlocked + unmuted: pull volume/mute from PW nodes into desired state.
@@ -293,7 +295,7 @@ impl MixerSession {
         graph: &AudioGraph,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
         rt: &mut RuntimeState,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let (node_links, mut remaining_endpoint_links) =
             self.find_relevant_links(graph, endpoint_nodes);
 
@@ -345,7 +347,7 @@ impl MixerSession {
                             .iter()
                             .cartesian_product(sink.iter())
                             .filter(|(s, k)| are_nodes_connected(s, k, &node_links) != Some(true))
-                            .map(|(s, k)| ToPipewireMessage::CreateNodeLinks {
+                            .map(|(s, k)| MixerEvent::CreateNodeLinks {
                                 start_id: s.id,
                                 end_id: k.id,
                             }),
@@ -358,7 +360,7 @@ impl MixerSession {
                             .iter()
                             .cartesian_product(sink.iter())
                             .filter(|(s, k)| are_nodes_connected(s, k, &node_links) != Some(false))
-                            .map(|(s, k)| ToPipewireMessage::RemoveNodeLinks {
+                            .map(|(s, k)| MixerEvent::RemoveNodeLinks {
                                 start_id: s.id,
                                 end_id: k.id,
                             }),
@@ -525,15 +527,15 @@ impl MixerSession {
         (node_links, endpoint_links)
     }
 
-    /// Generate commands to remove PW links between two endpoints.
+    /// Generate events to remove links between two endpoints.
     #[allow(clippy::too_many_arguments)]
-    pub fn remove_pipewire_node_links(
+    pub fn remove_node_link_events(
         &self,
         graph: &AudioGraph,
         source: EndpointDescriptor,
         sink: EndpointDescriptor,
         settings: &ReconcileSettings,
-    ) -> Vec<ToPipewireMessage> {
+    ) -> Vec<MixerEvent> {
         let source_nodes = self
             .resolve_endpoint(source, graph, settings)
             .unwrap_or_default();
@@ -544,7 +546,7 @@ impl MixerSession {
         let mut messages = Vec::new();
         for src in &source_nodes {
             for snk in &sink_nodes {
-                messages.push(ToPipewireMessage::RemoveNodeLinks {
+                messages.push(MixerEvent::RemoveNodeLinks {
                     start_id: src.id,
                     end_id: snk.id,
                 });
