@@ -7,10 +7,13 @@ pub mod filter;
 mod group_nodes;
 pub mod identifier;
 mod mainloop;
+mod master;
 mod object;
 pub mod peak;
 pub mod pod;
+mod port_mapper;
 mod store;
+mod volume_ops;
 
 use std::{
     collections::HashMap,
@@ -27,7 +30,7 @@ pub use identifier::NodeIdentifier;
 pub use object::PortKind;
 
 use mainloop::init_mainloop;
-pub use store::map_ports;
+pub use port_mapper::map_ports;
 
 /// Errors originating from the PipeWire backend.
 #[derive(Error, Debug)]

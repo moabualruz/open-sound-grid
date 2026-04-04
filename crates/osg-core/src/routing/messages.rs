@@ -79,6 +79,8 @@ pub enum ReducerMsg {
     Update(StateMsg),
     GraphUpdate(Box<AudioGraph>),
     SettingsChanged,
+    /// Set the instance ULID for ownership tagging on created PW nodes.
+    SetInstanceId(ulid::Ulid),
     Save {
         clear_state: bool,
         clear_settings: bool,

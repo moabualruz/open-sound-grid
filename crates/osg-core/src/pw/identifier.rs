@@ -50,6 +50,9 @@ pub struct NodeIdentifier {
     human_name_sink: OnceLock<String>,
     #[serde(skip)]
     details_: OnceLock<Option<String>>,
+    /// `osg.instance` — ULID stamped by the OSG instance that created this node.
+    #[serde(skip)]
+    pub osg_instance: Option<String>,
 }
 
 impl NodeIdentifier {
@@ -75,6 +78,7 @@ impl NodeIdentifier {
             human_name_source: OnceLock::new(),
             human_name_sink: OnceLock::new(),
             details_: OnceLock::new(),
+            osg_instance: props.get("osg.instance").map(ToOwned::to_owned),
         }
     }
 
@@ -100,6 +104,7 @@ impl NodeIdentifier {
             human_name_source: OnceLock::new(),
             human_name_sink: OnceLock::new(),
             details_: OnceLock::new(),
+            osg_instance: None,
         }
     }
 

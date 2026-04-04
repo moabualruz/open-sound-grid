@@ -1,132 +1,13 @@
-// EQ, effects, and app-assignment command handlers extracted from update.rs.
+// App-assignment command handlers extracted from eq_handlers.rs.
 //
-// These are helper methods on MixerSession called from the main `update()` match.
+// Handles: AssignApp, UnassignApp (staging sink choreography)
 
 use tracing::debug;
 
-use crate::graph::AppAssignment;
-use crate::graph::{ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig, MixerSession};
+use crate::graph::{AppAssignment, ChannelId, EndpointDescriptor, MixerSession};
 use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
 
 impl MixerSession {
-    /// Handle `StateMsg::SetEq` — update endpoint EQ and dispatch to PW filter.
-    pub(crate) fn handle_set_eq(
-        &mut self,
-        ep_desc: EndpointDescriptor,
-        eq: EqConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
-        if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
-            ep.eq = eq.clone();
-        }
-        // Dispatch EQ to PW filter — mix filters keyed as "mix.{ulid}"
-        let filter_key = match ep_desc {
-            EndpointDescriptor::Channel(id) => {
-                let ch = self.channels.get(&id);
-                if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
-                    format!("mix.{}", id.inner())
-                } else {
-                    String::new() // source channels have no direct filter
-                }
-            }
-            _ => String::new(),
-        };
-        if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
-        }
-        pw_messages
-    }
-
-    /// Handle `StateMsg::SetCellEq` — update link EQ and dispatch to cell filter.
-    pub(crate) fn handle_set_cell_eq(
-        &mut self,
-        source: EndpointDescriptor,
-        sink: EndpointDescriptor,
-        eq: EqConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
-        if let Some(l) = self
-            .links
-            .iter_mut()
-            .find(|l| l.start == source && l.end == sink)
-        {
-            l.cell_eq = eq.clone();
-        }
-        // Dispatch EQ to cell's PW filter
-        let filter_key = match (&source, &sink) {
-            (EndpointDescriptor::Channel(ch), EndpointDescriptor::Channel(mx)) => {
-                format!("{}-to-{}", ch.inner(), mx.inner())
-            }
-            _ => String::new(),
-        };
-        if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEq { filter_key, eq });
-        }
-        pw_messages
-    }
-
-    /// Handle `StateMsg::SetEffects` — update endpoint effects and dispatch to PW filter.
-    pub(crate) fn handle_set_effects(
-        &mut self,
-        ep_desc: EndpointDescriptor,
-        effects: EffectsConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
-        if let Some(ep) = self.endpoints.get_mut(&ep_desc) {
-            ep.effects = effects.clone();
-        }
-        // Dispatch effects to PW filter — mix filters keyed as "mix.{ulid}"
-        let filter_key = match ep_desc {
-            EndpointDescriptor::Channel(id) => {
-                let ch = self.channels.get(&id);
-                if ch.is_some_and(|c| c.kind == ChannelKind::Sink) {
-                    format!("mix.{}", id.inner())
-                } else {
-                    String::new()
-                }
-            }
-            _ => String::new(),
-        };
-        if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                filter_key,
-                effects,
-            });
-        }
-        pw_messages
-    }
-
-    /// Handle `StateMsg::SetCellEffects` — update link effects and dispatch to cell filter.
-    pub(crate) fn handle_set_cell_effects(
-        &mut self,
-        source: EndpointDescriptor,
-        sink: EndpointDescriptor,
-        effects: EffectsConfig,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
-        if let Some(l) = self
-            .links
-            .iter_mut()
-            .find(|l| l.start == source && l.end == sink)
-        {
-            l.cell_effects = effects.clone();
-        }
-        // Dispatch effects to cell's PW filter
-        let filter_key = match (&source, &sink) {
-            (EndpointDescriptor::Channel(ch), EndpointDescriptor::Channel(mx)) => {
-                format!("{}-to-{}", ch.inner(), mx.inner())
-            }
-            _ => String::new(),
-        };
-        if !filter_key.is_empty() {
-            pw_messages.push(ToPipewireMessage::UpdateFilterEffects {
-                filter_key,
-                effects,
-            });
-        }
-        pw_messages
-    }
-
     /// Handle `StateMsg::AssignApp` — assign an app to a channel and park its auto-channel.
     ///
     /// Uses the staging sink for glitch-free rerouting: before unlinking from
@@ -136,7 +17,7 @@ impl MixerSession {
     #[allow(clippy::too_many_lines)] // Multi-step staging + unlink + restore logic
     pub(crate) fn handle_assign_app(
         &mut self,
-        channel_id: crate::graph::ChannelId,
+        channel_id: ChannelId,
         assignment: AppAssignment,
         graph: &AudioGraph,
     ) -> Vec<ToPipewireMessage> {
@@ -239,7 +120,7 @@ impl MixerSession {
     #[allow(clippy::too_many_lines)] // Multi-step teardown/restore logic for app unassignment
     pub(crate) fn handle_unassign_app(
         &mut self,
-        channel_id: crate::graph::ChannelId,
+        channel_id: ChannelId,
         assignment: AppAssignment,
         graph: &AudioGraph,
     ) -> Vec<ToPipewireMessage> {
@@ -342,53 +223,6 @@ impl MixerSession {
         }
         // Force graph update so reconciler relinks
         pw_messages.push(ToPipewireMessage::Update);
-        pw_messages
-    }
-
-    /// Handle `StateMsg::SetMixOutput` — change a mix's hardware output.
-    pub(crate) fn handle_set_mix_output(
-        &mut self,
-        channel_id: crate::graph::ChannelId,
-        output_node_id: Option<u32>,
-        graph: &AudioGraph,
-    ) -> Vec<ToPipewireMessage> {
-        let mut pw_messages = Vec::new();
-        let Some(ch) = self.channels.get_mut(&channel_id) else {
-            return pw_messages;
-        };
-        let old_output = ch.output_node_id;
-        ch.output_node_id = output_node_id;
-
-        // Remove old links if previously assigned
-        if let (Some(pw_id), Some(old_id)) = (ch.pipewire_id, old_output) {
-            pw_messages.push(ToPipewireMessage::RemoveNodeLinks {
-                start_id: pw_id,
-                end_id: old_id,
-            });
-        }
-
-        // Create new links to the output device
-        if let (Some(pw_id), Some(new_id)) = (ch.pipewire_id, output_node_id) {
-            pw_messages.push(ToPipewireMessage::CreateNodeLinks {
-                start_id: pw_id,
-                end_id: new_id,
-            });
-        }
-
-        // If this is the Monitor mix, update OS default sink
-        let desc = EndpointDescriptor::Channel(channel_id);
-        let is_monitor = self
-            .endpoints
-            .get(&desc)
-            .map(|ep| ep.display_name.to_lowercase().contains("monitor"))
-            .unwrap_or(false);
-        if is_monitor
-            && let Some(new_id) = output_node_id
-            && let Some(node) = graph.nodes.get(&new_id)
-            && let Some(name) = node.identifier.node_name()
-        {
-            pw_messages.push(ToPipewireMessage::SetDefaultSink(name.to_owned(), new_id));
-        }
         pw_messages
     }
 }

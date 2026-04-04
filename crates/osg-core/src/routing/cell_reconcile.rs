@@ -57,6 +57,7 @@ impl MixerSession {
                         cell_id,
                         channel_ulid: row_id.inner().to_string(),
                         mix_ulid: mix_id.inner().to_string(),
+                        instance_id: self.instance_id,
                     });
                 }
             }

@@ -55,6 +55,11 @@ impl ReducerHandle {
         self.output_tx.subscribe()
     }
 
+    /// Set the instance ULID for node ownership tagging.
+    pub fn set_instance_id(&self, id: ulid::Ulid) {
+        let _ = self.msg_tx.send(ReducerMsg::SetInstanceId(id));
+    }
+
     /// Request a save. If `clear_state` is true the state is reset first.
     pub fn save(&self, clear_state: bool, clear_settings: bool) {
         let _ = self.msg_tx.send(ReducerMsg::Save {
@@ -236,6 +241,11 @@ pub async fn run_reducer(
                             return;
                         }
                     }
+                    let _ = state_tx.send(Arc::new(state));
+                }
+                ReducerMsg::SetInstanceId(id) => {
+                    let mut state = state_tx.borrow().as_ref().clone();
+                    state.instance_id = id;
                     let _ = state_tx.send(Arc::new(state));
                 }
                 ReducerMsg::SettingsChanged => {

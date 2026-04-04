@@ -1,12 +1,10 @@
 import { For, Show, createSignal, createEffect, createMemo } from "solid-js";
-import { createStore } from "solid-js/store";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import MixHeader, { getOutputDevices } from "./MixHeader";
+import MixHeader from "./MixHeader";
 import MixCreator from "./MixCreator";
 import ChannelLabel from "./ChannelLabel";
 import MatrixCell from "./MatrixCell";
-import type { MatrixCellActions } from "./MatrixCell";
 import ChannelCreator from "./ChannelCreator";
 import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
@@ -15,43 +13,10 @@ import { useLevels } from "../stores/levelsStore";
 import { Settings } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
-import type { Endpoint, EndpointDescriptor, MixerLink, PwGroupNode } from "../types";
-
-const MIX_COLORS: Record<string, string> = {
-  Monitor: "var(--color-mix-monitor)",
-  Stream: "var(--color-mix-stream)",
-  VOD: "var(--color-mix-vod)",
-  Chat: "var(--color-mix-chat)",
-  Aux: "var(--color-mix-aux)",
-};
-
-function getMixColor(name: string): string {
-  for (const [key, color] of Object.entries(MIX_COLORS)) {
-    if (name.includes(key)) return color;
-  }
-  return "var(--color-mix-monitor)";
-}
-
-function descriptorsEqual(a: EndpointDescriptor, b: EndpointDescriptor): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function findEndpoint(
-  endpoints: [EndpointDescriptor, Endpoint][],
-  desc: EndpointDescriptor,
-): Endpoint | undefined {
-  return endpoints.find(([d]) => descriptorsEqual(d, desc))?.[1];
-}
-
-function findLink(
-  links: MixerLink[],
-  source: EndpointDescriptor,
-  target: EndpointDescriptor,
-): MixerLink | null {
-  return (
-    links.find((l) => descriptorsEqual(l.start, source) && descriptorsEqual(l.end, target)) ?? null
-  );
-}
+import type { Endpoint, EndpointDescriptor, PwGroupNode } from "../types";
+import { getMixColor, findEndpoint, findLink } from "./mixerUtils";
+import { useKeyboardNav } from "./useKeyboardNav";
+import { useMixOutputs } from "./useMixOutputs";
 
 export default function Mixer() {
   const { state, send } = useSession();
@@ -154,198 +119,13 @@ export default function Mixer() {
     send({ type: "setMixOrder", order });
   }
 
-  const [mixOutputs, setMixOutputs] = createStore<Record<string, string | null>>({});
-
-  let outputsInitialized = false;
-  createEffect(() => {
-    const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
-    if (allDevs.length === 0 || outputsInitialized) return;
-
-    for (const m of mixes()) {
-      if (!("channel" in m.desc)) continue;
-      const ch = state.session.channels[m.desc.channel];
-      if (ch?.outputNodeId) {
-        const dev = allDevs.find((d) => d.pwNodeId === ch.outputNodeId);
-        if (dev) setMixOutputs(JSON.stringify(m.desc), dev.deviceId);
-      }
-    }
-
-    const monitorMix = mixes().find((m) => m.ep?.displayName.toLowerCase().includes("monitor"));
-    if (monitorMix) {
-      const monitorKey = JSON.stringify(monitorMix.desc);
-      if (!mixOutputs[monitorKey]) {
-        const defaultName = graphState.graph.defaultSinkName;
-        const defaultDev = defaultName ? allDevs.find((d) => d.deviceId === defaultName) : null;
-        const autoDeviceId = defaultDev?.deviceId ?? allDevs[0]?.deviceId;
-        if (autoDeviceId) {
-          setMixOutputs(monitorKey, autoDeviceId);
-          if ("channel" in monitorMix.desc) {
-            const dev = allDevs.find((d) => d.deviceId === autoDeviceId);
-            if (dev) {
-              send({
-                type: "setMixOutput",
-                channel: monitorMix.desc.channel,
-                outputNodeId: dev.pwNodeId ?? null,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    outputsInitialized = true;
-  });
-
-  function setMixOutput(mixKey: string, deviceId: string | null) {
-    if (deviceId) {
-      for (const [key, val] of Object.entries(mixOutputs)) {
-        if (val === deviceId && key !== mixKey) {
-          setMixOutputs(key, null);
-        }
-      }
-    }
-    setMixOutputs(mixKey, deviceId);
-
-    const desc: EndpointDescriptor = JSON.parse(mixKey);
-    if ("channel" in desc) {
-      const allDevs = getOutputDevices(graphState.graph.devices, graphState.graph.nodes);
-      const dev = deviceId ? allDevs.find((d) => d.deviceId === deviceId) : null;
-      send({ type: "setMixOutput", channel: desc.channel, outputNodeId: dev?.pwNodeId ?? null });
-    }
-  }
-
-  const usedDeviceIds = () => {
-    const ids = new Set<string>();
-    for (const val of Object.values(mixOutputs)) {
-      if (val) ids.add(val);
-    }
-    return ids;
-  };
-
-  // --- Keyboard navigation ---
-  const [focusedCell, setFocusedCell] = createSignal<{ row: number; col: number } | null>(null);
-  const cellActionsMap = new Map<string, MatrixCellActions>();
-
-  function cellKey(row: number, col: number): string {
-    return `${row},${col}`;
-  }
-
-  function registerCellActions(row: number, col: number, actions: MatrixCellActions) {
-    cellActionsMap.set(cellKey(row, col), actions);
-  }
-
-  function getFocusedActions(): MatrixCellActions | undefined {
-    const fc = focusedCell();
-    if (!fc) return undefined;
-    return cellActionsMap.get(cellKey(fc.row, fc.col));
-  }
-
-  function handleGridKeyDown(e: KeyboardEvent) {
-    // Skip if EQ page is open
-    if (eqTarget()) return;
-
-    const numRows = channels().length;
-    const numCols = mixes().length;
-    if (numRows === 0 || numCols === 0) return;
-
-    const fc = focusedCell();
-
-    // Tab enters the grid at first cell if not already focused
-    if (e.key === "Tab" && !fc) {
-      e.preventDefault();
-      setFocusedCell({ row: 0, col: 0 });
-      return;
-    }
-
-    if (!fc) return;
-
-    switch (e.key) {
-      case "ArrowRight": {
-        e.preventDefault();
-        const nextCol = fc.col < numCols - 1 ? fc.col + 1 : 0;
-        setFocusedCell({ row: fc.row, col: nextCol });
-        break;
-      }
-      case "ArrowLeft": {
-        e.preventDefault();
-        const prevCol = fc.col > 0 ? fc.col - 1 : numCols - 1;
-        setFocusedCell({ row: fc.row, col: prevCol });
-        break;
-      }
-      case "ArrowDown": {
-        e.preventDefault();
-        if (e.shiftKey) {
-          getFocusedActions()?.adjustVolume(-0.05);
-        } else if (e.altKey) {
-          getFocusedActions()?.adjustVolume(-0.01);
-        } else {
-          const nextRow = fc.row < numRows - 1 ? fc.row + 1 : 0;
-          setFocusedCell({ row: nextRow, col: fc.col });
-        }
-        break;
-      }
-      case "ArrowUp": {
-        e.preventDefault();
-        if (e.shiftKey) {
-          getFocusedActions()?.adjustVolume(0.05);
-        } else if (e.altKey) {
-          getFocusedActions()?.adjustVolume(0.01);
-        } else {
-          const prevRow = fc.row > 0 ? fc.row - 1 : numRows - 1;
-          setFocusedCell({ row: prevRow, col: fc.col });
-        }
-        break;
-      }
-      case "Escape": {
-        e.preventDefault();
-        setFocusedCell(null);
-        break;
-      }
-      case "m":
-      case "M": {
-        e.preventDefault();
-        getFocusedActions()?.toggleMute();
-        break;
-      }
-      case "s":
-      case "S": {
-        e.preventDefault();
-        // Open EQ page for the focused cell — monitor/solo toggle lives there
-        const chS = channels()[fc.row];
-        const mixS = mixes()[fc.col];
-        if (chS && mixS) {
-          openCellEq(chS.desc, mixS.desc);
-        }
-        break;
-      }
-      case "e":
-      case "E": {
-        e.preventDefault();
-        const ch = channels()[fc.row];
-        const mix = mixes()[fc.col];
-        if (ch && mix) {
-          openCellEq(ch.desc, mix.desc);
-        }
-        break;
-      }
-      case "+":
-      case "=": {
-        e.preventDefault();
-        getFocusedActions()?.adjustVolume(0.01);
-        break;
-      }
-      case "-":
-      case "_": {
-        e.preventDefault();
-        getFocusedActions()?.adjustVolume(-0.01);
-        break;
-      }
-      default:
-        return; // Don't prevent default for unhandled keys
-    }
-  }
-
-  let gridRef: HTMLDivElement | undefined;
+  // eslint-disable-next-line solid/reactivity -- mixes/channels passed as getter fns, called only inside effects
+  const { mixOutputs, setMixOutput, usedDeviceIds } = useMixOutputs(
+    mixes,
+    () => state.session.channels,
+    () => graphState.graph,
+    send,
+  );
 
   // --- EQ page navigation ---
   function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {
@@ -383,6 +163,17 @@ export default function Mixer() {
       sinkDescriptor: desc,
     });
   }
+
+  // --- Keyboard navigation ---
+  // eslint-disable-next-line solid/reactivity -- channels/mixes passed as getter fns, called only inside event handlers
+  const { focusedCell, setFocusedCell, registerCellActions, handleGridKeyDown } = useKeyboardNav(
+    channels,
+    mixes,
+    () => eqTarget() !== null,
+    openCellEq,
+  );
+
+  let gridRef: HTMLDivElement | undefined;
 
   return (
     <div class="flex h-screen flex-col">
@@ -429,7 +220,7 @@ export default function Mixer() {
       </header>
 
       {/* Main content area — either grid or EQ page */}
-      <div class="flex-1 overflow-hidden relative">
+      <div class="relative flex-1 overflow-hidden">
         {/* Matrix grid view */}
         <div
           class="absolute inset-0 overflow-auto p-4 transition-transform duration-250"

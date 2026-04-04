@@ -194,6 +194,7 @@ impl MixerSession {
                         ep.display_name.clone(),
                         id.inner(),
                         channel.kind,
+                        self.instance_id,
                     ));
                 }
             }

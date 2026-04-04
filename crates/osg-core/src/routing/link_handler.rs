@@ -1,0 +1,259 @@
+// Link command handlers extracted from update.rs.
+//
+// Handles: Link, RemoveLink, SetLinkLocked, SetLinkVolume, SetLinkStereoVolume
+
+use tracing::warn;
+
+use crate::graph::{
+    EffectsConfig, EndpointDescriptor, EqConfig, Link, LinkState, MixerSession, ReconcileSettings,
+};
+use crate::pw::{AudioGraph, PortKind, ToPipewireMessage};
+
+impl MixerSession {
+    #[allow(clippy::too_many_lines)]
+    pub(super) fn handle_link(
+        &mut self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        pw_messages: &mut Vec<ToPipewireMessage>,
+    ) -> bool {
+        if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
+            warn!("[State] cannot link {source:?} -> {sink:?}: wrong direction");
+            return false;
+        }
+
+        // Create cell nodes (one per source×sink pair) for per-route volume control.
+        // Route: channel → cell_node (volume) → mix
+        let mut msgs = Vec::new();
+        let source_name = self
+            .endpoints
+            .get(&source)
+            .map(|e| e.display_name.clone())
+            .unwrap_or_default();
+        let sink_name = self
+            .endpoints
+            .get(&sink)
+            .map(|e| e.display_name.clone())
+            .unwrap_or_default();
+        let src_ulid = if let EndpointDescriptor::Channel(id) = source {
+            id.inner().to_string()
+        } else {
+            format!("{source:?}")
+        };
+        let snk_ulid = if let EndpointDescriptor::Channel(id) = sink {
+            id.inner().to_string()
+        } else {
+            format!("{sink:?}")
+        };
+        // ADR-007: cell sinks keyed by ULID, not PW node ID
+        let cell_id = format!("osg.cell.{src_ulid}-to-{snk_ulid}");
+        msgs.push(ToPipewireMessage::CreateCellNode {
+            name: format!("{source_name}→{sink_name}"),
+            cell_id,
+            channel_ulid: src_ulid.clone(),
+            mix_ulid: snk_ulid.clone(),
+            instance_id: self.instance_id,
+        });
+
+        if let Some(link) = self
+            .links
+            .iter_mut()
+            .find(|l| l.start == source && l.end == sink)
+        {
+            match link.state {
+                LinkState::PartiallyConnected => {
+                    link.state = LinkState::ConnectedUnlocked;
+                }
+                LinkState::DisconnectedLocked => {
+                    link.state = LinkState::ConnectedLocked;
+                }
+                _ => {}
+            }
+            if !msgs.is_empty() {
+                link.pending = true;
+            }
+        } else {
+            self.links.push(Link {
+                start: source,
+                end: sink,
+                state: LinkState::ConnectedUnlocked,
+                cell_volume: 1.0,
+                cell_volume_left: 1.0,
+                cell_volume_right: 1.0,
+                cell_node_id: None,
+                pending: !msgs.is_empty(),
+                cell_eq: EqConfig::default(),
+                cell_effects: EffectsConfig::default(),
+            });
+        }
+
+        pw_messages.extend(msgs);
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_remove_link(
+        &mut self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+        pw_messages: &mut Vec<ToPipewireMessage>,
+    ) -> bool {
+        if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
+            warn!("[State] cannot unlink {source:?} -> {sink:?}: wrong direction");
+            return false;
+        }
+
+        // Destroy cell nodes for this route
+        for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+            pw_messages.push(ToPipewireMessage::RemoveCellNode {
+                cell_node_id: cell_id,
+            });
+        }
+
+        let Some(pos) = self
+            .links
+            .iter()
+            .position(|l| l.start == source && l.end == sink)
+        else {
+            warn!("[State] link not found for removal");
+            return false;
+        };
+
+        match self.links[pos].state {
+            LinkState::PartiallyConnected | LinkState::ConnectedUnlocked => {
+                self.links.swap_remove(pos);
+                pw_messages.extend(self.remove_pipewire_node_links(graph, source, sink, settings));
+            }
+            LinkState::ConnectedLocked => {
+                self.links[pos].state = LinkState::DisconnectedLocked;
+                let msgs = self.remove_pipewire_node_links(graph, source, sink, settings);
+                if !msgs.is_empty() {
+                    self.links[pos].pending = true;
+                }
+                pw_messages.extend(msgs);
+            }
+            LinkState::DisconnectedLocked => {}
+        }
+        true
+    }
+
+    pub(super) fn handle_set_link_locked(
+        &mut self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        locked: bool,
+    ) -> bool {
+        if !source.is_kind(PortKind::Source) || !sink.is_kind(PortKind::Sink) {
+            warn!("[State] cannot set link lock {source:?} -> {sink:?}: wrong direction");
+            return false;
+        }
+
+        let pos = self
+            .links
+            .iter()
+            .position(|l| l.start == source && l.end == sink);
+
+        match (pos.map(|i| (i, self.links[i].state)), locked) {
+            (Some((_, LinkState::PartiallyConnected)), true) => {
+                warn!("[State] cannot lock partially connected link");
+            }
+            (Some((i, LinkState::ConnectedUnlocked)), true) => {
+                self.links[i].state = LinkState::ConnectedLocked;
+            }
+            (None, true) => {
+                self.links.push(Link {
+                    start: source,
+                    end: sink,
+                    state: LinkState::DisconnectedLocked,
+                    cell_volume: 1.0,
+                    cell_volume_left: 1.0,
+                    cell_volume_right: 1.0,
+                    cell_node_id: None,
+                    pending: false,
+                    cell_eq: EqConfig::default(),
+                    cell_effects: EffectsConfig::default(),
+                });
+            }
+            (_, true) => {}
+
+            (Some((i, LinkState::ConnectedLocked)), false) => {
+                self.links[i].state = LinkState::ConnectedUnlocked;
+            }
+            (Some((i, LinkState::DisconnectedLocked)), false) => {
+                self.links.swap_remove(i);
+            }
+            (_, false) => {}
+        }
+        true
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_set_link_volume(
+        &mut self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        volume: f32,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+        pw_messages: &mut Vec<ToPipewireMessage>,
+    ) {
+        let v = volume.clamp(0.0, 1.0);
+        if let Some(link) = self
+            .links
+            .iter_mut()
+            .find(|l| l.start == source && l.end == sink)
+        {
+            link.cell_volume = v;
+            link.cell_volume_left = v;
+            link.cell_volume_right = v;
+        }
+        // ADR-007: effective = channel_vol × cell_vol
+        let ch_vol = self
+            .endpoints
+            .get(&source)
+            .map(|ep| ep.volume)
+            .unwrap_or(1.0);
+        let eff = v * ch_vol;
+        for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+            pw_messages.push(ToPipewireMessage::NodeVolume(cell_id, vec![eff, eff]));
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_set_link_stereo_volume(
+        &mut self,
+        source: EndpointDescriptor,
+        sink: EndpointDescriptor,
+        left: f32,
+        right: f32,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+        pw_messages: &mut Vec<ToPipewireMessage>,
+    ) {
+        if let Some(link) = self
+            .links
+            .iter_mut()
+            .find(|l| l.start == source && l.end == sink)
+        {
+            let l = left.clamp(0.0, 1.0);
+            let r = right.clamp(0.0, 1.0);
+            link.cell_volume_left = l;
+            link.cell_volume_right = r;
+            link.cell_volume = (l + r) / 2.0;
+        }
+        let l = left.clamp(0.0, 1.0);
+        let r = right.clamp(0.0, 1.0);
+        // ADR-007: effective = channel_vol × cell_vol
+        let ch_ep = self.endpoints.get(&source);
+        let ch_l = ch_ep.map(|ep| ep.volume_left).unwrap_or(1.0);
+        let ch_r = ch_ep.map(|ep| ep.volume_right).unwrap_or(1.0);
+        for cell_id in self.find_cell_node_ids(source, sink, graph, settings) {
+            pw_messages.push(ToPipewireMessage::NodeVolume(
+                cell_id,
+                vec![l * ch_l, r * ch_r],
+            ));
+        }
+    }
+}

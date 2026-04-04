@@ -16,11 +16,11 @@ use pipewire::{
 };
 
 use super::{
-    AudioGraph, PwError,
+    AudioGraph,
     object::{
         Client, Device, EndpointId, GroupNode, Link, Node, ObjectConvertError, Port, PortKind,
     },
-    pod::{DeviceActiveRoute, NodeProps, build_node_mute_pod, build_node_volume_pod},
+    pod::{DeviceActiveRoute, NodeProps},
 };
 
 /// Wrapper to hold cell node proxies alive without requiring Debug.
@@ -343,71 +343,6 @@ impl Store {
         node.identifier.update_from_props(props);
     }
 
-    pub(super) fn set_node_volume(
-        &self,
-        id: u32,
-        channel_volumes: Vec<f32>,
-    ) -> Result<(), PwError> {
-        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
-
-        if let EndpointId::Device {
-            id: device_id,
-            device_index,
-        } = node.endpoint
-        {
-            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
-            let device = self
-                .devices
-                .get(&device_id)
-                .ok_or(PwError::DeviceNotFound(device_id))?;
-            let route = device
-                .active_routes
-                .iter()
-                .find(|route| route.device_index == device_index)
-                .ok_or(PwError::RouteNotFound {
-                    device_id,
-                    device_index,
-                })?;
-            let (param_type, pod) = route.build_device_volume_pod(channel_volumes);
-            device.proxy.set_param(param_type, 0, pod.pod());
-        } else {
-            let (param_type, pod) = build_node_volume_pod(channel_volumes);
-            node.proxy.set_param(param_type, 0, pod.pod());
-            node.proxy.enum_params(7, Some(ParamType::Props), 0, 1);
-        }
-        Ok(())
-    }
-
-    pub(super) fn set_node_mute(&self, id: u32, mute: bool) -> Result<(), PwError> {
-        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
-
-        if let EndpointId::Device {
-            id: device_id,
-            device_index,
-        } = node.endpoint
-        {
-            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
-            let device = self
-                .devices
-                .get(&device_id)
-                .ok_or(PwError::DeviceNotFound(device_id))?;
-            let route = device
-                .active_routes
-                .iter()
-                .find(|route| route.device_index == device_index)
-                .ok_or(PwError::RouteNotFound {
-                    device_id,
-                    device_index,
-                })?;
-            let (param_type, pod) = route.build_device_mute_pod(mute);
-            device.proxy.set_param(param_type, 0, pod.pod());
-        } else {
-            let (param_type, pod) = build_node_mute_pod(mute);
-            node.proxy.set_param(param_type, 0, pod.pod());
-        }
-        Ok(())
-    }
-
     #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the device exists when dispatching its param event
     #[allow(clippy::too_many_arguments)] // Matches PW callback signature
     pub(super) fn update_device_param(
@@ -454,51 +389,4 @@ impl Store {
             staging_node_id: self.staging_node_id,
         }
     }
-}
-
-/// Maps two different list of ports to a list of mappings.
-/// Standard cases such as surround sound, stereo and MONO ports should
-/// always be correctly mapped.
-///
-/// | Situation | Output |
-/// |-----------|--------|
-/// | start = 1 | map single port to all end ports |
-/// | otherwise | map by channel names |
-pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)> {
-    if start.len() == 1 {
-        return end
-            .iter()
-            .map(|end_port| (start[0].id, end_port.id))
-            .collect();
-    }
-    let pairs: Vec<(u32, u32)> = start
-        .iter()
-        .enumerate()
-        .filter_map(|(index, start_port)| {
-            let start_port_id: u32 = start_port.id;
-            let end_port_id: Option<u32> = end
-                .get(index)
-                .and_then(|port| (port.channel == start_port.channel).then_some(port.id))
-                .or_else(|| {
-                    Some(
-                        end.iter()
-                            .find(|end_port| end_port.channel == start_port.channel)?
-                            .id,
-                    )
-                });
-            if end_port_id.is_none() {
-                tracing::trace!("Could not find matching end port for {}", start_port_id);
-            }
-            Some((start_port_id, end_port_id?))
-        })
-        .collect();
-    // Fall back to positional mapping when channel names don't match
-    if pairs.is_empty() && !start.is_empty() && !end.is_empty() {
-        return start
-            .iter()
-            .zip(end.iter())
-            .map(|(s, e)| (s.id, e.id))
-            .collect();
-    }
-    pairs
 }
