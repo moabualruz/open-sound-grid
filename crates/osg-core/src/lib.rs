@@ -3,6 +3,7 @@ pub mod config;
 pub mod core;
 pub mod events;
 pub mod graph;
+pub mod migration;
 pub mod pw;
 pub mod routing;
 pub mod traits;

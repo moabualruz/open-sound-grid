@@ -9,12 +9,15 @@ use std::sync::{
     mpsc::{self, Sender},
 };
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tracing::debug;
 
-use crate::graph::ReconcileSettings;
-use crate::pw::{AudioGraph, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore};
+use crate::graph::{MixerSession, ReconcileSettings};
+use crate::pw::{
+    AudioGraph, FilterHandleStore, PipewireHandle, PwError, ToPipewireMessage, peak::PeakStore,
+};
 use crate::routing::{ReducerHandle, StateMsg, debounced_graph_sender, run_reducer};
+use crate::traits::{GraphObserver, RoutingService, VolumeService};
 
 /// The public entry point for PipeWire orchestration.
 ///
@@ -27,7 +30,8 @@ pub struct OsgCore {
     graph_tx: broadcast::Sender<AudioGraph>,
     reducer: ReducerHandle,
     peak_store: Arc<PeakStore>,
-    pw_sender: Sender<ToPipewireMessage>,
+    filter_store: FilterHandleStore,
+    _pw_sender: Sender<ToPipewireMessage>,
 }
 
 impl OsgCore {
@@ -51,6 +55,7 @@ impl OsgCore {
         let pw_sender_clone = pw_sender.clone();
 
         let peak_store = Arc::new(PeakStore::new());
+        let filter_store = FilterHandleStore::new();
 
         let pw_handle = PipewireHandle::init(
             (pw_sender_clone, pw_receiver),
@@ -65,9 +70,23 @@ impl OsgCore {
                 debounced_send(new_graph);
             },
             peak_store.clone(),
+            filter_store.clone(),
         )?;
 
-        debug!("OsgCore initialized, PipeWire connected, reducer started");
+        // Generate a unique instance ID for this process lifetime.
+        // Stamped on all PW nodes for ownership tracking.
+        let instance_id = ulid::Ulid::new();
+
+        // ADR-007: Create staging sink — always-alive, vol=0, for glitch-free rerouting
+        let _ = pw_sender.send(ToPipewireMessage::CreateStagingSink { instance_id });
+
+        // Propagate instance_id to the reducer so reconciliation can stamp new nodes.
+        reducer.set_instance_id(instance_id);
+
+        debug!(
+            %instance_id,
+            "OsgCore initialized, PipeWire connected, reducer started"
+        );
 
         Ok(Self {
             _pw_handle: pw_handle,
@@ -75,7 +94,8 @@ impl OsgCore {
             graph_tx,
             reducer,
             peak_store,
-            pw_sender: pw_sender.clone(),
+            filter_store,
+            _pw_sender: pw_sender.clone(),
         })
     }
 
@@ -105,17 +125,51 @@ impl OsgCore {
         &self.peak_store
     }
 
-    /// Start monitoring peak levels for a PipeWire node.
-    pub fn start_peak_monitor(&self, node_id: u32) {
-        let _ = self
-            .pw_sender
-            .send(ToPipewireMessage::StartPeakMonitor(node_id));
+    /// Get the shared filter handle store for EQ control and peak reading.
+    pub fn filter_store(&self) -> &FilterHandleStore {
+        &self.filter_store
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service trait implementations
+// ---------------------------------------------------------------------------
+
+impl VolumeService for OsgCore {
+    fn set_volume(&self, endpoint: crate::graph::EndpointDescriptor, volume: f32) {
+        self.reducer.emit(StateMsg::SetVolume(endpoint, volume));
     }
 
-    /// Stop monitoring peak levels for a PipeWire node.
-    pub fn stop_peak_monitor(&self, node_id: u32) {
-        let _ = self
-            .pw_sender
-            .send(ToPipewireMessage::StopPeakMonitor(node_id));
+    fn set_stereo_volume(&self, endpoint: crate::graph::EndpointDescriptor, left: f32, right: f32) {
+        self.reducer
+            .emit(StateMsg::SetStereoVolume(endpoint, left, right));
+    }
+
+    fn set_mute(&self, endpoint: crate::graph::EndpointDescriptor, muted: bool) {
+        self.reducer.emit(StateMsg::SetMute(endpoint, muted));
+    }
+}
+
+impl GraphObserver for OsgCore {
+    fn snapshot(&self) -> AudioGraph {
+        self.snapshot()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<AudioGraph> {
+        self.subscribe()
+    }
+}
+
+impl RoutingService for OsgCore {
+    fn command(&self, msg: StateMsg) {
+        self.reducer.emit(msg);
+    }
+
+    fn state(&self) -> Arc<MixerSession> {
+        self.reducer.state()
+    }
+
+    fn subscribe_state(&self) -> watch::Receiver<Arc<MixerSession>> {
+        self.reducer.subscribe_state()
     }
 }

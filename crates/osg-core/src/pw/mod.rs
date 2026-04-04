@@ -1,16 +1,23 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
+pub mod biquad;
 mod cell;
-mod identifier;
+mod effects_dsp;
+pub mod filter;
+mod group_nodes;
+pub mod identifier;
 mod mainloop;
+mod master;
 mod object;
 pub mod peak;
-mod pod;
+pub mod pod;
+mod port_mapper;
 mod store;
+mod volume_ops;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, mpsc},
+    sync::{Arc, RwLock, mpsc},
     thread,
 };
 
@@ -18,11 +25,34 @@ use thiserror::Error;
 use tracing::error;
 use ulid::Ulid;
 
+pub use filter::FilterHandle;
 pub use identifier::NodeIdentifier;
 pub use object::PortKind;
 
 use mainloop::init_mainloop;
-pub use mainloop::map_ports;
+pub use port_mapper::map_ports;
+
+// ---------------------------------------------------------------------------
+// From conversions: domain ↔ infrastructure
+// ---------------------------------------------------------------------------
+
+impl From<crate::graph::PortKind> for PortKind {
+    fn from(k: crate::graph::PortKind) -> Self {
+        match k {
+            crate::graph::PortKind::Source => Self::Source,
+            crate::graph::PortKind::Sink => Self::Sink,
+        }
+    }
+}
+
+impl From<PortKind> for crate::graph::PortKind {
+    fn from(k: PortKind) -> Self {
+        match k {
+            PortKind::Source => Self::Source,
+            PortKind::Sink => Self::Sink,
+        }
+    }
+}
 
 /// Errors originating from the PipeWire backend.
 #[derive(Error, Debug)]
@@ -83,6 +113,16 @@ pub enum GroupNodeKind {
     Sink,
 }
 
+impl From<crate::graph::ChannelKind> for GroupNodeKind {
+    fn from(k: crate::graph::ChannelKind) -> Self {
+        match k {
+            crate::graph::ChannelKind::Source => Self::Source,
+            crate::graph::ChannelKind::Sink => Self::Sink,
+            crate::graph::ChannelKind::Duplex => Self::Duplex,
+        }
+    }
+}
+
 #[allow(missing_debug_implementations)] // Contains thread JoinHandles which are not Debug
 pub struct PipewireHandle {
     pipewire_thread_handle: Option<thread::JoinHandle<()>>,
@@ -98,9 +138,10 @@ impl PipewireHandle {
         ),
         update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
         peak_store: Arc<peak::PeakStore>,
+        filter_store: FilterHandleStore,
     ) -> Result<Self, PwError> {
         let (pipewire_thread_handle, pw_sender, _from_pw_receiver) =
-            init_mainloop(update_fn, peak_store)?;
+            init_mainloop(update_fn, peak_store, filter_store)?;
         let adapter_thread_handle = init_adapter(to_pw_channel.1, pw_sender);
         Ok(Self {
             pipewire_thread_handle: Some(pipewire_thread_handle),
@@ -134,6 +175,48 @@ pub type Node = object::Node<(), ()>;
 pub type Port = object::Port<()>;
 pub type Link = object::Link<()>;
 
+/// Thread-safe store of FilterHandles keyed by channel name (e.g. "osg.filter.{ulid}").
+/// Shared between the PW mainloop (writes peaks) and the reducer (reads peaks, sets EQ).
+#[derive(Debug, Clone, Default)]
+pub struct FilterHandleStore {
+    inner: Arc<RwLock<HashMap<String, FilterHandle>>>,
+}
+
+#[allow(clippy::unwrap_used)]
+impl FilterHandleStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert a handle, returning any previous one.
+    pub fn insert(&self, key: String, handle: FilterHandle) -> Option<FilterHandle> {
+        self.inner.write().unwrap().insert(key, handle)
+    }
+
+    /// Remove a handle by key.
+    pub fn remove(&self, key: &str) -> Option<FilterHandle> {
+        self.inner.write().unwrap().remove(key)
+    }
+
+    /// Get a clone of a handle by key.
+    pub fn get(&self, key: &str) -> Option<FilterHandle> {
+        self.inner.read().unwrap().get(key).cloned()
+    }
+
+    /// Read all filter peaks and return (key, left, right) tuples.
+    pub fn read_all_peaks(&self) -> Vec<(String, f32, f32)> {
+        self.inner
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(k, h)| {
+                let (l, r) = h.peak();
+                (k.clone(), l, r)
+            })
+            .collect()
+    }
+}
+
 /// Read-only projection of PipeWire's current graph state. DDD read model.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,7 +233,10 @@ pub struct AudioGraph {
     pub default_source_name: Option<String>,
     /// Map (channel_node_id, mix_node_id) → cell PW node ID for per-route volume.
     #[serde(skip)]
-    pub cell_node_ids: HashMap<(u32, u32), u32>,
+    pub cell_node_ids: HashMap<(String, String), u32>,
+    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
+    #[serde(skip)]
+    pub staging_node_id: Option<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -167,18 +253,23 @@ pub enum ToPipewireMessage {
     #[rustfmt::skip]
     RemoveNodeLinks { start_id: u32, end_id: u32 },
     /// Domain: AddChannel. Creates a virtual audio bus (Channel) in PipeWire.
-    CreateGroupNode(String, Ulid, GroupNodeKind),
+    /// Fields: (name, ulid, kind, instance_id).
+    CreateGroupNode(String, Ulid, GroupNodeKind, Ulid),
     /// Domain: RemoveChannel. Removes a virtual audio bus (Channel) from PipeWire.
     RemoveGroupNode(Ulid),
     /// Set the OS default audio sink via PipeWire metadata.
     /// (node_name, pipewire_node_id) — tries metadata first, falls back to wpctl.
     SetDefaultSink(String, u32),
-    /// Create a per-cell volume node (null-audio-sink) for matrix routing.
-    /// Route: channel → cell_node (volume) → mix.
+    /// Create a per-cell null-audio-sink for matrix routing (ADR-007).
+    /// App streams link directly to this sink. Monitor → [filter] → mix.
     CreateCellNode {
         name: String,
-        channel_node_id: u32,
-        mix_node_id: u32,
+        /// Full node name: `osg.cell.{channel_ulid}-to-{mix_ulid}`
+        cell_id: String,
+        channel_ulid: String,
+        mix_ulid: String,
+        /// OSG instance ULID stamped on the PW node for ownership tracking.
+        instance_id: Ulid,
     },
     /// Remove a per-cell volume node and its links.
     RemoveCellNode {
@@ -196,10 +287,33 @@ pub enum ToPipewireMessage {
         stream_node_id: u32,
         target_node_id: u32,
     },
-    /// Start monitoring peak levels for a node.
-    StartPeakMonitor(u32),
-    /// Stop monitoring peak levels for a node.
-    StopPeakMonitor(u32),
+    /// Create the staging sink — always-alive, vol=0, for glitch-free rerouting.
+    /// ADR-007: Apps transit through this sink during reassignment to avoid
+    /// audio glitches from having no output destination.
+    CreateStagingSink {
+        instance_id: Ulid,
+    },
+    /// Create an inline pw_filter for EQ + peak metering.
+    /// Inserts between source_node → target_node in the graph.
+    /// The filter_key is used to store/retrieve the FilterHandle.
+    CreateFilter {
+        filter_key: String,
+        name: String,
+    },
+    /// Remove an inline pw_filter by key.
+    RemoveFilter {
+        filter_key: String,
+    },
+    /// Update EQ parameters on an existing filter.
+    UpdateFilterEq {
+        filter_key: String,
+        eq: crate::graph::EqConfig,
+    },
+    /// Update effects chain parameters on an existing filter.
+    UpdateFilterEffects {
+        filter_key: String,
+        effects: crate::graph::EffectsConfig,
+    },
     Exit,
 }
 
@@ -214,6 +328,7 @@ struct PipewireChannelError(ToPipewireMessage);
 /// because pipewire::channel uses a synchronous mutex and thus could cause deadlocks if called
 /// from async code. This might not be needed, but it'd probably be pretty annoying to debug if it
 /// turned out that the small block to send messages is actually a problem.
+#[allow(clippy::result_large_err)] // PipewireChannelError wraps ToPipewireMessage which is large by design
 fn init_adapter(
     receiver: mpsc::Receiver<ToPipewireMessage>,
     pw_sender: pipewire::channel::Sender<ToPipewireMessage>,

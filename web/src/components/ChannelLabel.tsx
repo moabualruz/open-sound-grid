@@ -1,21 +1,22 @@
-import { Show, For, createEffect, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import {
   Volume2,
   VolumeX,
   X,
-  SlidersVertical,
   Music,
   Globe,
   Bell,
   Gamepad2,
   MessageCircle,
   Speaker,
-  Plus,
 } from "lucide-solid";
-import type { EndpointDescriptor, Endpoint, Channel, App } from "../types";
+import VuMeter from "./VuMeter";
+import AppAssignment from "./AppAssignment";
+import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
 
@@ -28,8 +29,6 @@ interface ChannelLabelProps {
   peakLeft?: number;
   peakRight?: number;
 }
-
-const DEBOUNCE_MS = 16;
 
 function channelIcon(displayName: string) {
   switch (displayName) {
@@ -57,8 +56,22 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const [localR, setLocalR] = createSignal(1);
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let userDragging = false;
+
+  const sendDebounced = useVolumeDebounce((v) => {
+    send({ type: "setVolume", endpoint: props.descriptor, volume: v });
+    userDragging = false;
+  });
+
+  const sendStereoDebounced = useVolumeDebounce((_v) => {
+    send({
+      type: "setStereoVolume",
+      endpoint: props.descriptor,
+      left: localL(),
+      right: localR(),
+    });
+    userDragging = false;
+  });
 
   const isStereo = () => settings.stereoMode === "stereo";
 
@@ -97,11 +110,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     setLocal(value);
     setLocalL(value);
     setLocalR(value);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({ type: "setVolume", endpoint: props.descriptor, volume: value });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendDebounced(value);
   }
 
   function handleStereoInput(channel: "left" | "right", value: number) {
@@ -109,21 +118,8 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     if (channel === "left") setLocalL(value);
     else setLocalR(value);
     setLocal((localL() + localR()) / 2);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setStereoVolume",
-        endpoint: props.descriptor,
-        left: localL(),
-        right: localR(),
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendStereoDebounced(value);
   }
-
-  onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-  });
 
   const pct = () => Math.round(local() * 100);
   const pctL = () => Math.round(localL() * 100);
@@ -132,7 +128,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   return (
     <div class="w-48 shrink-0 rounded-lg border border-border bg-bg-elevated">
       {/* Row 1: drag handle + icon + name + mute + remove */}
-      <div class="flex items-center gap-1.5 px-2 pt-2">
+      <div class="flex items-center gap-1.5 px-3 pt-2.5">
         <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
         {channelIcon(props.endpoint.displayName)}
 
@@ -173,132 +169,40 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           {isMuted() ? <VolumeX size={14} /> : <Volume2 size={14} />}
         </button>
 
-        <button
-          class="text-text-muted/40 transition-colors duration-150 hover:text-text-muted"
-          title="Effects (coming soon)"
-          aria-label="Effects"
-          disabled
-        >
-          <SlidersVertical size={12} />
-        </button>
-
-        <button
-          onClick={() =>
-            send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
-          }
-          class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
-          title="Hide channel"
-          aria-label="Hide channel"
-        >
-          <X size={12} />
-        </button>
+        <Show when={!props.channel?.autoApp && !("app" in props.descriptor)}>
+          <button
+            onClick={() =>
+              send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
+            }
+            class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
+            title="Hide channel"
+            aria-label="Hide channel"
+          >
+            <X size={12} />
+          </button>
+        </Show>
       </div>
 
-      {/* Row 2: assigned apps */}
+      {/* VU meter — channel peak level */}
+      <div class="px-3 pt-2">
+        <VuMeter peakLeft={props.peakLeft} peakRight={props.peakRight} />
+      </div>
+
+      {/* Row 2: assigned apps — hidden for auto-created app channels */}
       <Show when={props.channel}>
-        {(ch) => {
-          const [pickerOpen, setPickerOpen] = createSignal(false);
-          const channelId = () => ("channel" in props.descriptor ? props.descriptor.channel : "");
-
-          // All assigned apps across all channels (for filtering available apps)
-          const allAssignedApps = () => {
-            const assigned = new Set<string>();
-            const session = useSession().state.session;
-            for (const channel of Object.values(session.channels) as Channel[]) {
-              for (const a of channel.assignedApps ?? []) {
-                assigned.add(`${a.applicationName}:${a.binaryName}`);
-              }
-            }
-            return assigned;
-          };
-
-          const availableApps = () =>
-            (props.apps ?? []).filter((app) => {
-              const key = `${app.name}:${app.binary}`;
-              return !allAssignedApps().has(key);
-            });
-
-          return (
-            <div class="px-2 pb-1.5">
-              <div class="flex flex-wrap items-center gap-1">
-                <For each={ch().assignedApps ?? []}>
-                  {(assignment) => (
-                    <span class="inline-flex items-center gap-0.5 rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
-                      <span class="max-w-[6rem] truncate">{assignment.applicationName}</span>
-                      <button
-                        onClick={() =>
-                          send({
-                            type: "unassignApp",
-                            channel: channelId(),
-                            applicationName: assignment.applicationName,
-                            binaryName: assignment.binaryName,
-                          })
-                        }
-                        class="ml-0.5 text-accent/60 hover:text-vu-hot"
-                        title={`Unassign ${assignment.applicationName}`}
-                      >
-                        <X size={10} />
-                      </button>
-                    </span>
-                  )}
-                </For>
-                <div class="relative">
-                  <button
-                    onClick={() => setPickerOpen((v) => !v)}
-                    class="inline-flex items-center gap-0.5 rounded border border-dashed border-border px-1 py-0.5 text-[10px] text-text-muted transition-colors hover:border-accent hover:text-accent"
-                    title="Assign app"
-                  >
-                    <Plus size={10} />
-                    <Show when={(ch().assignedApps ?? []).length === 0}>
-                      <span>App</span>
-                    </Show>
-                  </button>
-                  <Show when={pickerOpen()}>
-                    <div class="fixed inset-0 z-20" onClick={() => setPickerOpen(false)} />
-                    <div class="absolute bottom-full left-0 z-30 mb-1 w-48 rounded-lg border border-border bg-bg-elevated shadow-xl">
-                      <div class="max-h-48 overflow-y-auto p-1">
-                        <Show
-                          when={availableApps().length > 0}
-                          fallback={
-                            <p class="px-2 py-3 text-center text-[11px] text-text-muted">
-                              No unassigned apps
-                            </p>
-                          }
-                        >
-                          <For each={availableApps()}>
-                            {(app) => (
-                              <button
-                                onClick={() => {
-                                  send({
-                                    type: "assignApp",
-                                    channel: channelId(),
-                                    applicationName: app.name,
-                                    binaryName: app.binary,
-                                  });
-                                  setPickerOpen(false);
-                                }}
-                                class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-bg-hover"
-                              >
-                                <Speaker size={12} class="shrink-0 text-text-muted" />
-                                <span class="truncate text-[11px] text-text-secondary">
-                                  {app.name || app.binary}
-                                </span>
-                              </button>
-                            )}
-                          </For>
-                        </Show>
-                      </div>
-                    </div>
-                  </Show>
-                </div>
-              </div>
-            </div>
-          );
-        }}
+        {(ch) => (
+          <div class="px-3 py-1.5">
+            <AppAssignment
+              channelId={"channel" in props.descriptor ? props.descriptor.channel : ""}
+              channel={ch()}
+              apps={props.apps ?? []}
+            />
+          </div>
+        )}
       </Show>
 
       {/* Row 3: master volume slider(s) */}
-      <div class="px-3 pb-2 pt-1">
+      <div class="px-3 pb-3 pt-2">
         <Show
           when={isStereo()}
           fallback={

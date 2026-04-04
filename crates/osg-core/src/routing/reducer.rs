@@ -11,13 +11,17 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tracing::{error, warn};
 
 use crate::config::{PersistentSettings, PersistentState};
-use crate::graph::{MixerSession, ReconcileSettings};
+use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
+use crate::routing::event_translator;
+use crate::routing::handler_registry::HandlerRegistry;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
 
-/// Debounce interval for PipeWire graph updates (≈60 Hz).
-const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(16);
+/// Debounce interval for PipeWire graph updates (20 Hz).
+/// 50ms balances responsiveness with CPU cost — graph events arrive in bursts
+/// and the reconciler only needs the final snapshot per burst.
+const GRAPH_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 // ---------------------------------------------------------------------------
 // Public handle
@@ -51,6 +55,11 @@ impl ReducerHandle {
     /// Subscribe to output messages (broadcast channel).
     pub fn subscribe_output(&self) -> broadcast::Receiver<StateOutputMsg> {
         self.output_tx.subscribe()
+    }
+
+    /// Set the instance ULID for node ownership tagging.
+    pub fn set_instance_id(&self, id: ulid::Ulid) {
+        let _ = self.msg_tx.send(ReducerMsg::SetInstanceId(id));
     }
 
     /// Request a save. If `clear_state` is true the state is reset first.
@@ -149,10 +158,13 @@ pub async fn run_reducer(
     let settings_clone = settings.clone();
     tokio::spawn(async move {
         let mut graph: Box<AudioGraph> = Box::default();
+        let mut runtime = RuntimeState::default();
         let settings = settings_clone;
+        let registry = HandlerRegistry::new();
+        let mut last_reconciled_generation: u64 = 0;
 
-        let save = |state: &MixerSession, s: &ReconcileSettings| {
-            let ps = PersistentState::from_state(state.clone());
+        let save = |state: &MixerSession, rt: &RuntimeState, s: &ReconcileSettings| {
+            let mut ps = PersistentState::from_state(state.clone(), rt);
             if let Err(err) = ps.save() {
                 warn!("[Reducer] save state error: {err:#}");
             }
@@ -175,7 +187,7 @@ pub async fn run_reducer(
                         // Timer fired — save now
                         let state_snapshot = state_tx.borrow().as_ref().clone();
                         let settings_snapshot = settings.read().await.clone();
-                        save(&state_snapshot, &settings_snapshot);
+                        save(&state_snapshot, &runtime, &settings_snapshot);
                         save_deadline = None;
                         continue;
                     }
@@ -191,9 +203,13 @@ pub async fn run_reducer(
                 ReducerMsg::Update(msg) => {
                     let mut state = state_tx.borrow().as_ref().clone();
                     let current_settings = settings.read().await.clone();
-                    let (output_msg, mut pw_messages) =
-                        state.update(&graph, msg, &current_settings);
-                    pw_messages.extend(state.diff(&graph, &current_settings));
+                    runtime.generation = runtime.generation.wrapping_add(1);
+                    let (output_msg, domain_events) =
+                        registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
+                    let mut pw_messages = event_translator::translate_all(&domain_events);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    pw_messages.extend(event_translator::translate_all(&diff_events));
+                    last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {
@@ -212,10 +228,20 @@ pub async fn run_reducer(
                 }
                 ReducerMsg::GraphUpdate(new_graph) => {
                     graph = new_graph;
+                    let current_generation = runtime.generation;
+
+                    // Skip reconciliation when the desired state hasn't changed
+                    // since the last reconcile — only graph events arrived.
+                    if current_generation == last_reconciled_generation {
+                        continue;
+                    }
+
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
                     state.rename_easyeffects_channels(&graph);
-                    let pw_messages = state.diff(&graph, &current_settings);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    let pw_messages = event_translator::translate_all(&diff_events);
+                    last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {
@@ -225,10 +251,19 @@ pub async fn run_reducer(
                     }
                     let _ = state_tx.send(Arc::new(state));
                 }
+                ReducerMsg::SetInstanceId(id) => {
+                    runtime.instance_id = id;
+                    // Publish updated state snapshot (unchanged domain state, but
+                    // consumers that need instance_id can re-read it via runtime).
+                    let state = state_tx.borrow().as_ref().clone();
+                    let _ = state_tx.send(Arc::new(state));
+                }
                 ReducerMsg::SettingsChanged => {
                     let current_settings = settings.read().await.clone();
                     let mut state = state_tx.borrow().as_ref().clone();
-                    let pw_messages = state.diff(&graph, &current_settings);
+                    let diff_events = state.diff(&graph, &current_settings, &mut runtime);
+                    let pw_messages = event_translator::translate_all(&diff_events);
+                    last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
                         if pw_sender.send(m).is_err() {
@@ -243,6 +278,7 @@ pub async fn run_reducer(
                     clear_settings,
                 } => {
                     if clear_state {
+                        runtime = RuntimeState::default();
                         let _ = state_tx.send(Arc::new(MixerSession::default()));
                     }
                     if clear_settings {
@@ -250,12 +286,12 @@ pub async fn run_reducer(
                     }
                     let state_snapshot = state_tx.borrow().as_ref().clone();
                     let settings_snapshot = settings.read().await.clone();
-                    save(&state_snapshot, &settings_snapshot);
+                    save(&state_snapshot, &runtime, &settings_snapshot);
                 }
                 ReducerMsg::SaveAndExit => {
                     let state_snapshot = state_tx.borrow().as_ref().clone();
                     let settings_snapshot = settings.read().await.clone();
-                    save(&state_snapshot, &settings_snapshot);
+                    save(&state_snapshot, &runtime, &settings_snapshot);
                     break;
                 }
             }

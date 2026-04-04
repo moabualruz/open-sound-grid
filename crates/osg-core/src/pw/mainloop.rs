@@ -4,527 +4,36 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::mpsc, thread::JoinH
 
 use std::sync::Arc;
 
-use pipewire::{
-    context::ContextRc, core::CoreRc, keys::*, main_loop::MainLoopRc, metadata::Metadata,
-    properties::properties, proxy::ProxyT, registry::RegistryRc, spa::param::ParamType,
-    stream::StreamRc, types::ObjectType,
-};
-use tracing::{debug, trace, warn};
+use tracing::{debug, warn};
 use ulid::Ulid;
 
-use super::{
-    AudioGraph, FromPipewireMessage, GroupNodeKind, OSG_APP_ID, OSG_APP_NAME, PortKind, PwError,
-    ToPipewireMessage, object::Port, store::Store,
-};
+use super::group_nodes::init_pipewire;
+use super::master::Master;
+use super::{AudioGraph, FromPipewireMessage, PwError, ToPipewireMessage, store::Store};
 
-/// # Master
-///
-/// The Master handles events which then get inserted into the store.
-/// Therefore, the store is the slave of the master, processing what
-/// it gets.
-struct Master {
+/// Create the Master and register all registry/core listeners.
+/// Returns (Master, registry_listener, remove_listener, core_listener).
+/// Callers MUST keep the listeners alive — dropping them stops PW event delivery.
+fn setup_master(
     store: Rc<RefCell<Store>>,
-    pw_core: CoreRc,
-    registry: RegistryRc,
+    pw_core: pipewire::core::CoreRc,
+    registry: pipewire::registry::RegistryRc,
     sender: pipewire::channel::Sender<ToPipewireMessage>,
-    /// PipeWire "default" metadata proxy — used to set default.configured.audio.sink.
-    settings_metadata: Rc<RefCell<Option<Metadata>>>,
-}
-
-impl Master {
-    fn new(
-        store: Rc<RefCell<Store>>,
-        pw_core: CoreRc,
-        registry: RegistryRc,
-        sender: pipewire::channel::Sender<ToPipewireMessage>,
-    ) -> Self {
-        Master {
-            store,
-            pw_core,
-            registry,
-            sender,
-            settings_metadata: Rc::new(RefCell::new(None)),
-        }
-    }
-
-    /// Listen for info events on the core.
-    /// see [Core::add_listener_local()]
-    fn init_core_listeners(&self) -> pipewire::core::Listener {
-        self.pw_core
-            .add_listener_local()
-            .info({
-                let store = self.store.clone();
-                let sender = self.sender.clone();
-                move |info| {
-                    trace!("info event: {info:?}");
-                    store.borrow_mut().set_osg_client_id(info.id());
-                    let _ = sender.send(ToPipewireMessage::Update);
-                }
-            })
-            .done(|id, seq| {
-                trace!("Pipewire done event: {id}, {seq:?}");
-            })
-            .error(|id, seq, res, msg| {
-                trace!("PipeWire error event ({id}, {seq}, {res}): {msg:?}");
-            })
-            .register()
-    }
-
-    /// Listen for new events in the registry.
-    /// see [Registry::add_listener_local()]
-    fn registry_listener(&self) -> pipewire::registry::Listener {
-        self.registry
-            .add_listener_local()
-            .global({
-                let store = self.store.clone();
-                let registry = self.registry.clone();
-                let sender = self.sender.clone();
-                let settings_metadata = self.settings_metadata.clone();
-                move |global| {
-                    let result = { store.borrow_mut().add_object(&registry, global) };
-                    match result {
-                        Ok(_) => {
-                            let _ = sender.send(ToPipewireMessage::Update);
-
-                            // Add param listeners for objects
-                            match global.type_ {
-                                ObjectType::Node => {
-                                    init_node_listeners(store.clone(), sender.clone(), global.id);
-                                }
-                                ObjectType::Device => {
-                                    init_device_listeners(store.clone(), global.id);
-                                }
-                                ObjectType::Metadata => {
-                                    init_metadata_listener(
-                                        &registry,
-                                        store.clone(),
-                                        sender.clone(),
-                                        &settings_metadata,
-                                        global,
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                        Err(err) => debug!("Skipping object {}: {err:?}", global.id),
-                    }
-                }
-            })
-            .register()
-    }
-
-    /// Listen for remove events in the registry.
-    /// See [Registry::add_listener_local()]
-    fn registry_remove_listener(&self) -> pipewire::registry::Listener {
-        self.registry
-            .add_listener_local()
-            .global_remove({
-                let store = self.store.clone();
-                let sender = self.sender.clone();
-                move |global| {
-                    let mut store_borrow = store.borrow_mut();
-                    store_borrow.remove_object(global);
-                    let _ = sender.send(ToPipewireMessage::Update);
-                }
-            })
-            .register()
-    }
-
-    /// Create a link between two ports. Checks that the ports exist, and their direction. Does
-    /// nothing if a link between those two ports already exists.
-    fn create_port_link(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
-        let store = self.store.borrow();
-        let Some(start_port) = store.ports.get(&start_id) else {
-            return Err(PwError::PortNotFound(start_id));
-        };
-        if start_port.kind != PortKind::Source {
-            return Err(PwError::InvalidPort(format!(
-                "port {start_id} is not a source port"
-            )));
-        }
-        let Some(end_port) = store.ports.get(&end_id) else {
-            return Err(PwError::PortNotFound(end_id));
-        };
-        if end_port.kind != PortKind::Sink {
-            return Err(PwError::InvalidPort(format!(
-                "port {end_id} is not a sink port"
-            )));
-        }
-        if start_port.links.iter().any(|link_id| {
-            store
-                .links
-                .get(link_id)
-                .map(|link| link.start_port == start_port.id && link.end_port == end_port.id)
-                .unwrap_or(false)
-        }) {
-            // The link already exists
-            return Ok(());
-        }
-        self.pw_core
-            .create_object::<pipewire::link::Link>(
-                "link-factory",
-                &properties! {
-                    *LINK_OUTPUT_NODE => start_port.node.to_string(),
-                    *LINK_OUTPUT_PORT => start_port.id.to_string(),
-                    *LINK_INPUT_NODE => end_port.node.to_string(),
-                    *LINK_INPUT_PORT => end_port.id.to_string(),
-                    *OBJECT_LINGER => "true",
-                    *NODE_PASSIVE => "true",
-                },
-            )
-            .map_err(|e| PwError::LinkCreationFailed(e.to_string()))?;
-        Ok(())
-    }
-
-    /// Create links between all matching ports of two nodes. Checks that both ids are nodes, and
-    /// skips links that do not already exist. Only connects nodes in the specified direction.
-    fn create_node_links(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
-        let store = self.store.borrow();
-        let Some(start_node) = store.nodes.get(&start_id) else {
-            return Err(PwError::NodeNotFound(start_id));
-        };
-        let Some(end_node) = store.nodes.get(&end_id) else {
-            return Err(PwError::NodeNotFound(end_id));
-        };
-        let end_ports: Vec<&Port> = end_node
-            .ports
-            .iter()
-            .filter(|(_, kind, _)| *kind == PortKind::Sink)
-            .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-            .collect();
-        let start_ports: Vec<&Port> = start_node
-            .ports
-            .iter()
-            .filter(|(_, kind, _)| *kind == PortKind::Source)
-            .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-            .collect();
-        let port_pairs = map_ports(start_ports, end_ports);
-        if port_pairs.is_empty() {
-            return Err(PwError::NoPortPairs { start_id, end_id });
-        }
-        for (start_port, end_port) in port_pairs {
-            self.create_port_link(start_port, end_port)?;
-        }
-        Ok(())
-    }
-
-    fn remove_port_link(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
-        let store = self.store.borrow_mut();
-        // There shouldn't be more than one link between the same two ports, but loop just in case
-        // there is for some reason.
-        for link_id in store.links.values().filter_map(|link| {
-            (link.start_port == start_id && link.end_port == end_id).then_some(link.id)
-        }) {
-            self.registry.destroy_global(link_id);
-        }
-        Ok(())
-    }
-
-    fn remove_node_links(&self, start_id: u32, end_id: u32) -> Result<(), PwError> {
-        let store = self.store.borrow_mut();
-        for link_id in store.links.values().filter_map(|link| {
-            (link.start_node == start_id && link.end_node == end_id).then_some(link.id)
-        }) {
-            self.registry.destroy_global(link_id);
-        }
-        Ok(())
-    }
-
-    /// Link pending peak stream nodes to their target's monitor ports.
-    fn resolve_peak_links(&self, pending: &mut HashMap<String, u32>) {
-        let store = self.store.borrow();
-        let resolved: Vec<String> = pending
-            .iter()
-            .filter_map(|(peak_name, &target_id)| {
-                let (&peak_node_id, peak_node) = store
-                    .nodes
-                    .iter()
-                    .find(|(_, n)| n.identifier.node_name() == Some(peak_name.as_str()))?;
-                let has_sink_ports = peak_node
-                    .ports
-                    .iter()
-                    .any(|(_, kind, _)| *kind == PortKind::Sink);
-                if !has_sink_ports {
-                    return None;
-                }
-                let target_node = store.nodes.get(&target_id)?;
-                let monitor_ports: Vec<&Port> = target_node
-                    .ports
-                    .iter()
-                    .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-                    .filter(|p| p.kind == PortKind::Source && p.is_monitor)
-                    .collect();
-                let sink_ports: Vec<&Port> = peak_node
-                    .ports
-                    .iter()
-                    .filter_map(|(port_id, _, _)| store.ports.get(port_id))
-                    .filter(|p| p.kind == PortKind::Sink)
-                    .collect();
-                if monitor_ports.is_empty() || sink_ports.is_empty() {
-                    return None;
-                }
-                let pairs = map_ports(monitor_ports, sink_ports);
-                for (src, dst) in &pairs {
-                    if let Err(e) = self.create_port_link(*src, *dst) {
-                        warn!("[PW] peak link {peak_name} failed: {e}");
-                    }
-                }
-                if !pairs.is_empty() {
-                    debug!(
-                        "[PW] linked peak {peak_name} (node {peak_node_id}) → target {target_id} ({} pairs)",
-                        pairs.len()
-                    );
-                }
-                Some(peak_name.clone())
-            })
-            .collect();
-        for name in resolved {
-            pending.remove(&name);
-        }
-    }
-
-    fn create_group_node(
-        &self,
-        name: String,
-        id: Ulid,
-        kind: GroupNodeKind,
-    ) -> Result<(), PwError> {
-        let proxy = self
-            .pw_core
-            .create_object::<pipewire::node::Node>(
-                "adapter",
-                &properties! {
-                    *FACTORY_NAME => "support.null-audio-sink",
-                    *NODE_NAME => format!("osg.group.{id}"),
-                    *NODE_NICK => &*name,
-                    *NODE_DESCRIPTION => &*name,
-                    *APP_ICON_NAME => OSG_APP_ID,
-                    *MEDIA_ICON_NAME => OSG_APP_ID,
-                    *DEVICE_ICON_NAME => OSG_APP_ID,
-                    "icon_name" => OSG_APP_ID,
-                    *APP_NAME => OSG_APP_NAME,
-                    *NODE_VIRTUAL => "true",
-                    *MEDIA_CLASS => match kind {
-                        GroupNodeKind::Source => "Audio/Source/Virtual",
-                        GroupNodeKind::Duplex => "Audio/Duplex",
-                        GroupNodeKind::Sink => "Audio/Sink",
-                    },
-                    "audio.position" => "FL,FR",
-                    "monitor.channel-volumes" => "true",
-                    "monitor.passthrough" => "true",
-                },
-            )
-            .map_err(|e| PwError::SinkCreationFailed(format!("group node '{name}': {e}")))?;
-        let listener = proxy
-            .upcast_ref()
-            .add_listener_local()
-            .bound({
-                let store = self.store.clone();
-                move |global_id| {
-                    if let Some(group_node) = store.borrow_mut().group_nodes.get_mut(&id) {
-                        group_node.id = Some(global_id);
-                    }
-                }
-            })
-            .removed({
-                let store = self.store.clone();
-                move || {
-                    store.borrow_mut().group_nodes.remove(&id);
-                }
-            })
-            .register();
-        self.store.borrow_mut().group_nodes.insert(
-            id,
-            super::object::GroupNode {
-                id: None,
-                name,
-                kind,
-                proxy,
-                _listener: listener,
-            },
-        );
-        Ok(())
-    }
-
-    fn remove_group_node(&self, id: Ulid) -> Result<(), PwError> {
-        let mut store = self.store.borrow_mut();
-        let group_node = store
-            .group_nodes
-            .remove(&id)
-            .ok_or(PwError::GroupNodeNotFound(id))?;
-
-        // Dropping the proxy deletes the object on the server
-        drop(group_node);
-
-        Ok(())
-    }
-}
-
-/// Maps two different list of ports to a list of mappings.
-/// These are made at best guess but by no means are always correct.
-/// Standard cases such as surround sound, stereo and MONO ports should
-/// always be correctly mapped.
-///
-/// | Situation | Output |
-/// |-----------|--------|
-/// | start = 1 | map single port to all end ports |
-/// | otherwise | map by channel names |
-pub fn map_ports<P>(start: Vec<&Port<P>>, end: Vec<&Port<P>>) -> Vec<(u32, u32)> {
-    if start.len() == 1 {
-        return end
-            .iter()
-            .map(|end_port| (start[0].id, end_port.id))
-            .collect();
-    }
-    let pairs: Vec<(u32, u32)> = start
-        .iter()
-        .enumerate()
-        .filter_map(|(index, start_port)| {
-            let start_port_id: u32 = start_port.id;
-            // Try matching by channel name first, then fall back to positional
-            let end_port_id: Option<u32> = end
-                .get(index)
-                .and_then(|port| (port.channel == start_port.channel).then_some(port.id))
-                .or_else(|| {
-                    Some(
-                        end.iter()
-                            .find(|end_port| end_port.channel == start_port.channel)?
-                            .id,
-                    )
-                });
-            if end_port_id.is_none() {
-                trace!("Could not find matching end port for {}", start_port_id);
-            }
-            Some((start_port_id, end_port_id?))
-        })
-        .collect();
-
-    // Fall back to positional mapping when channel names don't match
-    // (e.g. FL/FR vs AUX0/AUX1 on pro audio hardware)
-    if pairs.is_empty() && !start.is_empty() && !end.is_empty() {
-        return start
-            .iter()
-            .zip(end.iter())
-            .map(|(s, e)| (s.id, e.id))
-            .collect();
-    }
-    pairs
-}
-
-pub fn init_node_listeners(
-    store: Rc<RefCell<Store>>,
-    sender: pipewire::channel::Sender<ToPipewireMessage>,
-    id: u32,
+) -> (
+    Master,
+    pipewire::registry::Listener,
+    pipewire::registry::Listener,
+    pipewire::core::Listener,
 ) {
-    if let Some(node) = store.clone().borrow_mut().nodes.get_mut(&id) {
-        node.listener = Some(
-            node.proxy
-                .add_listener_local()
-                .info({
-                    let store = store.clone();
-                    let sender = sender.clone();
-                    move |info| {
-                        store.borrow_mut().update_node_info(info);
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                })
-                .param({
-                    move |_, type_, _, _, pod| {
-                        let mut store_borrow = store.borrow_mut();
-                        store_borrow.update_node_param(type_, id, pod);
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                })
-                .register(),
-        );
-        node.proxy
-            .enum_params(0, Some(ParamType::Props), 0, u32::MAX);
-        node.proxy.subscribe_params(&[ParamType::Props]);
-    }
+    let master = Master::new(store, pw_core, registry, sender);
+    let listener = master.registry_listener();
+    let remove_listener = master.registry_remove_listener();
+    let core_listeners = master.init_core_listeners();
+    (master, listener, remove_listener, core_listeners)
 }
 
-pub fn init_device_listeners(store: Rc<RefCell<Store>>, id: u32) {
-    if let Some(device) = store.clone().borrow_mut().devices.get_mut(&id) {
-        device.listener = Some(
-            device
-                .proxy
-                .add_listener_local()
-                .param({
-                    move |_seq, type_, index, _next, pod| {
-                        store
-                            .borrow_mut()
-                            .update_device_param(type_, id, index, pod);
-                    }
-                })
-                .register(),
-        );
-        device
-            .proxy
-            .enum_params(0, Some(ParamType::Route), 0, u32::MAX);
-        device.proxy.subscribe_params(&[ParamType::Route]);
-    }
-}
-
-/// Bind and listen for PipeWire metadata `default.audio.sink` changes.
-/// Stores the metadata proxy in `metadata_out` so it can be used to set the default sink.
-#[allow(clippy::too_many_arguments)]
-fn init_metadata_listener(
-    registry: &RegistryRc,
-    store: Rc<RefCell<Store>>,
-    sender: pipewire::channel::Sender<ToPipewireMessage>,
-    metadata_out: &Rc<RefCell<Option<Metadata>>>,
-    global: &pipewire::registry::GlobalObject<&pipewire::spa::utils::dict::DictRef>,
-) {
-    // Only bind the "default" metadata — it has default.audio.sink/source
-    let is_default = global
-        .props
-        .map(|p| p.get("metadata.name") == Some("default"))
-        .unwrap_or(false);
-    if !is_default {
-        return;
-    }
-
-    let Ok(metadata) = registry.bind::<Metadata, _>(global) else {
-        warn!("[PW] failed to bind metadata object {}", global.id);
-        return;
-    };
-    debug!("[PW] bound 'default' metadata object (id={})", global.id);
-    let listener = metadata
-        .add_listener_local()
-        .property({
-            let store = store.clone();
-            let sender = sender.clone();
-            move |_subject, key, _type, value| {
-                let parse_name = |v: &str| -> Option<String> {
-                    serde_json::from_str::<serde_json::Value>(v)
-                        .ok()
-                        .and_then(|v| v.get("name")?.as_str().map(String::from))
-                };
-                match key {
-                    Some("default.audio.sink") => {
-                        let name = value.and_then(parse_name);
-                        debug!("default.audio.sink changed: {name:?}");
-                        store.borrow_mut().default_sink_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                    Some("default.audio.source") => {
-                        let name = value.and_then(parse_name);
-                        debug!("default.audio.source changed: {name:?}");
-                        store.borrow_mut().default_source_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
-                    }
-                    _ => {}
-                }
-                0
-            }
-        })
-        .register();
-
-    // Store the proxy so we can call set_property later. Leak the listener.
-    *metadata_out.borrow_mut() = Some(metadata);
-    std::mem::forget(listener);
-}
-
+// Message handler closure is inherently a large match on 18 ToPipewireMessage variants.
+// Cannot be extracted into a separate function due to captured environment (master, store, etc.).
 #[allow(
     clippy::type_complexity,
     clippy::too_many_lines,
@@ -533,6 +42,7 @@ fn init_metadata_listener(
 pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
     peak_store: Arc<super::peak::PeakStore>,
+    filter_store: super::FilterHandleStore,
 ) -> Result<
     (
         JoinHandle<()>,
@@ -551,28 +61,9 @@ pub(super) fn init_mainloop(
         let receiver = to_pw_rx;
         let store = Rc::new(RefCell::new(Store::new()));
 
-        // Initialize PipeWire — using the Rc variants from pipewire-rs 0.9
-        // These are internally reference-counted and can be cloned freely.
-        let init_result = (|| -> Result<(MainLoopRc, ContextRc, CoreRc, RegistryRc), PwError> {
-            let mainloop = MainLoopRc::new(None)
-                .map_err(|e| PwError::ConnectionFailed(format!("mainloop init: {e}")))?;
-            let context = ContextRc::new(&mainloop, None)
-                .map_err(|e| PwError::ConnectionFailed(format!("context init: {e}")))?;
-            let pw_core = context
-                .connect_rc(Some(properties! {
-                    *MEDIA_CATEGORY => "Manager",
-                    *APP_ICON_NAME => OSG_APP_ID,
-                }))
-                .map_err(|e| PwError::ConnectionFailed(format!("core connect: {e}")))?;
-            let registry = pw_core
-                .get_registry_rc()
-                .map_err(|e| PwError::ConnectionFailed(format!("registry: {e}")))?;
-            Ok((mainloop, context, pw_core, registry))
-        })();
-        // If there was an error, report it and exit
+        let init_result = init_pipewire();
         let (mainloop, _context, pw_core, registry) = match init_result {
             Ok(result) => {
-                // Receiver dropped means caller already gave up — nothing we can do
                 let _ = init_status_tx.send(Ok(()));
                 result
             }
@@ -582,45 +73,103 @@ pub(super) fn init_mainloop(
             }
         };
 
-        // init registry listener
-        let master = Master::new(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
+        let (master, _registry_listener, _remove_listener, _core_listener) =
+            setup_master(store.clone(), pw_core.clone(), registry, to_pw_tx_clone);
 
-        let _listener = master.registry_listener();
-        let _remove_listener = master.registry_remove_listener();
-        let _core_listeners = master.init_core_listeners();
-
-        // Peak monitor streams — kept alive as long as monitoring is active.
-        // Each entry holds the StreamRc + listener (dropping them stops the stream).
-        let peak_streams: Rc<
-            RefCell<HashMap<u32, (StreamRc, pipewire::stream::StreamListener<()>)>>,
-        > = Rc::new(RefCell::new(HashMap::new()));
-
-        // Pending peak links: peak_stream_name → target_node_id.
-        // Resolved when the peak stream's node appears in the store with ports.
-        let pending_peak_links: Rc<RefCell<HashMap<String, u32>>> =
+        let startup_cleanup_done = Rc::new(RefCell::new(false));
+        let active_filters: Rc<RefCell<HashMap<String, super::filter::OsgFilter>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
         let _receiver = receiver.attach(mainloop.loop_(), {
             let mainloop = mainloop.clone();
             let store = store.clone();
             let pw_core = pw_core.clone();
-            let peak_streams = peak_streams.clone();
             let peak_store = peak_store.clone();
-            let pending_peak_links = pending_peak_links.clone();
+            let startup_cleanup_done = startup_cleanup_done.clone();
+            let active_filters = active_filters.clone();
             move |message| match message {
                 ToPipewireMessage::Update => {
-                    if !pending_peak_links.borrow().is_empty() {
-                        master.resolve_peak_links(&mut pending_peak_links.borrow_mut());
+                    // Instance-aware orphan cleanup: reap osg.* nodes from
+                    // crashed previous instances (different or missing osg.instance).
+                    if !*startup_cleanup_done.borrow() {
+                        *startup_cleanup_done.borrow_mut() = true;
+                        let s = store.borrow();
+                        let current_instance = s.instance_id;
+                        let orphans: Vec<u32> = s
+                            .nodes
+                            .iter()
+                            .filter(|(_, n)| {
+                                let Some(name) = n.identifier.node_name() else {
+                                    return false;
+                                };
+                                if !name.starts_with("osg.") {
+                                    return false;
+                                }
+                                // Check osg.instance property — reap if missing or stale
+                                let node_instance = n.identifier.osg_instance
+                                    .as_deref()
+                                    .and_then(|v| v.parse::<Ulid>().ok());
+                                match (node_instance, current_instance) {
+                                    // Node has our instance — keep (we just created it)
+                                    (Some(ni), Some(ci)) if ni == ci => false,
+                                    // Node has different instance or no instance — orphan
+                                    _ => true,
+                                }
+                            })
+                            .map(|(id, _)| *id)
+                            .collect();
+                        drop(s);
+                        for id in &orphans {
+                            master.registry.destroy_global(*id);
+                        }
+                        if !orphans.is_empty() {
+                            debug!(
+                                "[PW] cleaned {} orphaned osg nodes on startup",
+                                orphans.len()
+                            );
+                        }
+                    }
+                    for (key, filter) in active_filters.borrow().iter() {
+                        let (l, r) = filter.handle().peak();
+                        if l > 0.0 || r > 0.0 {
+                            if let Some(node_id) = filter.node_id() {
+                                peak_store.get_or_insert(node_id).store(l, r);
+                            }
+                            // Cell filter keys: "{ch_ulid}-to-{mix_ulid}"
+                            // Store peak under the cell sink's PW node ID for VU metering.
+                            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-") {
+                                let s = store.borrow();
+                                if let Some(&cell_pw_id) =
+                                    s.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
+                                {
+                                    peak_store.get_or_insert(cell_pw_id).store(l, r);
+                                }
+                            }
+                            // Mix filter keys: "mix.{ulid}" — store peak under the mix PW node.
+                            if let Some(ulid) = key
+                                .strip_prefix("mix.")
+                                .and_then(|s| s.parse::<Ulid>().ok())
+                            {
+                                let s = store.borrow();
+                                if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
+                                    n.identifier
+                                        .node_name()
+                                        .is_some_and(|name| name.contains(&ulid.to_string()))
+                                }) {
+                                    peak_store.get_or_insert(ch_pw_id).store(l, r);
+                                }
+                            }
+                        }
                     }
                     update_fn(Box::new(store.borrow().dump_graph()));
                 }
                 ToPipewireMessage::NodeVolume(id, volume) => {
-                    if let Err(err) = store.borrow_mut().set_node_volume(id, volume) {
+                    if let Err(err) = super::volume_ops::set_node_volume(&store.borrow(), id, volume) {
                         warn!("Error setting volume: {err:?}");
                     }
                 }
                 ToPipewireMessage::NodeMute(id, mute) => {
-                    if let Err(err) = store.borrow_mut().set_node_mute(id, mute) {
+                    if let Err(err) = super::volume_ops::set_node_mute(&store.borrow(), id, mute) {
                         warn!("Error setting mute: {err:?}");
                     }
                 }
@@ -644,8 +193,8 @@ pub(super) fn init_mainloop(
                         warn!("Error removing node links: {err:?}");
                     };
                 }
-                ToPipewireMessage::CreateGroupNode(name, id, kind) => {
-                    if let Err(err) = master.create_group_node(name, id, kind) {
+                ToPipewireMessage::CreateGroupNode(name, id, kind, instance_id) => {
+                    if let Err(err) = master.create_group_node(name, id, kind, instance_id) {
                         warn!("Error creating group node: {err:?}");
                     }
                 }
@@ -655,9 +204,6 @@ pub(super) fn init_mainloop(
                     }
                 }
                 ToPipewireMessage::SetDefaultSink(node_name, _node_id) => {
-                    // Write to default.configured.audio.sink — the user preference key.
-                    // WirePlumber watches this, applies it to default.audio.sink,
-                    // and persists the choice to disk. This is what wpctl set-default does.
                     if let Some(ref metadata) = *master.settings_metadata.borrow() {
                         let value = format!(r#"{{"name":"{node_name}"}}"#);
                         metadata.set_property(
@@ -671,21 +217,50 @@ pub(super) fn init_mainloop(
                         warn!("[PW] no metadata proxy for SetDefaultSink");
                     }
                 }
+                ToPipewireMessage::CreateStagingSink { instance_id } => {
+                    if let Err(err) = master.create_staging_sink(instance_id) {
+                        warn!("[PW] failed to create staging sink: {err:?}");
+                    }
+                }
                 ToPipewireMessage::CreateCellNode {
                     name,
-                    channel_node_id,
-                    mix_node_id,
+                    cell_id,
+                    channel_ulid,
+                    mix_ulid,
+                    instance_id,
                 } => {
                     if let Err(err) = super::cell::create_cell_node(
                         &master.pw_core,
                         &master.store,
                         super::cell::CellNodeArgs {
-                            name,
-                            channel_node_id,
-                            mix_node_id,
+                            name: name.clone(),
+                            cell_id,
+                            channel_ulid: channel_ulid.clone(),
+                            mix_ulid: mix_ulid.clone(),
+                            instance_id,
                         },
                     ) {
                         warn!("[PW] failed to create cell node: {err:?}");
+                    }
+                    let filter_key = format!("{channel_ulid}-to-{mix_ulid}");
+                    let filter_name = format!("osg.filter.{filter_key}");
+                    #[allow(unsafe_code)]
+                    let filter_result = unsafe {
+                        super::filter::OsgFilter::new(
+                            pw_core.as_raw_ptr(),
+                            &filter_name,
+                            &format!("EQ: {name}"),
+                        )
+                    };
+                    match filter_result {
+                        Ok(osg_filter) => {
+                            filter_store.insert(filter_key.clone(), osg_filter.handle().clone());
+                            active_filters
+                                .borrow_mut()
+                                .insert(filter_key.clone(), osg_filter);
+                            debug!("[PW] created resident cell filter '{filter_key}'");
+                        }
+                        Err(e) => warn!("[PW] failed to create cell filter '{filter_key}': {e}"),
                     }
                 }
                 ToPipewireMessage::RemoveCellNode { cell_node_id } => {
@@ -694,11 +269,7 @@ pub(super) fn init_mainloop(
                         &master.registry,
                         cell_node_id,
                     );
-                    super::cell::remove_all_sink_links(
-                        &master.store,
-                        &master.registry,
-                        cell_node_id,
-                    );
+                    super::cell::remove_all_sink_links(&master.store, &master.registry, cell_node_id);
                     master.registry.destroy_global(cell_node_id);
                     debug!("[PW] removed cell node {cell_node_id}");
                 }
@@ -706,73 +277,137 @@ pub(super) fn init_mainloop(
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // First disconnect the stream from wherever it's currently linked
-                    super::cell::remove_all_source_links(
-                        &master.store,
-                        &master.registry,
-                        stream_node_id,
-                    );
-                    // Then create links to the target channel node
-                    if let Err(err) =
-                        master.create_node_links(stream_node_id, target_node_id)
-                    {
-                        warn!(
-                            "[PW] failed to create links {stream_node_id} -> {target_node_id}: {err:?}"
+                    master.remove_stale_stream_links(stream_node_id, target_node_id);
+                    if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                        metadata.set_property(
+                            stream_node_id,
+                            "target.node",
+                            Some("Spa:Id"),
+                            Some(&target_node_id.to_string()),
                         );
+                    }
+                    if let Err(err) = master.create_node_links(stream_node_id, target_node_id) {
+                        warn!("[PW] redirect {stream_node_id} -> {target_node_id}: {err:?}");
                     } else {
-                        debug!(
-                            "[PW] redirect stream {stream_node_id} -> node {target_node_id}"
-                        );
+                        debug!("[PW] redirect stream {stream_node_id} -> node {target_node_id}");
                     }
                 }
                 ToPipewireMessage::ClearRedirect {
                     stream_node_id,
                     target_node_id,
                 } => {
-                    // Remove links between stream and channel. WirePlumber will
-                    // auto-link the stream back to the default sink.
-                    if let Err(err) =
-                        master.remove_node_links(stream_node_id, target_node_id)
-                    {
+                    if let Some(ref metadata) = *master.settings_metadata.borrow() {
+                        metadata.set_property(stream_node_id, "target.node", None, None);
+                    }
+                    if let Err(err) = master.remove_node_links(stream_node_id, target_node_id) {
                         debug!(
                             "[PW] no links to clear for {stream_node_id} -> {target_node_id}: {err:?}"
                         );
                     } else {
-                        debug!(
-                            "[PW] cleared redirect {stream_node_id} -> {target_node_id}"
-                        );
+                        debug!("[PW] cleared redirect {stream_node_id} -> {target_node_id}");
                     }
                 }
-                ToPipewireMessage::StartPeakMonitor(node_id) => {
-                    if peak_streams.borrow().contains_key(&node_id) {
-                        return;
-                    }
-                    match super::peak::create_peak_stream(
-                        pw_core.clone(),
-                        node_id,
-                        &peak_store,
-                    ) {
-                        Ok((stream, listener, peak_name)) => {
-                            pending_peak_links.borrow_mut().insert(peak_name, node_id);
-                            peak_streams
+                ToPipewireMessage::CreateFilter { filter_key, name } => {
+                    let core_ptr = pw_core.as_raw_ptr();
+                    #[allow(unsafe_code)]
+                    let result = unsafe {
+                        super::filter::OsgFilter::new(
+                            core_ptr,
+                            &format!("osg.filter.{filter_key}"),
+                            &name,
+                        )
+                    };
+                    match result {
+                        Ok(osg_filter) => {
+                            filter_store.insert(filter_key.clone(), osg_filter.handle().clone());
+                            active_filters
                                 .borrow_mut()
-                                .insert(node_id, (stream, listener));
+                                .insert(filter_key.clone(), osg_filter);
+                            debug!("[PW] created inline filter '{filter_key}' ({name})");
                         }
-                        Err(e) => warn!("[PW] peak monitor failed for {node_id}: {e}"),
+                        Err(e) => {
+                            warn!("[PW] failed to create filter '{filter_key}': {e}");
+                        }
                     }
                 }
-                ToPipewireMessage::StopPeakMonitor(node_id) => {
-                    if peak_streams.borrow_mut().remove(&node_id).is_some() {
-                        peak_store.remove(node_id);
-                        debug!("[PW] peak monitor stopped for node {node_id}");
+                ToPipewireMessage::RemoveFilter { filter_key } => {
+                    if active_filters.borrow_mut().remove(&filter_key).is_some() {
+                        filter_store.remove(&filter_key);
+                        debug!("[PW] removed filter '{filter_key}'");
                     }
                 }
-                ToPipewireMessage::Exit => mainloop.quit(),
+                ToPipewireMessage::UpdateFilterEq { filter_key, eq } => {
+                    if let Some(handle) = filter_store.get(&filter_key) {
+                        handle.set_eq(&eq);
+                        debug!("[PW] updated EQ on filter '{filter_key}'");
+                    }
+                }
+                ToPipewireMessage::UpdateFilterEffects { filter_key, effects } => {
+                    if let Some(handle) = filter_store.get(&filter_key) {
+                        let ms_to_s = |ms: f32| ms / 1000.0;
+                        let params = super::filter::EffectsParams {
+                            compressor: super::filter::CompressorParams {
+                                enabled: effects.compressor.enabled,
+                                threshold: effects.compressor.threshold,
+                                ratio: effects.compressor.ratio,
+                                attack: ms_to_s(effects.compressor.attack),
+                                release: ms_to_s(effects.compressor.release),
+                                makeup: effects.compressor.makeup,
+                            },
+                            gate: super::filter::GateParams {
+                                enabled: effects.gate.enabled,
+                                threshold: effects.gate.threshold,
+                                hold: ms_to_s(effects.gate.hold),
+                                attack: ms_to_s(effects.gate.attack),
+                                release: ms_to_s(effects.gate.release),
+                            },
+                            de_esser: super::filter::DeEsserParams {
+                                enabled: effects.de_esser.enabled,
+                                frequency: effects.de_esser.frequency,
+                                threshold: effects.de_esser.threshold,
+                                reduction: effects.de_esser.reduction,
+                            },
+                            limiter: super::filter::LimiterParams {
+                                enabled: effects.limiter.enabled,
+                                ceiling: effects.limiter.ceiling,
+                                release: ms_to_s(effects.limiter.release),
+                            },
+                            boost: effects.boost,
+                            smart_volume: super::filter::SmartVolumeParams {
+                                enabled: effects.smart_volume.enabled,
+                                target_db: effects.smart_volume.target_db,
+                                speed: effects.smart_volume.speed,
+                                max_gain_db: effects.smart_volume.max_gain_db,
+                            },
+                            spatial: super::filter::SpatialAudioParams {
+                                enabled: effects.spatial.enabled,
+                                crossfeed: effects.spatial.crossfeed,
+                                width: effects.spatial.width,
+                            },
+                        };
+                        handle.set_effects(params);
+                        debug!("[PW] updated effects on filter '{filter_key}'");
+                    }
+                }
+                ToPipewireMessage::Exit => {
+                    let s = store.borrow();
+                    for (&node_id, node) in &s.nodes {
+                        if node
+                            .identifier
+                            .node_name()
+                            .is_some_and(|n| n.starts_with("osg."))
+                        {
+                            master.registry.destroy_global(node_id);
+                        }
+                    }
+                    drop(s);
+                    debug!("[PW] cleaned up osg nodes on shutdown");
+                    mainloop.quit();
+                }
             }
         });
 
         debug!("PipeWire mainloop initialization done");
-
         mainloop.run();
     });
 

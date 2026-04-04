@@ -50,6 +50,10 @@ pub mod parse {
             #[allow(clippy::expect_used)]
             Pod::from_bytes(&self.0).expect("internal bytes are known well-formed")
         }
+
+        pub fn bytes(&self) -> &[u8] {
+            &self.0
+        }
     }
 
     pub trait PodValueExt {
@@ -177,12 +181,21 @@ impl NodeProps {
 }
 
 /// `Props '{ channelVolumes: <channel_volumes> }'`
+///
+/// PipeWire expects stereo (2 channels) for volume props. Mono input is
+/// expanded to stereo by duplicating; empty input defaults to unity gain.
 pub fn build_node_volume_pod(channel_volumes: Vec<f32>) -> (ParamType, PodBytes) {
+    let vols = match channel_volumes.len() {
+        0 => vec![1.0, 1.0],
+        1 => vec![channel_volumes[0], channel_volumes[0]],
+        _ => channel_volumes,
+    };
     let pod = Value::Object(object! {
         SpaTypes::ObjectParamProps,
         ParamType::Props,
-        Property::new(SPA_PROP_channelVolumes, Value::ValueArray(ValueArray::Float(channel_volumes))),
-    }).serialize();
+        Property::new(SPA_PROP_channelVolumes, Value::ValueArray(ValueArray::Float(vols))),
+    })
+    .serialize();
     (ParamType::Props, pod)
 }
 

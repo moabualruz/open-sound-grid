@@ -1,9 +1,18 @@
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
-import { Volume2, VolumeX } from "lucide-solid";
-import type { EndpointDescriptor, Endpoint, MixerLink } from "../types";
+import { useMonitor } from "../stores/monitorStore";
+import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
+import VuMeter from "./VuMeter";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
+import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
+
+/** Imperative actions exposed to the parent grid for keyboard shortcuts. */
+export interface MatrixCellActions {
+  toggleMute: () => void;
+  adjustVolume: (delta: number) => void;
+}
 
 interface MatrixCellProps {
   link: MixerLink | null;
@@ -13,20 +22,58 @@ interface MatrixCellProps {
   mixColor: string;
   peakLeft?: number;
   peakRight?: number;
+  onOpenEq?: () => void;
+  focused?: boolean;
+  /** Parent registers to receive imperative cell actions. */
+  onActionsReady?: (actions: MatrixCellActions) => void;
 }
-
-const DEBOUNCE_MS = 16;
 
 export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const { settings } = useMixerSettings();
+  const monitor = useMonitor();
   const [cellVol, setCellVol] = createSignal(1);
   const [cellL, setCellL] = createSignal(1);
   const [cellR, setCellR] = createSignal(1);
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const [cellMuted, setCellMuted] = createSignal(false);
+  let preMuteVol: { vol: number; left: number; right: number } | null = null;
   let userDragging = false;
 
+  const sendDebounced = useVolumeDebounce((v) => {
+    send({
+      type: "setLinkVolume",
+      source: props.sourceDescriptor,
+      target: props.sinkDescriptor,
+      volume: v,
+    });
+    userDragging = false;
+  });
+
+  const sendStereoDebounced = useVolumeDebounce((_v) => {
+    send({
+      type: "setLinkStereoVolume",
+      source: props.sourceDescriptor,
+      target: props.sinkDescriptor,
+      left: cellL(),
+      right: cellR(),
+    });
+    userDragging = false;
+  });
+
   const isStereo = () => settings.stereoMode === "stereo";
+
+  // Monitor state: is this cell being monitored, or muted by monitoring?
+  const isMonitored = () =>
+    monitor.state.monitoredCell !== null &&
+    JSON.stringify(monitor.state.monitoredCell!.source) ===
+      JSON.stringify(props.sourceDescriptor) &&
+    JSON.stringify(monitor.state.monitoredCell!.target) === JSON.stringify(props.sinkDescriptor);
+
+  // A cell is muted by monitoring if monitoring is active and this is not the monitored cell
+  const mutedByMonitor = () =>
+    monitor.state.monitoredCell !== null &&
+    props.link !== null && // only consider linked cells
+    !isMonitored();
 
   // Sync from backend — but not while the user is actively dragging the slider
   createEffect(() => {
@@ -36,13 +83,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     setCellR(props.link?.cellVolumeRight ?? 1);
   });
 
-  // Cell is "muted" when no link exists (unrouted) or channel is muted
+  // Cell is "muted" when no link exists, channel is muted, or cell is muted
   const isLinked = () => props.link !== null;
   const channelMuted = () => {
     const s = props.sourceEndpoint?.volumeLockedMuted;
     return s === "mutedLocked" || s === "mutedUnlocked" || s === "muteMixed";
   };
-  const isMuted = () => !isLinked() || channelMuted();
+  const isMuted = () => !isLinked() || channelMuted() || cellMuted();
 
   const masterVol = () => props.sourceEndpoint?.volume ?? 1;
   const masterL = () => props.sourceEndpoint?.volumeLeft ?? 1;
@@ -66,16 +113,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     setCellVol(value);
     setCellL(value);
     setCellR(value);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setLinkVolume",
-        source: props.sourceDescriptor,
-        target: props.sinkDescriptor,
-        volume: value,
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendDebounced(value);
   }
 
   function handleStereoInput(channel: "left" | "right", value: number) {
@@ -84,17 +122,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     if (channel === "left") setCellL(value);
     else setCellR(value);
     setCellVol((cellL() + cellR()) / 2);
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      send({
-        type: "setLinkStereoVolume",
-        source: props.sourceDescriptor,
-        target: props.sinkDescriptor,
-        left: cellL(),
-        right: cellR(),
-      });
-      userDragging = false;
-    }, DEBOUNCE_MS);
+    sendStereoDebounced(value);
   }
 
   function handleWheel(e: WheelEvent) {
@@ -104,40 +132,77 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     handleInput(next);
   }
 
-  function toggleRoute() {
-    if (isLinked()) {
-      send({ type: "removeLink", source: props.sourceDescriptor, target: props.sinkDescriptor });
+  function toggleCellMute() {
+    if (!isLinked()) return;
+    if (cellMuted()) {
+      // Unmute: restore cached volume
+      setCellMuted(false);
+      const v = preMuteVol ?? { vol: 1, left: 1, right: 1 };
+      preMuteVol = null;
+      setCellVol(v.vol);
+      setCellL(v.left);
+      setCellR(v.right);
+      send({
+        type: "setLinkStereoVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        left: v.left,
+        right: v.right,
+      });
     } else {
-      send({ type: "link", source: props.sourceDescriptor, target: props.sinkDescriptor });
+      // Mute: cache current volume, set 0
+      preMuteVol = { vol: cellVol(), left: cellL(), right: cellR() };
+      setCellMuted(true);
+      setCellVol(0);
+      setCellL(0);
+      setCellR(0);
+      send({
+        type: "setLinkVolume",
+        source: props.sourceDescriptor,
+        target: props.sinkDescriptor,
+        volume: 0,
+      });
     }
   }
 
-  onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
+  // Expose imperative actions to parent for keyboard shortcuts
+  function adjustVolume(delta: number) {
+    const next = Math.max(0, Math.min(1, cellVol() + delta));
+    handleInput(next);
+  }
+
+  createEffect(() => {
+    props.onActionsReady?.({ toggleMute: toggleCellMute, adjustVolume });
   });
 
   return (
-    <div class="group min-w-[10rem] flex-1">
+    <div class="group h-full">
       <div
         style={{ "--mix-accent": props.mixColor }}
-        class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-colors duration-150 ${
-          !isLinked()
-            ? "border-border/30 bg-bg-primary/50 opacity-40 hover:opacity-70"
-            : channelMuted()
-              ? "border-vu-hot/20 bg-vu-hot/5"
-              : "border-border bg-bg-elevated"
+        class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
+          props.focused ? "ring-2 ring-blue-500" : ""
+        } ${
+          isMonitored()
+            ? "border-accent bg-bg-elevated ring-2 ring-accent/40"
+            : mutedByMonitor()
+              ? "border-border/30 bg-bg-primary/50 opacity-30"
+              : !isLinked()
+                ? "border-dashed border-border/50 bg-bg-elevated"
+                : channelMuted()
+                  ? "border-vu-hot/20 bg-vu-hot/5"
+                  : "border-border bg-bg-elevated"
         }`}
       >
         {/* Per-cell route toggle */}
         <button
           type="button"
-          onClick={toggleRoute}
-          title={isLinked() ? "Disconnect route" : "Connect route"}
-          aria-label={isLinked() ? "Disconnect route" : "Connect route"}
+          onClick={toggleCellMute}
+          title={cellMuted() ? "Unmute cell" : "Mute cell"}
+          aria-label={cellMuted() ? "Unmute cell" : "Mute cell"}
           class={`shrink-0 transition-colors duration-150 ${
             !isLinked()
               ? "text-text-muted/30 hover:text-text-muted"
-              : channelMuted()
+              : isMuted()
                 ? "text-vu-hot"
                 : "text-text-muted hover:text-text-primary"
           }`}
@@ -253,6 +318,30 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             </Show>
           </div>
         </Show>
+
+        {/* EQ button — visible on hover when route is active */}
+        <Show when={isLinked()}>
+          <button
+            type="button"
+            onClick={() => props.onOpenEq?.()}
+            class={`shrink-0 transition-colors duration-150 ${
+              isMonitored()
+                ? "text-accent"
+                : "text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent"
+            }`}
+            title="EQ & Effects"
+            aria-label="EQ & Effects"
+          >
+            <Show when={isMonitored()} fallback={<SlidersVertical size={12} />}>
+              <Headphones size={12} />
+            </Show>
+          </button>
+        </Show>
+      </div>
+
+      {/* VU meter — reads peak levels from the cell's PipeWire node */}
+      <div class="px-3 pb-1">
+        <VuMeter nodeId={props.link?.cellNodeId ?? undefined} />
       </div>
     </div>
   );

@@ -2,8 +2,18 @@ import { Show, For, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import { Headphones, Radio, Film, MessageCircle, Speaker, X, ChevronDown } from "lucide-solid";
-import type { EndpointDescriptor, Endpoint, PwDevice, PwNode } from "../types";
+import {
+  Headphones,
+  Radio,
+  Film,
+  MessageCircle,
+  Speaker,
+  X,
+  ChevronDown,
+  SlidersVertical,
+} from "lucide-solid";
+import type { EndpointDescriptor, Endpoint } from "../types/session";
+import type { PwDevice, PwNode } from "../types/graph";
 
 const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
 
@@ -24,6 +34,7 @@ interface MixHeaderProps {
   usedDeviceIds: Set<string>;
   onRemove: () => void;
   onSelectOutput: (deviceId: string | null) => void;
+  onOpenEq?: () => void;
   dragHandle?: () => JSX.Element;
 }
 
@@ -119,7 +130,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
   };
 
   return (
-    <div class="relative flex min-w-[10rem] flex-1 flex-col rounded-t-lg bg-bg-elevated">
+    <div class="relative flex flex-col rounded-t-lg bg-bg-elevated">
       <div class="h-[3px] w-full rounded-t-lg" style={{ "background-color": props.color }} />
       <div class="flex items-center gap-1.5 px-2 py-2">
         <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
@@ -162,6 +173,15 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         </div>
         <button
           type="button"
+          onClick={() => props.onOpenEq?.()}
+          class="flex-shrink-0 text-text-muted/60 transition-colors duration-150 hover:text-accent"
+          aria-label="EQ & Effects"
+          title="EQ & Effects"
+        >
+          <SlidersVertical class="h-[12px] w-[12px]" />
+        </button>
+        <button
+          type="button"
           onClick={() => props.onRemove()}
           class="ml-auto flex-shrink-0 text-text-muted transition-colors duration-150 hover:text-vu-hot"
           aria-label="Remove mix"
@@ -173,7 +193,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
       <Show when={showOutputPicker()}>
         <div class="fixed inset-0 z-40" onClick={() => setShowOutputPicker(false)} />
         <div
-          class="fixed z-50 w-56 rounded-lg border border-border bg-bg-elevated shadow-xl"
+          class="fixed z-50 w-max min-w-56 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg-elevated shadow-xl"
           style={{ top: `${dropdownPos().top}px`, left: `${dropdownPos().left}px` }}
           onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && setShowOutputPicker(false)}
         >
@@ -204,7 +224,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
                   }`}
                 >
                   <Speaker size={14} class="shrink-0 text-text-muted" />
-                  <span class="flex-1 truncate">{dev.nodeName}</span>
+                  <span class="flex-1">{dev.nodeName}</span>
                 </button>
               )}
             </For>

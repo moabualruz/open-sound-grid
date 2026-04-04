@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { Plus, Headphones, Radio, Film, MessageCircle, Speaker, PenLine } from "lucide-solid";
 import type { Component } from "solid-js";
-import type { EndpointDescriptor, Endpoint } from "../types";
+import { findEndpoint } from "./mixerUtils";
 
 type IconComp = Component<{ size: number; class?: string }>;
 
@@ -14,13 +14,6 @@ const MIX_TEMPLATES: { name: string; icon: IconComp }[] = [
   { name: "Chat", icon: MessageCircle as IconComp },
   { name: "Aux", icon: Speaker as IconComp },
 ];
-
-function findEndpoint(
-  endpoints: [EndpointDescriptor, Endpoint][],
-  desc: EndpointDescriptor,
-): Endpoint | undefined {
-  return endpoints.find(([d]) => JSON.stringify(d) === JSON.stringify(desc))?.[1];
-}
 
 interface MixCreatorProps {
   maxMixes: number;

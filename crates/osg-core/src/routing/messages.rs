@@ -2,7 +2,9 @@
 //
 // Messages flowing through the routing layer.
 
-use crate::graph::{AppAssignment, AppId, ChannelId, ChannelKind, EndpointDescriptor};
+use crate::graph::{
+    AppAssignment, AppId, ChannelId, ChannelKind, EffectsConfig, EndpointDescriptor, EqConfig,
+};
 use crate::pw::PortKind;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +46,14 @@ pub enum StateMsg {
     AssignApp(ChannelId, AppAssignment),
     /// Unassign an app from a channel — clear target.object, return to default sink.
     UnassignApp(ChannelId, AppAssignment),
+    /// Set parametric EQ configuration for an endpoint (channel or mix).
+    SetEq(EndpointDescriptor, EqConfig),
+    /// Set parametric EQ configuration for a per-route cell.
+    SetCellEq(EndpointDescriptor, EndpointDescriptor, EqConfig),
+    /// Set effects chain configuration for an endpoint (channel or mix).
+    SetEffects(EndpointDescriptor, EffectsConfig),
+    /// Set effects chain configuration for a per-route cell.
+    SetCellEffects(EndpointDescriptor, EndpointDescriptor, EffectsConfig),
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +79,8 @@ pub enum ReducerMsg {
     Update(StateMsg),
     GraphUpdate(Box<AudioGraph>),
     SettingsChanged,
+    /// Set the instance ULID for ownership tagging on created PW nodes.
+    SetInstanceId(ulid::Ulid),
     Save {
         clear_state: bool,
         clear_settings: bool,

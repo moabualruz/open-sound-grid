@@ -135,16 +135,28 @@ async fn handle_ws_session(mut socket: ws::WebSocket, state: Arc<AppState>) {
         return;
     }
 
-    // Stream session updates
+    // Rate-limited session broadcast (30 fps). Buffer the latest state change
+    // and send on tick to avoid flooding the frontend during rapid mutations
+    // (e.g., volume slider drag producing 60+ updates/s).
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(33));
+    let mut pending = false;
     loop {
-        if rx.changed().await.is_err() {
-            break;
-        }
-        let session = rx.borrow_and_update().clone();
-        if let Ok(json) = serde_json::to_string(&*session)
-            && socket.send(ws::Message::Text(json.into())).await.is_err()
-        {
-            break;
+        tokio::select! {
+            result = rx.changed() => {
+                if result.is_err() {
+                    break;
+                }
+                pending = true;
+            }
+            _ = interval.tick(), if pending => {
+                let session = rx.borrow_and_update().clone();
+                if let Ok(json) = serde_json::to_string(&*session)
+                    && socket.send(ws::Message::Text(json.into())).await.is_err()
+                {
+                    break;
+                }
+                pending = false;
+            }
         }
     }
 }
@@ -193,32 +205,10 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(40)); // 25 Hz
 
     // Auto-start peak monitors for all audio nodes (channels, mixes, and app streams)
-    {
-        let graph = state.core.snapshot();
-        // Monitor OSG group nodes (channels/mixes)
-        for group_node in graph.group_nodes.values() {
-            if let Some(pw_id) = group_node.id {
-                state.core.start_peak_monitor(pw_id);
-            }
-        }
-        // Monitor all nodes with audio ports (app streams, hardware),
-        // but skip our own peak-monitor streams to avoid infinite recursion
-        for (&node_id, node) in &graph.nodes {
-            if node
-                .identifier
-                .node_name()
-                .is_some_and(|n: &str| n.starts_with("osg.peak."))
-            {
-                continue;
-            }
-            let has_audio = node.ports.iter().any(|(_, kind, _)| {
-                *kind == osg_core::pw::PortKind::Source || *kind == osg_core::pw::PortKind::Sink
-            });
-            if has_audio {
-                state.core.start_peak_monitor(node_id);
-            }
-        }
-    }
+    // Peak streams disabled on initial connect — app streams may not
+    // exist yet. The reconciler handles peak monitoring for app streams
+    // as they appear. We do NOT monitor hardware or osg.* nodes.
+    {}
 
     loop {
         interval.tick().await;

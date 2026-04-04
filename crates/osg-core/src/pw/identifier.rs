@@ -27,6 +27,15 @@ pub struct NodeIdentifier {
     media_title: Option<String>,
     #[serde(skip)]
     device_id: Option<u32>,
+    /// `device.api` — "alsa" for hardware, absent for virtual/app.
+    #[serde(skip)]
+    pub device_api: Option<String>,
+    /// `device.form-factor` — "microphone", "headset", "webcam", "internal", etc.
+    #[serde(skip)]
+    pub device_form_factor: Option<String>,
+    /// `media.class` — "Audio/Source", "Stream/Output/Audio", etc.
+    #[serde(skip)]
+    pub media_class: Option<String>,
     #[serde(skip)]
     route_name: Option<String>,
     #[serde(skip)]
@@ -41,6 +50,9 @@ pub struct NodeIdentifier {
     human_name_sink: OnceLock<String>,
     #[serde(skip)]
     details_: OnceLock<Option<String>>,
+    /// `osg.instance` — ULID stamped by the OSG instance that created this node.
+    #[serde(skip)]
+    pub osg_instance: Option<String>,
 }
 
 impl NodeIdentifier {
@@ -56,6 +68,9 @@ impl NodeIdentifier {
             media_name: props.get(*OBJECT_PATH).map(ToOwned::to_owned),
             media_title: props.get(*MEDIA_TITLE).map(ToOwned::to_owned),
             device_id: props.get(*DEVICE_ID).and_then(|id| id.parse().ok()),
+            device_api: props.get("device.api").map(ToOwned::to_owned),
+            device_form_factor: props.get("device.form-factor").map(ToOwned::to_owned),
+            media_class: props.get(*MEDIA_CLASS).map(ToOwned::to_owned),
             route_name: None,
             app_icon_name: props.get(*APP_ICON_NAME).map(ToOwned::to_owned),
             icon_name_: OnceLock::new(),
@@ -63,6 +78,7 @@ impl NodeIdentifier {
             human_name_source: OnceLock::new(),
             human_name_sink: OnceLock::new(),
             details_: OnceLock::new(),
+            osg_instance: props.get("osg.instance").map(ToOwned::to_owned),
         }
     }
 
@@ -78,6 +94,9 @@ impl NodeIdentifier {
             media_name: None,
             media_title: None,
             device_id: None,
+            device_api: None,
+            device_form_factor: None,
+            media_class: None,
             route_name: None,
             app_icon_name: None,
             icon_name_: OnceLock::new(),
@@ -85,6 +104,7 @@ impl NodeIdentifier {
             human_name_source: OnceLock::new(),
             human_name_sink: OnceLock::new(),
             details_: OnceLock::new(),
+            osg_instance: None,
         }
     }
 
@@ -203,5 +223,32 @@ impl NodeIdentifier {
         } else {
             false
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Domain conversion: NodeIdentifier → NodeIdentity
+// ---------------------------------------------------------------------------
+
+impl From<&NodeIdentifier> for crate::graph::NodeIdentity {
+    fn from(id: &NodeIdentifier) -> Self {
+        Self {
+            node_name: id.node_name.clone(),
+            node_nick: id.node_nick.clone(),
+            node_description: id.node_description.clone(),
+            object_path: id.object_path.clone(),
+            application_name: id.application_name.clone(),
+            binary_name: id.binary_name.clone(),
+            media_class: id.media_class.clone(),
+            device_api: id.device_api.clone(),
+            device_form_factor: id.device_form_factor.clone(),
+            osg_instance: id.osg_instance.clone(),
+        }
+    }
+}
+
+impl From<NodeIdentifier> for crate::graph::NodeIdentity {
+    fn from(id: NodeIdentifier) -> Self {
+        Self::from(&id)
     }
 }

@@ -1,28 +1,28 @@
 @import "tailwindcss";
 
 @theme {
-  /* Surface hierarchy — warm neutrals, not pure gray */
-  --color-bg-primary: #1a1a1a;
-  --color-bg-secondary: #1e1e1e;
-  --color-bg-elevated: #262626;
-  --color-bg-hover: #2e2e2e;
-  --color-bg-empty-cell: #222222;
+  /* Theme-switchable surface colors (resolved via CSS custom properties below) */
+  --color-bg-primary: var(--osg-bg-primary);
+  --color-bg-secondary: var(--osg-bg-secondary);
+  --color-bg-elevated: var(--osg-bg-elevated);
+  --color-bg-hover: var(--osg-bg-hover);
+  --color-bg-empty-cell: var(--osg-bg-empty-cell);
 
-  /* Text — warm white to muted */
-  --color-text-primary: #e8e4df;
-  --color-text-secondary: #a39e96;
-  --color-text-muted: #6b6660;
+  /* Theme-switchable text */
+  --color-text-primary: var(--osg-text-primary);
+  --color-text-secondary: var(--osg-text-secondary);
+  --color-text-muted: var(--osg-text-muted);
 
-  /* Accent — Claude coral + blue */
+  /* Accent — Claude coral + blue (shared across themes) */
   --color-accent: #da7756;
   --color-accent-hover: #c46a4b;
   --color-accent-secondary: #7c9cbf;
 
-  /* Borders */
-  --color-border: #2a2a2a;
+  /* Theme-switchable borders */
+  --color-border: var(--osg-border);
   --color-border-active: #da7756;
 
-  /* VU meter colors + gradient */
+  /* VU meter colors + gradient (shared) */
   --color-vu-safe: #4caf50;
   --color-vu-warm: #ff9800;
   --color-vu-hot: #f44336;
@@ -35,12 +35,18 @@
     #f44336 100%
   );
 
-  /* Mix column colors (semantic) */
+  /* Mix column colors (semantic, shared) */
   --color-mix-monitor: #7c9cbf;
   --color-mix-stream: #da7756;
   --color-mix-vod: #8b6fb0;
   --color-mix-chat: #5daa68;
   --color-mix-aux: #c4a35a;
+
+  /* Source type colors (shared) */
+  --color-source-mic: #e06090;
+  --color-source-app: #b07fe0;
+  --color-source-cell: #40b0a0;
+  --color-source-mix: #5090e0;
 
   /* Typography */
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -49,6 +55,32 @@
   /* Easing — smooth deceleration, no bounce */
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── Light theme (default when .dark is absent) ── */
+:root {
+  --osg-bg-primary: #f5f3f0;
+  --osg-bg-secondary: #eae7e3;
+  --osg-bg-elevated: #ffffff;
+  --osg-bg-hover: #e0ddd8;
+  --osg-bg-empty-cell: #ede9e5;
+  --osg-text-primary: #1a1816;
+  --osg-text-secondary: #5c5650;
+  --osg-text-muted: #9a948d;
+  --osg-border: #d6d2cc;
+}
+
+/* ── Dark theme ── */
+.dark {
+  --osg-bg-primary: #1a1a1a;
+  --osg-bg-secondary: #1e1e1e;
+  --osg-bg-elevated: #262626;
+  --osg-bg-hover: #2e2e2e;
+  --osg-bg-empty-cell: #222222;
+  --osg-text-primary: #e8e4df;
+  --osg-text-secondary: #a39e96;
+  --osg-text-muted: #6b6660;
+  --osg-border: #2a2a2a;
 }
 
 /* Base */
@@ -74,7 +106,7 @@ body {
   outline: none;
 }
 
-/* Scrollbar — dark theme */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

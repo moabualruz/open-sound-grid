@@ -16,11 +16,11 @@ use pipewire::{
 };
 
 use super::{
-    AudioGraph, PwError,
+    AudioGraph,
     object::{
         Client, Device, EndpointId, GroupNode, Link, Node, ObjectConvertError, Port, PortKind,
     },
-    pod::{DeviceActiveRoute, NodeProps, build_node_mute_pod, build_node_volume_pod},
+    pod::{DeviceActiveRoute, NodeProps},
 };
 
 /// Wrapper to hold cell node proxies alive without requiring Debug.
@@ -61,7 +61,11 @@ pub(super) struct Store {
     /// Not Debug because ProxyListener doesn't implement it.
     pub(super) cell_proxies: CellProxies,
     /// Map (channel_node_id, mix_node_id) → cell_node_pw_id for volume control.
-    pub(super) cell_node_ids: HashMap<(u32, u32), u32>,
+    pub(super) cell_node_ids: HashMap<(String, String), u32>,
+    /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
+    pub(super) staging_node_id: Option<u32>,
+    /// ULID of the current OSG instance. Set after CreateStagingSink.
+    pub(super) instance_id: Option<ulid::Ulid>,
 }
 
 impl Store {
@@ -78,6 +82,8 @@ impl Store {
             default_source_name: None,
             cell_proxies: CellProxies::new(),
             cell_node_ids: HashMap::new(),
+            staging_node_id: None,
+            instance_id: None,
         }
     }
 
@@ -293,21 +299,20 @@ impl Store {
         Ok(())
     }
 
-    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its param event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its param event
     pub(super) fn update_node_param(&mut self, _type_: ParamType, id: u32, pod: Option<&Pod>) {
         // abort if no pod is available
         let Some(pod) = pod else {
             return;
         };
 
-        let node = self
-            .nodes
-            .get_mut(&id)
-            .expect("node must exist when receiving its param update");
+        let node = self.nodes.get_mut(&id).expect(&format!(
+            "node {id} must exist when receiving its param update"
+        ));
 
         // deserialize the pod
         let (_, value) = PodDeserializer::deserialize_any_from(pod.as_bytes())
-            .expect("PW-provided pod bytes must be deserializable");
+            .expect(&format!("pod bytes from node {id} must be deserializable"));
 
         let node_props = NodeProps::new(value);
 
@@ -319,15 +324,15 @@ impl Store {
         }
     }
 
-    #[allow(clippy::expect_used)] // PW guarantees the node exists when dispatching its info event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its info event
     pub(super) fn update_node_info(&mut self, node_info: &NodeInfoRef) {
         let Some(props) = node_info.props() else {
             return;
         };
-        let node = self
-            .nodes
-            .get_mut(&node_info.id())
-            .expect("node must exist when receiving its param update");
+        let node = self.nodes.get_mut(&node_info.id()).expect(&format!(
+            "node {} must exist when receiving its info update",
+            node_info.id()
+        ));
         if let EndpointId::Device { device_index, .. } = &mut node.endpoint
             && let Some(idx) = props
                 .get("card.profile.device")
@@ -338,72 +343,7 @@ impl Store {
         node.identifier.update_from_props(props);
     }
 
-    pub(super) fn set_node_volume(
-        &self,
-        id: u32,
-        channel_volumes: Vec<f32>,
-    ) -> Result<(), PwError> {
-        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
-
-        if let EndpointId::Device {
-            id: device_id,
-            device_index,
-        } = node.endpoint
-        {
-            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
-            let device = self
-                .devices
-                .get(&device_id)
-                .ok_or(PwError::DeviceNotFound(device_id))?;
-            let route = device
-                .active_routes
-                .iter()
-                .find(|route| route.device_index == device_index)
-                .ok_or(PwError::RouteNotFound {
-                    device_id,
-                    device_index,
-                })?;
-            let (param_type, pod) = route.build_device_volume_pod(channel_volumes);
-            device.proxy.set_param(param_type, 0, pod.pod());
-        } else {
-            let (param_type, pod) = build_node_volume_pod(channel_volumes);
-            node.proxy.set_param(param_type, 0, pod.pod());
-            node.proxy.enum_params(7, Some(ParamType::Props), 0, 1);
-        }
-        Ok(())
-    }
-
-    pub(super) fn set_node_mute(&self, id: u32, mute: bool) -> Result<(), PwError> {
-        let node = self.nodes.get(&id).ok_or(PwError::NodeNotFound(id))?;
-
-        if let EndpointId::Device {
-            id: device_id,
-            device_index,
-        } = node.endpoint
-        {
-            let device_index = device_index.ok_or(PwError::MissingDeviceIndex(id))?;
-            let device = self
-                .devices
-                .get(&device_id)
-                .ok_or(PwError::DeviceNotFound(device_id))?;
-            let route = device
-                .active_routes
-                .iter()
-                .find(|route| route.device_index == device_index)
-                .ok_or(PwError::RouteNotFound {
-                    device_id,
-                    device_index,
-                })?;
-            let (param_type, pod) = route.build_device_mute_pod(mute);
-            device.proxy.set_param(param_type, 0, pod.pod());
-        } else {
-            let (param_type, pod) = build_node_mute_pod(mute);
-            node.proxy.set_param(param_type, 0, pod.pod());
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::expect_used)] // PW guarantees the device exists when dispatching its param event
+    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the device exists when dispatching its param event
     #[allow(clippy::too_many_arguments)] // Matches PW callback signature
     pub(super) fn update_device_param(
         &mut self,
@@ -412,10 +352,9 @@ impl Store {
         index: u32,
         pod: Option<&Pod>,
     ) {
-        let device = self
-            .devices
-            .get_mut(&id)
-            .expect("device must exist when receiving its param update");
+        let device = self.devices.get_mut(&id).expect(&format!(
+            "device {id} must exist when receiving its param update"
+        ));
 
         // If index is 0, clear as we assume more routes will be coming later if there are more
         if index == 0 {
@@ -447,6 +386,7 @@ impl Store {
             default_sink_name: self.default_sink_name.clone(),
             default_source_name: self.default_source_name.clone(),
             cell_node_ids: self.cell_node_ids.clone(),
+            staging_node_id: self.staging_node_id,
         }
     }
 }

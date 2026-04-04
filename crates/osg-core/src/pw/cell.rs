@@ -22,12 +22,18 @@ const OSG_APP_NAME: &str = "open-sound-grid";
 /// Arguments for creating a cell node.
 pub(super) struct CellNodeArgs {
     pub name: String,
-    pub channel_node_id: u32,
-    pub mix_node_id: u32,
+    /// Full cell name: `osg.cell.{channel_ulid}-to-{mix_ulid}`
+    pub cell_id: String,
+    /// Channel ULID string (for cell_node_ids key).
+    pub channel_ulid: String,
+    /// Mix ULID string (for cell_node_ids key).
+    pub mix_ulid: String,
+    /// OSG instance ULID stamped on the PW node for ownership tracking.
+    pub instance_id: ulid::Ulid,
 }
 
-/// Create a per-cell volume node and link it: channel → cell → mix.
-/// The `pw_sender` is used to schedule link creation after the cell's ports appear.
+/// Create a per-cell null-audio-sink. ADR-007: apps link directly here.
+/// Chain: app_stream → cell_sink → [EQ filter] → mix_sink
 pub(super) fn create_cell_node(
     pw_core: &CoreRc,
     store: &Rc<RefCell<Store>>,
@@ -35,10 +41,12 @@ pub(super) fn create_cell_node(
 ) -> Result<(), PwError> {
     let CellNodeArgs {
         name,
-        channel_node_id,
-        mix_node_id,
+        cell_id,
+        channel_ulid,
+        mix_ulid,
+        instance_id,
     } = args;
-    let cell_name = format!("osg.cell.{channel_node_id}.{mix_node_id}");
+    let cell_name = cell_id;
     let proxy = pw_core
         .create_object::<pipewire::node::Node>(
             "adapter",
@@ -49,29 +57,36 @@ pub(super) fn create_cell_node(
                 *NODE_DESCRIPTION => &*name,
                 *APP_NAME => OSG_APP_NAME,
                 *NODE_VIRTUAL => "true",
-                *MEDIA_CLASS => "Audio/Duplex",
+                *MEDIA_CLASS => "Audio/Sink",
                 "audio.position" => "FL,FR",
                 "monitor.channel-volumes" => "true",
                 "monitor.passthrough" => "true",
+                "channelmix.upmix" => "false",
+                "channelmix.normalize" => "false",
+                "session.suspend-timeout-seconds" => "0",
+                "pulse.disable" => "true",
                 *OBJECT_LINGER => "true",
+                // Instance ownership tag for orphan cleanup
+                "osg.instance" => instance_id.to_string(),
             },
         )
         .map_err(|e| PwError::SinkCreationFailed(format!("cell node '{name}': {e}")))?;
 
     let store_clone = store.clone();
+    let ch_key = channel_ulid.clone();
+    let mx_key = mix_ulid.clone();
     let listener = proxy
         .upcast_ref()
         .add_listener_local()
-        .bound(move |cell_id| {
+        .bound(move |cell_pw_id| {
             debug!(
-                "[PW] cell node {cell_name} bound as {cell_id} \
-                 (channel={channel_node_id}, mix={mix_node_id})"
+                "[PW] cell sink {cell_name} bound as {cell_pw_id} \
+                 (channel={ch_key}, mix={mx_key})"
             );
             store_clone
                 .borrow_mut()
                 .cell_node_ids
-                .insert((channel_node_id, mix_node_id), cell_id);
-            // Linking happens via diff_cell_links once the cell appears in the graph.
+                .insert((ch_key.clone(), mx_key.clone()), cell_pw_id);
         })
         .register();
 
