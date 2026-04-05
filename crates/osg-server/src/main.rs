@@ -85,7 +85,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
 
     let listener = TcpListener::bind(&bind_addr)
         .await
-        .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("bind failed: {e}")))?;
+        .map_err(|e| osg_core::pw::PwError::ServerError(format!("bind failed: {e}")))?;
     tracing::info!("Listening on http://{bind_addr}");
 
     // Graceful shutdown: save state on Ctrl+C
@@ -100,7 +100,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
             shutdown_state.core.reducer().save_and_exit();
         })
         .await
-        .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("serve failed: {e}")))?;
+        .map_err(|e| osg_core::pw::PwError::ServerError(format!("serve failed: {e}")))?;
 
     Ok(())
 }

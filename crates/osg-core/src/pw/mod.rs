@@ -66,6 +66,9 @@ pub enum PwError {
     #[error("failed to connect to PipeWire: {0}")]
     ConnectionFailed(String),
 
+    #[error("server error: {0}")]
+    ServerError(String),
+
     #[error("node {0} not found")]
     NodeNotFound(u32),
 
@@ -146,7 +149,7 @@ impl PipewireHandle {
         peak_store: Arc<peak::PeakStore>,
         filter_store: FilterHandleStore,
     ) -> Result<Self, PwError> {
-        let (pipewire_thread_handle, pw_sender, _from_pw_receiver) =
+        let (pipewire_thread_handle, pw_sender) =
             init_mainloop(update_fn, peak_store, filter_store)?;
         let adapter_thread_handle = init_adapter(to_pw_channel.1, pw_sender);
         Ok(Self {
@@ -352,9 +355,6 @@ pub enum ToPipewireMessage {
     PeakTick,
     Exit,
 }
-
-#[derive(Debug)]
-enum FromPipewireMessage {}
 
 #[derive(Error, Debug)]
 #[error("failed to send message to Pipewire: {0:?}")]

@@ -299,6 +299,11 @@ impl SpectrumHandle {
     ///
     /// Writes raw f32 bins via atomic stores — zero allocation, lock-free.
     /// The reader side (`load`) materialises the `Arc<SpectrumData>`.
+    /// This is intentionally tear-prone: with reads around 15 fps and publishes
+    /// around 46 times/sec, a reader can observe a mix of old and new bins.
+    /// For the current spectrum display this is cosmetically harmless; a
+    /// seqlock or double-buffer would remove the artifact if it becomes
+    /// necessary.
     pub fn publish(&self, data: SpectrumData) {
         for (i, &value) in data.bins.iter().enumerate() {
             self.raw.bins[i].store(value.to_bits(), Ordering::Relaxed);

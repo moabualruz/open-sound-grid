@@ -1,6 +1,6 @@
 // Adapted from Sonusmix (MPL-2.0) — https://codeberg.org/sonusmix/sonusmix
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::mpsc, thread::JoinHandle};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, thread::JoinHandle};
 
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use super::peak::PeakStore;
 
 use super::group_nodes::init_pipewire;
 use super::master::Master;
-use super::{AudioGraph, FromPipewireMessage, PwError, ToPipewireMessage, store::Store};
+use super::{AudioGraph, PwError, ToPipewireMessage, store::Store};
 
 /// Create the Master and register all registry/core listeners.
 /// Returns (Master, registry_listener, remove_listener, core_listener).
@@ -77,21 +77,12 @@ pub(super) fn init_mainloop(
     update_fn: impl Fn(Box<AudioGraph>) + Send + 'static,
     peak_store: Arc<super::peak::PeakStore>,
     filter_store: super::FilterHandleStore,
-) -> Result<
-    (
-        JoinHandle<()>,
-        pipewire::channel::Sender<ToPipewireMessage>,
-        mpsc::Receiver<FromPipewireMessage>,
-    ),
-    PwError,
-> {
+) -> Result<(JoinHandle<()>, pipewire::channel::Sender<ToPipewireMessage>), PwError> {
     let (to_pw_tx, to_pw_rx) = pipewire::channel::channel();
-    let (from_pw_tx, from_pw_rx) = mpsc::channel();
     let (init_status_tx, init_status_rx) = oneshot::channel::<Result<(), PwError>>();
 
     let to_pw_tx_clone = to_pw_tx.clone();
     let handle = std::thread::spawn(move || {
-        let _sender = from_pw_tx;
         let receiver = to_pw_rx;
         let store = Rc::new(RefCell::new(Store::new()));
 
@@ -461,7 +452,7 @@ pub(super) fn init_mainloop(
                     }
                 })
                 .ok();
-            Ok((handle, to_pw_tx, from_pw_rx))
+            Ok((handle, to_pw_tx))
         }
         Ok(Err(init_error)) => Err(init_error),
         Err(_) => Err(PwError::ThreadExited),
