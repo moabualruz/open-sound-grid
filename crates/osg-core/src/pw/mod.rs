@@ -238,6 +238,9 @@ pub struct AudioGraph {
     /// PW node ID of the staging sink (vol=0, for glitch-free rerouting).
     #[serde(skip)]
     pub staging_node_id: Option<u32>,
+    /// Mix ULID string → PW node ID for O(1) peak lookup at 30 Hz.
+    #[serde(skip)]
+    pub mix_node_ids: HashMap<String, u32>,
 }
 
 #[derive(Debug, PartialEq)]

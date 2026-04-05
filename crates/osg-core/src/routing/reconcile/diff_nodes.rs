@@ -3,6 +3,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use tracing::warn;
+
 use crate::graph::{
     ChannelKind, EndpointDescriptor, MixerEvent, MixerSession, NodeIdentity, PortKind,
     ReconcileSettings, RuntimeState,
@@ -77,7 +79,7 @@ impl MixerSession {
         endpoint_nodes
     }
 
-    #[allow(clippy::expect_used, clippy::expect_fun_call)] // channel keys come from self.channels iteration
+    #[allow(clippy::cognitive_complexity)] // branching on channel presence + pending state is inherent
     pub(super) fn diff_channels(
         &self,
         endpoint_nodes: &HashMap<EndpointDescriptor, Vec<&PwNode>>,
@@ -86,14 +88,13 @@ impl MixerSession {
     ) -> Vec<MixerEvent> {
         let mut messages = Vec::new();
         for id in self.channels.keys().copied().collect::<Vec<_>>() {
-            let channel_kind = self
-                .channels
-                .get(&id)
-                .expect(&format!("channel {id:?} must exist in channels map"))
-                .kind;
+            let Some(channel) = self.channels.get(&id) else {
+                warn!("channel {id:?} disappeared from channels map during diff, skipping");
+                continue;
+            };
             // ADR-007: Source channels are logical-only — no PW node.
             // Only Sink (mix) channels get PW group nodes.
-            if channel_kind != ChannelKind::Sink {
+            if channel.kind != ChannelKind::Sink {
                 continue;
             }
             let endpoint_desc = EndpointDescriptor::Channel(id);
@@ -107,33 +108,27 @@ impl MixerSession {
                 if rt.channel_pipewire_id(&id) != Some(node.id) {
                     rt.set_channel_pipewire_id(id, Some(node.id));
                     // Create resident mix-level EQ filter
-                    let ep = self
-                        .endpoints
-                        .get(&endpoint_desc)
-                        .expect(&format!("endpoint for channel {id:?} must exist"));
+                    let Some(ep) = self.endpoints.get(&endpoint_desc) else {
+                        warn!("endpoint for channel {id:?} not found, skipping filter creation");
+                        continue;
+                    };
                     messages.push(MixerEvent::CreateFilter {
                         filter_key: format!("mix.{}", id.inner()),
                         name: format!("EQ: {}", ep.display_name),
                     });
                 }
-            } else {
-                let channel = self
-                    .channels
-                    .get(&id)
-                    .expect(&format!("channel {id:?} must exist for mutation"));
-                if !rt.channel_pending(&id) {
-                    rt.set_channel_pending(id, true);
-                    let ep = self
-                        .endpoints
-                        .get(&endpoint_desc)
-                        .expect(&format!("endpoint for channel {id:?} must exist"));
-                    messages.push(MixerEvent::CreateGroupNode {
-                        name: ep.display_name.clone(),
-                        ulid: id.inner(),
-                        kind: channel.kind,
-                        instance_id: rt.instance_id,
-                    });
-                }
+            } else if !rt.channel_pending(&id) {
+                rt.set_channel_pending(id, true);
+                let Some(ep) = self.endpoints.get(&endpoint_desc) else {
+                    warn!("endpoint for channel {id:?} not found, skipping group node creation");
+                    continue;
+                };
+                messages.push(MixerEvent::CreateGroupNode {
+                    name: ep.display_name.clone(),
+                    ulid: id.inner(),
+                    kind: channel.kind,
+                    instance_id: rt.instance_id,
+                });
             }
         }
         messages

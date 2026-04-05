@@ -7,6 +7,8 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 use ulid::Ulid;
 
+use super::peak::PeakStore;
+
 use super::group_nodes::init_pipewire;
 use super::master::Master;
 use super::{AudioGraph, FromPipewireMessage, PwError, ToPipewireMessage, store::Store};
@@ -30,6 +32,37 @@ fn setup_master(
     let remove_listener = master.registry_remove_listener();
     let core_listeners = master.init_core_listeners();
     (master, listener, remove_listener, core_listeners)
+}
+
+/// Copy live peak levels from active filters into the PeakStore for WebSocket broadcast.
+/// Called from both the `Update` and `PeakTick` message handlers (~30 Hz).
+fn copy_filter_peaks_to_store(
+    active_filters: &HashMap<String, super::filter::OsgFilter>,
+    store: &super::store::Store,
+    peak_store: &PeakStore,
+) {
+    for (key, filter) in active_filters.iter() {
+        let (l, r) = filter.handle().peak();
+        if l > 0.0 || r > 0.0 {
+            if let Some(node_id) = filter.node_id() {
+                peak_store.get_or_insert(node_id).store(l, r);
+            }
+            // Cell filter keys: "{ch_ulid}-to-{mix_ulid}"
+            // Store peak under the cell sink's PW node ID for VU metering.
+            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-")
+                && let Some(&cell_pw_id) =
+                    store.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
+            {
+                peak_store.get_or_insert(cell_pw_id).store(l, r);
+            }
+            // Mix filter keys: "mix.{ulid}" — O(1) lookup via mix_node_ids.
+            if let Some(ulid_str) = key.strip_prefix("mix.")
+                && let Some(&mix_pw_id) = store.mix_node_ids.get(ulid_str)
+            {
+                peak_store.get_or_insert(mix_pw_id).store(l, r);
+            }
+        }
+    }
 }
 
 // Message handler closure is inherently a large match on 18 ToPipewireMessage variants.
@@ -135,37 +168,10 @@ pub(super) fn init_mainloop(
                             );
                         }
                     }
-                    for (key, filter) in active_filters.borrow().iter() {
-                        let (l, r) = filter.handle().peak();
-                        if l > 0.0 || r > 0.0 {
-                            if let Some(node_id) = filter.node_id() {
-                                peak_store.get_or_insert(node_id).store(l, r);
-                            }
-                            // Cell filter keys: "{ch_ulid}-to-{mix_ulid}"
-                            // Store peak under the cell sink's PW node ID for VU metering.
-                            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-") {
-                                let s = store.borrow();
-                                if let Some(&cell_pw_id) =
-                                    s.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
-                                {
-                                    peak_store.get_or_insert(cell_pw_id).store(l, r);
-                                }
-                            }
-                            // Mix filter keys: "mix.{ulid}" — store peak under the mix PW node.
-                            if let Some(ulid) = key
-                                .strip_prefix("mix.")
-                                .and_then(|s| s.parse::<Ulid>().ok())
-                            {
-                                let s = store.borrow();
-                                if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
-                                    n.identifier
-                                        .node_name()
-                                        .is_some_and(|name| name.contains(&ulid.to_string()))
-                                }) {
-                                    peak_store.get_or_insert(ch_pw_id).store(l, r);
-                                }
-                            }
-                        }
+                    {
+                        let filters = active_filters.borrow();
+                        let s = store.borrow();
+                        copy_filter_peaks_to_store(&filters, &s, &peak_store);
                     }
                     update_fn(Box::new(store.borrow().dump_graph()));
                 }
@@ -413,35 +419,9 @@ pub(super) fn init_mainloop(
                     }
                 }
                 ToPipewireMessage::PeakTick => {
-                    for (key, filter) in active_filters.borrow().iter() {
-                        let (l, r) = filter.handle().peak();
-                        if l > 0.0 || r > 0.0 {
-                            if let Some(node_id) = filter.node_id() {
-                                peak_store.get_or_insert(node_id).store(l, r);
-                            }
-                            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-") {
-                                let s = store.borrow();
-                                if let Some(&cell_pw_id) =
-                                    s.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
-                                {
-                                    peak_store.get_or_insert(cell_pw_id).store(l, r);
-                                }
-                            }
-                            if let Some(ulid) = key
-                                .strip_prefix("mix.")
-                                .and_then(|s| s.parse::<Ulid>().ok())
-                            {
-                                let s = store.borrow();
-                                if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
-                                    n.identifier
-                                        .node_name()
-                                        .is_some_and(|name| name.contains(&ulid.to_string()))
-                                }) {
-                                    peak_store.get_or_insert(ch_pw_id).store(l, r);
-                                }
-                            }
-                        }
-                    }
+                    let filters = active_filters.borrow();
+                    let s = store.borrow();
+                    copy_filter_peaks_to_store(&filters, &s, &peak_store);
                 }
                 ToPipewireMessage::Exit => {
                     let s = store.borrow();

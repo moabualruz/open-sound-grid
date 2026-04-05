@@ -1,4 +1,4 @@
-//! Wire-format commands received from the frontend via WebSocket.
+//! Wire-format commands received from the frontend.
 //!
 //! These are JSON-serializable and map to `routing::StateMsg` for processing.
 //! The frontend sends these as `{"type": "createChannel", ...}` JSON messages.
@@ -10,7 +10,7 @@ use crate::graph::{
 };
 use crate::routing::StateMsg;
 
-/// A command received from the frontend over WebSocket.
+/// Wire-format command received from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Command {

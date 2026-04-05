@@ -66,6 +66,9 @@ pub(super) struct Store {
     pub(super) staging_node_id: Option<u32>,
     /// ULID of the current OSG instance. Set after CreateStagingSink.
     pub(super) instance_id: Option<ulid::Ulid>,
+    /// Mix ULID string → PW node ID for O(1) peak lookup at 30 Hz.
+    /// Populated when nodes named `osg.group.{ulid}` register.
+    pub(super) mix_node_ids: HashMap<String, u32>,
 }
 
 impl Store {
@@ -84,6 +87,7 @@ impl Store {
             cell_node_ids: HashMap::new(),
             staging_node_id: None,
             instance_id: None,
+            mix_node_ids: HashMap::new(),
         }
     }
 
@@ -125,6 +129,14 @@ impl Store {
         } else if let Some(_device) = self.devices.remove(&id) {
             // Nothing else to do (for now)
         } else if let Some(node) = self.nodes.remove(&id) {
+            // Remove from mix_node_ids index if this was a mix group node
+            if let Some(ulid_str) = node
+                .identifier
+                .node_name()
+                .and_then(|name| name.strip_prefix("osg.group."))
+            {
+                self.mix_node_ids.remove(ulid_str);
+            }
             // If the endpoint the node belongs to exists, remove the node from it
             match node.endpoint {
                 EndpointId::Device { id, .. } => {
@@ -243,6 +255,14 @@ impl Store {
             node.id,
             node.identifier.node_name()
         );
+        // Index mix group nodes for O(1) peak lookup: "osg.group.{ulid}" → node ID
+        if let Some(ulid_str) = node
+            .identifier
+            .node_name()
+            .and_then(|name| name.strip_prefix("osg.group."))
+        {
+            self.mix_node_ids.insert(ulid_str.to_owned(), node.id);
+        }
         self.nodes.insert(node.id, node);
         Ok(())
     }
@@ -299,20 +319,22 @@ impl Store {
         Ok(())
     }
 
-    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its param event
     pub(super) fn update_node_param(&mut self, _type_: ParamType, id: u32, pod: Option<&Pod>) {
         // abort if no pod is available
         let Some(pod) = pod else {
             return;
         };
 
-        let node = self.nodes.get_mut(&id).expect(&format!(
-            "node {id} must exist when receiving its param update"
-        ));
+        let Some(node) = self.nodes.get_mut(&id) else {
+            warn!("node {id} not found when receiving its param update, skipping");
+            return;
+        };
 
         // deserialize the pod
-        let (_, value) = PodDeserializer::deserialize_any_from(pod.as_bytes())
-            .expect(&format!("pod bytes from node {id} must be deserializable"));
+        let Ok((_, value)) = PodDeserializer::deserialize_any_from(pod.as_bytes()) else {
+            warn!("pod bytes from node {id} not deserializable, skipping");
+            return;
+        };
 
         let node_props = NodeProps::new(value);
 
@@ -324,15 +346,17 @@ impl Store {
         }
     }
 
-    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the node exists when dispatching its info event
     pub(super) fn update_node_info(&mut self, node_info: &NodeInfoRef) {
         let Some(props) = node_info.props() else {
             return;
         };
-        let node = self.nodes.get_mut(&node_info.id()).expect(&format!(
-            "node {} must exist when receiving its info update",
-            node_info.id()
-        ));
+        let Some(node) = self.nodes.get_mut(&node_info.id()) else {
+            warn!(
+                "node {} not found when receiving its info update, skipping",
+                node_info.id()
+            );
+            return;
+        };
         if let EndpointId::Device { device_index, .. } = &mut node.endpoint
             && let Some(idx) = props
                 .get("card.profile.device")
@@ -343,7 +367,6 @@ impl Store {
         node.identifier.update_from_props(props);
     }
 
-    #[allow(clippy::expect_used, clippy::expect_fun_call)] // PW guarantees the device exists when dispatching its param event
     #[allow(clippy::too_many_arguments)] // Matches PW callback signature
     pub(super) fn update_device_param(
         &mut self,
@@ -352,9 +375,10 @@ impl Store {
         index: u32,
         pod: Option<&Pod>,
     ) {
-        let device = self.devices.get_mut(&id).expect(&format!(
-            "device {id} must exist when receiving its param update"
-        ));
+        let Some(device) = self.devices.get_mut(&id) else {
+            warn!("device {id} not found when receiving its param update, skipping");
+            return;
+        };
 
         // If index is 0, clear as we assume more routes will be coming later if there are more
         if index == 0 {
@@ -387,6 +411,7 @@ impl Store {
             default_source_name: self.default_source_name.clone(),
             cell_node_ids: self.cell_node_ids.clone(),
             staging_node_id: self.staging_node_id,
+            mix_node_ids: self.mix_node_ids.clone(),
         }
     }
 }
