@@ -64,10 +64,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   // Monitor state: is this cell being monitored, or muted by monitoring?
   const isMonitored = () =>
-    monitor.state.monitoredCell !== null &&
-    JSON.stringify(monitor.state.monitoredCell!.source) ===
-      JSON.stringify(props.sourceDescriptor) &&
-    JSON.stringify(monitor.state.monitoredCell!.target) === JSON.stringify(props.sinkDescriptor);
+    monitor.isCellMonitored(props.sourceDescriptor, props.sinkDescriptor);
 
   // A cell is muted by monitoring if monitoring is active and this is not the monitored cell
   const mutedByMonitor = () =>

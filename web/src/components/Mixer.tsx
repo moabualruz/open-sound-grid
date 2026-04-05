@@ -81,11 +81,7 @@ export default function Mixer() {
     const sinkEp = findEndpoint(state.session.endpoints, sink);
     const srcName = srcEp?.customName ?? srcEp?.displayName ?? "?";
     const sinkName = sinkEp?.customName ?? sinkEp?.displayName ?? "?";
-    const link = state.session.links.find(
-      (l) =>
-        JSON.stringify(l.start) === JSON.stringify(source) &&
-        JSON.stringify(l.end) === JSON.stringify(sink),
-    );
+    const link = findLink(state.session.links, source, sink);
     const isMic =
       "channel" in source && state.session.channels[source.channel]?.sourceType === "hardwareMic";
     setEqTarget({

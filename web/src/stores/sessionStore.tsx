@@ -3,18 +3,12 @@ import type { ParentProps } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import type { MixerSession } from "../types/session";
 import type { Command } from "../types/commands";
+import { computeBackoffDelay, BACKOFF_INITIAL_MS, BACKOFF_CAP_MS } from "./backoff";
 
-export const BACKOFF_INITIAL_MS = 1000;
-export const BACKOFF_CAP_MS = 30_000;
+export { computeBackoffDelay, BACKOFF_INITIAL_MS, BACKOFF_CAP_MS };
 
 /** Maximum number of pending commands queued while disconnected. */
 const PENDING_COMMANDS_CAP = 100;
-
-/** Returns the delay in ms for the given attempt index (0-based). */
-export function computeBackoffDelay(attempt: number): number {
-  const delay = BACKOFF_INITIAL_MS * Math.pow(2, attempt);
-  return Math.min(delay, BACKOFF_CAP_MS);
-}
 
 const EMPTY_SESSION: MixerSession = {
   welcomeDismissed: false,

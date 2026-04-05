@@ -1,5 +1,6 @@
 import { createContext, useContext, onCleanup, type ParentProps } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
+import { computeBackoffDelay } from "./backoff";
 
 interface PeakLevel {
   nodeId: number;
@@ -23,12 +24,16 @@ export function LevelsProvider(props: ParentProps) {
 
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let attempt = 0;
 
   function connect() {
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${protocol}//${location.host}/ws/levels`);
 
-    ws.onopen = () => setState("connected", true);
+    ws.onopen = () => {
+      attempt = 0;
+      setState("connected", true);
+    };
 
     ws.onmessage = (event) => {
       const levels: PeakLevel[] = JSON.parse(event.data);
@@ -41,7 +46,9 @@ export function LevelsProvider(props: ParentProps) {
 
     ws.onclose = () => {
       setState("connected", false);
-      reconnectTimer = setTimeout(connect, 2000);
+      const delay = computeBackoffDelay(attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(connect, delay);
     };
 
     ws.onerror = () => ws?.close();

@@ -122,7 +122,9 @@ export function useMixerViewModel(): MixerViewModel {
   }
 
   const hiddenChannels = createMemo(() =>
-    rawChannels().filter((ch) => ch.ep?.visible === false),
+    state.session.endpoints
+      .filter(([desc, ep]) => "channel" in desc && channelKind(desc) !== "sink" && !ep.visible)
+      .map(([desc, ep]) => ({ desc, ep })),
   );
 
   return {
