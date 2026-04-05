@@ -243,6 +243,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                   aria-valuetext={`${pct()}%`}
                   onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
                   class="relative z-10 w-full"
+                  style={{ "--value-pct": `${pct()}%` }}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[11px] text-text-secondary">{pct()}</span>
@@ -271,6 +272,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                   aria-label="Left volume"
                   onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
                   class="relative z-10 w-full"
+                  style={{ "--value-pct": `${pctL()}%` }}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctL()}</span>
@@ -296,6 +298,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                   aria-label="Right volume"
                   onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
                   class="relative z-10 w-full"
+                  style={{ "--value-pct": `${pctR()}%` }}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctR()}</span>

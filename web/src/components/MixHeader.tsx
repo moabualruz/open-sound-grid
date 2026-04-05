@@ -209,7 +209,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
 
   return (
     <div
-      class="relative flex flex-col rounded-t-lg bg-bg-elevated"
+      class="relative flex flex-col rounded-t-lg border-b border-border bg-bg-elevated"
       style={{ cursor: props.onToggleExpand ? "pointer" : "default" }}
       onClick={(e) => {
         // Only toggle when clicking the header background (not buttons/inputs inside)

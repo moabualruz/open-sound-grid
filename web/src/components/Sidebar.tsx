@@ -38,7 +38,7 @@ export default function Sidebar(props: SidebarProps) {
       style={{
         "background-color": "var(--color-bg-secondary)",
         "border-color": "var(--color-border)",
-        width: "3.25rem",
+        width: "3.75rem",
       }}
       aria-label="Main navigation"
     >
@@ -47,7 +47,7 @@ export default function Sidebar(props: SidebarProps) {
         return (
           <a
             href={item.hash === "" ? "#" : item.hash}
-            class="flex flex-col items-center gap-1 rounded p-2 text-[9px] font-medium transition-colors"
+            class="flex flex-col items-center gap-1 rounded p-2 text-[11px] font-medium transition-colors"
             style={{
               color: isActive() ? "var(--color-accent)" : "var(--color-text-muted)",
               "background-color": isActive() ? "var(--color-bg-hover)" : "transparent",

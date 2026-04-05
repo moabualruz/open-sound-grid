@@ -188,10 +188,10 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             : mutedByMonitor()
               ? "border-border/30 bg-bg-primary/50 opacity-30"
               : !isLinked()
-                ? "border-dashed border-border/50 bg-bg-elevated"
+                ? "border-dashed border-border bg-bg-elevated"
                 : channelMuted()
                   ? "border-vu-hot/20 bg-vu-hot/5"
-                  : "border-border bg-bg-elevated"
+                  : "border-border bg-bg-elevated hover:bg-bg-hover/50"
         }`}
       >
         {/* Per-cell route toggle */}
@@ -200,7 +200,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           onClick={toggleCellMute}
           title={cellMuted() ? "Unmute cell" : "Mute cell"}
           aria-label={cellMuted() ? "Unmute cell" : "Mute cell"}
-          class={`shrink-0 transition-colors duration-150 ${
+          class={`flex h-8 w-8 shrink-0 items-center justify-center rounded transition-colors duration-150 ${
             !isLinked()
               ? "text-text-muted/30 hover:text-text-muted"
               : isMuted()
@@ -238,6 +238,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                 aria-label="Cell volume"
                 aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
                 class="relative z-10 w-full"
+                style={{ "--value-pct": `${cellPct()}%` }}
               />
             </div>
           }
@@ -264,6 +265,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                   onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
                   aria-label="Cell volume left"
                   class="relative z-10 w-full"
+                  style={{ "--value-pct": `${cellPctL()}%` }}
                 />
               </div>
               <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
@@ -294,6 +296,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                   onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
                   aria-label="Cell volume right"
                   class="relative z-10 w-full"
+                  style={{ "--value-pct": `${cellPctR()}%` }}
                 />
               </div>
               <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
@@ -326,9 +329,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             type="button"
             onClick={() => props.onOpenEq?.()}
             class={`shrink-0 transition-colors duration-150 ${
-              isMonitored()
-                ? "text-accent"
-                : "text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent"
+              isMonitored() ? "text-accent" : "text-text-muted/30 hover:text-accent"
             }`}
             title="EQ & Effects"
             aria-label="EQ & Effects"

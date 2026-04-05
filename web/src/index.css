@@ -73,14 +73,14 @@
 /* ── Dark theme ── */
 .dark {
   --osg-bg-primary: #1a1a1a;
-  --osg-bg-secondary: #1e1e1e;
-  --osg-bg-elevated: #262626;
-  --osg-bg-hover: #2e2e2e;
+  --osg-bg-secondary: #212121;
+  --osg-bg-elevated: #2a2a2a;
+  --osg-bg-hover: #343434;
   --osg-bg-empty-cell: #222222;
   --osg-text-primary: #e8e4df;
   --osg-text-secondary: #a39e96;
   --osg-text-muted: #6b6660;
-  --osg-border: #2a2a2a;
+  --osg-border: #333333;
 }
 
 /* Base */
@@ -140,7 +140,13 @@ input[type="range"] {
   appearance: none;
   height: 6px;
   border-radius: 3px;
-  background: var(--color-bg-hover);
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--color-accent) 40%, transparent) 0%,
+    color-mix(in srgb, var(--color-accent) 40%, transparent) var(--value-pct, 0%),
+    var(--color-bg-hover) var(--value-pct, 0%),
+    var(--color-bg-hover) 100%
+  );
   outline: none;
   cursor: pointer;
   transition: opacity 200ms var(--ease-out-quart);

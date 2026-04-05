@@ -37,8 +37,7 @@ const PEAK_DECAY_MS = 400;
 const prefersReducedMotion = (): boolean => {
   try {
     return (
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
     );
   } catch {
     return false;
@@ -159,6 +158,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
         aria-label={props.ariaLabel ?? "Volume"}
         aria-valuetext={props.ariaValueText}
         class="relative z-10 w-full"
+        style={{ "--value-pct": `${Math.round(props.value * 100)}%` }}
         data-testid="vu-input"
       />
     </div>
