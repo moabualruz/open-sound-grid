@@ -11,6 +11,7 @@ use arc_swap::ArcSwap;
 
 use crate::graph::EqConfig;
 use crate::pw::biquad::{Coefficients, compute_coefficients};
+use crate::pw::fft::SpectrumHandle;
 
 pub(crate) const SAMPLE_RATE: f32 = 48000.0;
 pub(crate) const MAX_BANDS: usize = 10;
@@ -197,6 +198,8 @@ pub struct FilterHandle {
     /// When true, filter passes audio through without EQ processing.
     /// Always-resident filters start bypassed; enabling EQ clears this flag.
     pub(super) bypassed: Arc<AtomicBool>,
+    /// FFT spectrum data shared between RT thread and WebSocket handler.
+    pub(crate) spectrum: SpectrumHandle,
 }
 
 impl Default for FilterHandle {
@@ -209,6 +212,7 @@ impl Default for FilterHandle {
             volume_right: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             muted: Arc::new(AtomicBool::new(false)),
             bypassed: Arc::new(AtomicBool::new(true)),
+            spectrum: SpectrumHandle::default(),
         }
     }
 }
@@ -285,5 +289,10 @@ impl FilterHandle {
     /// Store peak values (for RT callback).
     pub fn store_peaks(&self, left: f32, right: f32) {
         self.peaks.store(pack_peaks(left, right), Ordering::Relaxed);
+    }
+
+    /// Get the spectrum handle for FFT subscription and data access.
+    pub fn spectrum(&self) -> &SpectrumHandle {
+        &self.spectrum
     }
 }
