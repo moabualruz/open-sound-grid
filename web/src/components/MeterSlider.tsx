@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createSignal, createEffect, onCleanup, batch } from "solid-js";
 import type { JSX } from "solid-js";
 
 export interface MeterSliderProps {
@@ -18,8 +18,8 @@ export interface MeterSliderProps {
   valueText?: string;
 }
 
-const ATTACK_MS = 30;
-const RELEASE_MS = 200;
+const ATTACK_COEFF = 0.4; // Fast rise (~30ms equivalent at 30fps)
+const RELEASE_COEFF = 0.08; // Slow decay (~200ms equivalent at 30fps)
 
 /** VU color based on peak level: green <70%, amber 70-90%, red >90%. */
 function vuColor(level: number): string {
@@ -32,42 +32,24 @@ export default function MeterSlider(props: MeterSliderProps): JSX.Element {
   const [smoothL, setSmoothedL] = createSignal(0);
   const [smoothR, setSmoothedR] = createSignal(0);
 
-  let rafId = 0;
-  let lastTs = 0;
-
-  function tick(ts: number) {
-    const dt = lastTs === 0 ? 16 : ts - lastTs;
-    lastTs = ts;
-
+  // Drive VU smoothing from a reactive effect that tracks props.peak().
+  // SolidJS tracks the peak accessor read, so this re-runs every time
+  // the levels store pushes new data (~30fps from /ws/levels).
+  createEffect(() => {
     const raw = props.peak();
     const targetL = raw.left;
     const targetR = raw.right;
 
-    // Exponential smoothing with different attack/release
-    const curL = smoothL();
-    const tauL = targetL > curL ? ATTACK_MS : RELEASE_MS;
-    const alphaL = 1 - Math.exp(-dt / tauL);
-    setSmoothedL(curL + (targetL - curL) * alphaL);
+    batch(() => {
+      // Exponential smoothing: fast attack, slow release
+      const curL = smoothL();
+      const alphaL = targetL > curL ? ATTACK_COEFF : RELEASE_COEFF;
+      setSmoothedL(curL + (targetL - curL) * alphaL);
 
-    const curR = smoothR();
-    const tauR = targetR > curR ? ATTACK_MS : RELEASE_MS;
-    const alphaR = 1 - Math.exp(-dt / tauR);
-    setSmoothedR(curR + (targetR - curR) * alphaR);
-
-    rafId = requestAnimationFrame(tick);
-  }
-
-  rafId = requestAnimationFrame(tick);
-  onCleanup(() => cancelAnimationFrame(rafId));
-
-  // Reset smoothing when peaks drop to 0 (muted / stream stopped)
-  createEffect(() => {
-    const raw = props.peak();
-    if (raw.left === 0 && raw.right === 0) {
-      setSmoothedL(0);
-      setSmoothedR(0);
-      lastTs = 0;
-    }
+      const curR = smoothR();
+      const alphaR = targetR > curR ? ATTACK_COEFF : RELEASE_COEFF;
+      setSmoothedR(curR + (targetR - curR) * alphaR);
+    });
   });
 
   // VU fill capped at slider value
