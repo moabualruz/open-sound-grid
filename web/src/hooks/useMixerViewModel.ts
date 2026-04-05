@@ -142,9 +142,14 @@ export function useMixerViewModel(): MixerViewModel {
     send({ type: "setMixOrder", order });
   }
 
+  const hiddenChannels = createMemo(() =>
+    rawChannels().filter((ch) => ch.ep?.visible === false),
+  );
+
   return {
     channels,
     mixes,
+    hiddenChannels,
     getPeaks,
     descKey: descriptorKey,
     persistChannelOrder,
