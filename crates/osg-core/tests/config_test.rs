@@ -208,7 +208,62 @@ links = []
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: Default PersistentState has current version
+// Test 5: Order fields persist across MixerSession serialize/deserialize
+// ---------------------------------------------------------------------------
+
+#[test]
+fn channel_order_and_mix_order_persist_across_round_trip() {
+    let ch_id = ChannelId::new();
+    let mix_id = ChannelId::new();
+    let mut session = MixerSession::default();
+    let runtime = RuntimeState::default();
+
+    session.channel_order = vec![EndpointDescriptor::Channel(ch_id)];
+    session.mix_order = vec![EndpointDescriptor::Channel(mix_id)];
+
+    let ps = PersistentState::from_state(session.clone(), &runtime);
+    let toml_str = toml::to_string_pretty(&ps).expect("serialize");
+
+    let loaded = migration::migrate(&toml_str).expect("migrate");
+    let loaded_session = loaded.into_state();
+
+    assert_eq!(loaded_session.channel_order.len(), 1);
+    assert!(
+        matches!(loaded_session.channel_order[0], EndpointDescriptor::Channel(id) if id == ch_id)
+    );
+
+    assert_eq!(loaded_session.mix_order.len(), 1);
+    assert!(
+        matches!(loaded_session.mix_order[0], EndpointDescriptor::Channel(id) if id == mix_id)
+    );
+}
+
+#[test]
+fn channel_order_persists_multiple_entries_in_correct_sequence() {
+    let ids: Vec<ChannelId> = (0..3).map(|_| ChannelId::new()).collect();
+    let mut session = MixerSession::default();
+    let runtime = RuntimeState::default();
+
+    session.channel_order = ids
+        .iter()
+        .map(|&id| EndpointDescriptor::Channel(id))
+        .collect();
+
+    let ps = PersistentState::from_state(session, &runtime);
+    let toml_str = toml::to_string_pretty(&ps).expect("serialize");
+    let loaded_session = migration::migrate(&toml_str).expect("migrate").into_state();
+
+    assert_eq!(loaded_session.channel_order.len(), 3);
+    for (i, &id) in ids.iter().enumerate() {
+        assert!(
+            matches!(loaded_session.channel_order[i], EndpointDescriptor::Channel(loaded_id) if loaded_id == id),
+            "channel_order[{i}] mismatch"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Default PersistentState has current version
 // ---------------------------------------------------------------------------
 
 #[test]
