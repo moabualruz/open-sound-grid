@@ -41,16 +41,16 @@ export default function VuMeter(props: VuMeterProps): JSX.Element {
       aria-valuenow={Math.round(Math.max(peaks().left, peaks().right) * 100)}
     >
       {/* Left channel */}
-      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-primary/60">
+      <div class="h-1.5 w-full overflow-hidden rounded-full bg-bg-primary/60">
         <div
-          class={`h-full rounded-full transition-[width] duration-[50ms] ease-out ${peakColorClass(peaks().left)}`}
+          class={`h-full rounded-full transition-[width,background-color] duration-[50ms] ease-out ${peakColorClass(peaks().left)}`}
           style={{ width: `${Math.round(peaks().left * 100)}%` }}
         />
       </div>
       {/* Right channel */}
-      <div class="h-1 w-full overflow-hidden rounded-full bg-bg-primary/60">
+      <div class="h-1.5 w-full overflow-hidden rounded-full bg-bg-primary/60">
         <div
-          class={`h-full rounded-full transition-[width] duration-[50ms] ease-out ${peakColorClass(peaks().right)}`}
+          class={`h-full rounded-full transition-[width,background-color] duration-[50ms] ease-out ${peakColorClass(peaks().right)}`}
           style={{ width: `${Math.round(peaks().right * 100)}%` }}
         />
       </div>

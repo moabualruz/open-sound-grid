@@ -230,7 +230,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                     width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
                     background: "var(--color-vu-gradient)",
                     "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.25,
+                    opacity: 0.4,
                   }}
                 />
                 <input
@@ -260,7 +260,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                     width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
                     background: "var(--color-vu-gradient)",
                     "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.25,
+                    opacity: 0.4,
                   }}
                 />
                 <input
@@ -286,7 +286,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                     width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
                     background: "var(--color-vu-gradient)",
                     "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.25,
+                    opacity: 0.4,
                   }}
                 />
                 <input

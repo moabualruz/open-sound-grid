@@ -36,6 +36,8 @@ export interface MixerViewModel {
   mixes: () => EndpointEntry[];
   /** Peak L/R for a channel descriptor (reads from graph + levels store). */
   getPeaks: (desc: EndpointDescriptor) => { left: number; right: number };
+  /** Peak L/R for a specific matrix cell via its PW cellNodeId. */
+  getCellPeaks: (cellNodeId: number | undefined) => { left: number; right: number };
   /** Serialise a descriptor to a stable string key for keyed loops. */
   descKey: (d: EndpointDescriptor) => string;
   /** Persist a new channel order to backend. */
@@ -57,6 +59,16 @@ export function useMixerViewModel(): MixerViewModel {
 
   function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
     if (!("channel" in desc)) return { left: 0, right: 0 };
+
+    const ch = state.session.channels[desc.channel];
+    const kind = ch?.kind;
+
+    // Sink (mix) channels have their own PW filter node — read peaks directly
+    // from the levels store using the channel's outputNodeId.
+    if (kind === "sink" && ch?.outputNodeId != null) {
+      return levels.peaks[String(ch.outputNodeId)] ?? { left: 0, right: 0 };
+    }
+
     // Source channels are logical-only (no PW node). Peaks come from cell sinks
     // (one per channel x mix pair). Aggregate the max peak across all cell sinks
     // belonging to this channel by reading cellNodeId from each MixerLink.
@@ -72,6 +84,12 @@ export function useMixerViewModel(): MixerViewModel {
       }
     }
     return { left: maxLeft, right: maxRight };
+  }
+
+  /** Peaks for a specific cell (channel x mix intersection) via its cellNodeId. */
+  function getCellPeaks(cellNodeId: number | undefined): { left: number; right: number } {
+    if (cellNodeId == null) return { left: 0, right: 0 };
+    return levels.peaks[String(cellNodeId)] ?? { left: 0, right: 0 };
   }
 
   // ── raw lists ───────────────────────────────────────────────────────────────
@@ -151,6 +169,7 @@ export function useMixerViewModel(): MixerViewModel {
     mixes,
     hiddenChannels,
     getPeaks,
+    getCellPeaks,
     descKey: descriptorKey,
     persistChannelOrder,
     persistMixOrder,

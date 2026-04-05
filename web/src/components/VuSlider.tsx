@@ -124,7 +124,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
         style={{
           width: `${fillPct()}%`,
           background: `linear-gradient(to right, ${props.color}4d 0%, ${props.color}80 70%, ${props.color}cc 90%, #f4433680 100%)`,
-          opacity: props.disabled ? 0.08 : 0.3,
+          opacity: props.disabled ? 0.08 : 0.45,
           transition: "opacity 0.15s",
         }}
         data-testid="vu-fill"
