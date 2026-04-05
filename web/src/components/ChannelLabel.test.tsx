@@ -1,7 +1,7 @@
 /**
  * Tests for ChannelLabel — the left-column label card for each channel row.
  *
- * Mocks: sessionStore, mixerSettings, VuMeter, AppAssignment, useVolumeDebounce.
+ * Mocks: sessionStore, mixerSettings, AppAssignment, useVolumeDebounce.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
@@ -19,6 +19,13 @@ let mockStereoMode: "mono" | "stereo";
 
 vi.mock("../stores/sessionStore", () => ({
   useSession: () => ({ state: { session: { links: [] } }, send: mockSend }),
+}));
+
+vi.mock("../stores/graphStore", () => ({
+  useGraph: () => ({
+    graph: { nodes: {} },
+    connected: true,
+  }),
 }));
 
 vi.mock("../stores/mixerSettings", () => ({
@@ -117,9 +124,9 @@ describe("ChannelLabel — rendering", () => {
     expect(getByText("My Custom")).toBeTruthy();
   });
 
-  it("renders MeterSlider", () => {
+  it("renders VuSlider", () => {
     const { getByTestId } = renderLabel();
-    expect(getByTestId("meter-slider")).toBeTruthy();
+    expect(getByTestId("vu-slider")).toBeTruthy();
   });
 
   it("renders AppAssignment when channel prop is provided", () => {
@@ -179,6 +186,50 @@ describe("ChannelLabel — hide button", () => {
     const cmd = calls[0][0] as Extract<Command, { type: "setEndpointVisible" }>;
     expect(cmd.visible).toBe(false);
     expect(cmd.endpoint).toEqual({ channel: "ch1" });
+  });
+});
+
+describe("ChannelLabel — disable button", () => {
+  beforeEach(() => {
+    mockSend = vi.fn();
+    mockStereoMode = "mono";
+  });
+
+  it("disable button sends setEndpointDisabled(true) when enabled", () => {
+    const { getByRole } = renderLabel({ disabled: false }, makeChannel({ autoApp: false }));
+    const disableBtn = getByRole("button", { name: /disable channel/i });
+    fireEvent.click(disableBtn);
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setEndpointDisabled",
+    );
+    expect(calls.length).toBe(1);
+    const cmd = calls[0][0] as Extract<Command, { type: "setEndpointDisabled" }>;
+    expect(cmd.disabled).toBe(true);
+    expect(cmd.endpoint).toEqual({ channel: "ch1" });
+  });
+
+  it("disable button sends setEndpointDisabled(false) when already disabled", () => {
+    const { getByRole } = renderLabel({ disabled: true }, makeChannel({ autoApp: false }));
+    const enableBtn = getByRole("button", { name: /enable channel/i });
+    fireEvent.click(enableBtn);
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setEndpointDisabled",
+    );
+    expect(calls.length).toBe(1);
+    const cmd = calls[0][0] as Extract<Command, { type: "setEndpointDisabled" }>;
+    expect(cmd.disabled).toBe(false);
+  });
+
+  it("disabled channel renders with dimmed opacity", () => {
+    const { container } = renderLabel({ disabled: true });
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.className).toContain("opacity-50");
+  });
+
+  it("enabled channel does not have dimmed opacity", () => {
+    const { container } = renderLabel({ disabled: false });
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.className).not.toContain("opacity-50");
   });
 });
 

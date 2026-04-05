@@ -293,6 +293,30 @@ fn command_set_endpoint_visible_serializes_type_field() {
     assert_type_field(&cmd, "setEndpointVisible");
 }
 
+// --- SetEndpointDisabled ----------------------------------------------------
+
+#[test]
+fn command_set_endpoint_disabled_serializes_type_field() {
+    let cmd = Command::SetEndpointDisabled {
+        endpoint: channel_ep(),
+        disabled: true,
+    };
+    assert_type_field(&cmd, "setEndpointDisabled");
+}
+
+#[test]
+fn command_set_endpoint_disabled_round_trips() {
+    let cmd = Command::SetEndpointDisabled {
+        endpoint: channel_ep(),
+        disabled: true,
+    };
+    let rt = round_trip(&cmd);
+    assert_eq!(
+        serde_json::to_string(&cmd).unwrap(),
+        serde_json::to_string(&rt).unwrap()
+    );
+}
+
 // --- SetLinkVolume / SetLinkStereoVolume ------------------------------------
 
 #[test]

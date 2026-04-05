@@ -1,23 +1,27 @@
-import { Show, createEffect, createSignal } from "solid-js";
+import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
+import { useGraph } from "../stores/graphStore";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import {
   Volume2,
   VolumeX,
-  X,
+  EyeOff,
+  Power,
   Music,
   Globe,
   Bell,
   Gamepad2,
   MessageCircle,
   Speaker,
+  X,
 } from "lucide-solid";
 import AppAssignment from "./AppAssignment";
-import MeterSlider from "./MeterSlider";
+import VuSlider from "./VuSlider";
 import { useSmoothedAggregatePeak } from "../hooks/useSmoothedPeak";
 import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
+import type { SourceType } from "../types/session";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
 
@@ -47,17 +51,48 @@ function channelIcon(displayName: string) {
   }
 }
 
+function channelAccentColor(sourceType?: SourceType): string {
+  switch (sourceType) {
+    case "hardwareMic":
+      return "var(--color-source-mic)";
+    case "appStream":
+      return "var(--color-source-app)";
+    default:
+      return "var(--color-source-cell)";
+  }
+}
+
 export default function ChannelLabel(props: ChannelLabelProps) {
   const { state, send } = useSession();
+  const graphState = useGraph();
   const { settings } = useMixerSettings();
 
-  const channelPeak = useSmoothedAggregatePeak(() => {
+  const channelPeakNodeIds = createMemo(() => {
+    const assignedApps = props.channel?.assignedApps ?? [];
+    if (assignedApps.length > 0) {
+      const nodeIds = new Set<number>();
+      for (const node of Object.values(graphState.graph.nodes)) {
+        const isAppSource = node.ports.some(([, kind, isMonitor]) => kind === "source" && !isMonitor);
+        if (!isAppSource) continue;
+        const matchesAssignment = assignedApps.some(
+          (assignment) =>
+            node.identifier.applicationName === assignment.applicationName &&
+            node.identifier.binaryName === assignment.binaryName,
+        );
+        if (matchesAssignment) nodeIds.add(node.id);
+      }
+      return [...nodeIds];
+    }
+
     if (!("channel" in props.descriptor)) return [];
     const chId = props.descriptor.channel;
     return (state.session.links ?? [])
       .filter((link) => "channel" in link.start && link.start.channel === chId)
-      .map((link) => link.cellNodeId);
+      .map((link) => link.cellNodeId)
+      .filter((nodeId): nodeId is number => nodeId != null);
   });
+
+  const channelPeak = useSmoothedAggregatePeak(channelPeakNodeIds);
 
   const [local, setLocal] = createSignal(0);
   const [localL, setLocalL] = createSignal(1);
@@ -149,7 +184,11 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const pctR = () => Math.round(localR() * 100);
 
   return (
-    <div class="w-48 shrink-0 rounded-lg border border-border bg-bg-elevated">
+    <div
+      class={`w-48 shrink-0 rounded-lg border border-border bg-bg-elevated transition-opacity duration-150 ${
+        props.endpoint.disabled ? "opacity-50" : ""
+      }`}
+    >
       {/* Row 1: drag handle + icon + name + mute + remove */}
       <div class="flex items-center gap-1.5 px-3 pt-2.5">
         <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
@@ -195,13 +234,31 @@ export default function ChannelLabel(props: ChannelLabelProps) {
         <Show when={!props.channel?.autoApp && !("app" in props.descriptor)}>
           <button
             onClick={() =>
+              send({
+                type: "setEndpointDisabled",
+                endpoint: props.descriptor,
+                disabled: !props.endpoint.disabled,
+              })
+            }
+            class={`transition-colors duration-150 ${
+              props.endpoint.disabled
+                ? "text-vu-hot"
+                : "text-text-muted hover:text-text-primary"
+            }`}
+            title={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
+            aria-label={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
+          >
+            <Power size={12} />
+          </button>
+          <button
+            onClick={() =>
               send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
             }
             class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
             title="Hide channel"
             aria-label="Hide channel"
           >
-            <X size={12} />
+            <EyeOff size={12} />
           </button>
         </Show>
       </div>
@@ -226,7 +283,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           fallback={
             <div class="flex items-center gap-1">
               <div class="flex-1" onWheel={handleWheel}>
-                <MeterSlider
+                <VuSlider
                   value={local()}
                   peakLeft={channelPeak.left()}
                   peakRight={channelPeak.right()}
@@ -234,6 +291,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
                   muted={isMuted()}
                   label="Master volume"
                   valueText={`${pct()}%`}
+                  accentColor={channelAccentColor(props.channel?.sourceType)}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[11px] text-text-secondary">{pct()}</span>
@@ -244,13 +302,14 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
               <div class="flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
-                <MeterSlider
+                <VuSlider
                   value={localL()}
                   peakLeft={channelPeak.left()}
                   peakRight={channelPeak.left()}
                   onInput={(v) => handleStereoInput("left", v)}
                   muted={isMuted()}
                   label="Left volume"
+                  accentColor={channelAccentColor(props.channel?.sourceType)}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctL()}</span>
@@ -258,13 +317,14 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
               <div class="flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
-                <MeterSlider
+                <VuSlider
                   value={localR()}
                   peakLeft={channelPeak.right()}
                   peakRight={channelPeak.right()}
                   onInput={(v) => handleStereoInput("right", v)}
                   muted={isMuted()}
                   label="Right volume"
+                  accentColor={channelAccentColor(props.channel?.sourceType)}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctR()}</span>

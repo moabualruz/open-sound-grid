@@ -11,7 +11,7 @@ import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
 import WelcomeWizard from "./WelcomeWizard";
 import DragReorder from "./DragReorder";
-import { Settings, EyeOff, Undo2, Redo2 } from "lucide-solid";
+import { Settings, Eye, EyeOff, Power, Undo2, Redo2 } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
@@ -371,7 +371,9 @@ export default function Mixer() {
                         <For each={hiddenChannels()}>
                           {(ch) => (
                             <div
-                              class="flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] opacity-60"
+                              class={`flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] ${
+                                ch.ep.disabled ? "opacity-40" : "opacity-60"
+                              }`}
                               style={{
                                 "border-color": "var(--color-border)",
                                 "background-color": "var(--color-bg-elevated)",
@@ -379,6 +381,11 @@ export default function Mixer() {
                               }}
                             >
                               <span>{ch.ep.customName ?? ch.ep.displayName}</span>
+                              <Show when={ch.ep.disabled}>
+                                <span class="text-vu-hot" title="Disabled">
+                                  <Power size={10} />
+                                </span>
+                              </Show>
                               <button
                                 onClick={() =>
                                   send({
@@ -391,7 +398,7 @@ export default function Mixer() {
                                 title="Show channel"
                                 aria-label={`Show ${ch.ep.customName ?? ch.ep.displayName}`}
                               >
-                                <EyeOff size={11} />
+                                <Eye size={11} />
                               </button>
                             </div>
                           )}
