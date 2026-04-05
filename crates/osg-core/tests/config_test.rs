@@ -217,3 +217,99 @@ fn default_persistent_state_has_current_version() {
     let toml_str = toml::to_string_pretty(&ps).expect("serialize default");
     assert!(toml_str.contains(&format!("version = \"{}\"", migration::CURRENT_VERSION)));
 }
+
+// ---------------------------------------------------------------------------
+// Test 6: Edge cases — additional robustness scenarios (Gap 5 additions)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wrong_type_for_version_field_returns_default() {
+    // version is an integer, not a string — structurally valid TOML but
+    // semantically wrong.  The migrator must not panic.
+    let bad_version_type = r#"
+version = 42
+
+[state]
+active_sources = []
+active_sinks = []
+endpoints = []
+links = []
+
+[state.persistent_nodes]
+[state.apps]
+[state.devices]
+[state.channels]
+"#;
+
+    let result = migration::migrate(bad_version_type).expect("should not error");
+    let session = result.into_state();
+    // Integer version is not a known string version → defaults.
+    assert!(session.channels.is_empty());
+}
+
+#[test]
+fn toml_with_only_whitespace_returns_default() {
+    let whitespace_only = "   \n\t\n   ";
+    let result = migration::migrate(whitespace_only).expect("should not error");
+    let session = result.into_state();
+    assert!(session.channels.is_empty());
+}
+
+#[test]
+fn version_field_present_but_state_section_missing_returns_default() {
+    // The version matches but the [state] table is completely absent.
+    let no_state_section = r#"
+version = "0.2.0"
+"#;
+
+    // Missing [state] means deserialization will fail → graceful fallback.
+    let result = migration::migrate(no_state_section).expect("should not error");
+    let session = result.into_state();
+    assert!(session.channels.is_empty());
+}
+
+#[test]
+fn corrupt_nested_field_within_valid_structure_returns_default() {
+    // Version is current, top-level structure is valid, but `links` has a
+    // wrong type (string instead of array).  Deserializer must not panic.
+    let corrupt_links = r#"
+version = "0.2.0"
+
+[state]
+active_sources = []
+active_sinks = []
+endpoints = []
+links = "this is not an array"
+
+[state.persistent_nodes]
+[state.apps]
+[state.devices]
+[state.channels]
+"#;
+
+    let result = migration::migrate(corrupt_links).expect("should not error");
+    let session = result.into_state();
+    // Deserialization failure → graceful default.
+    assert!(session.channels.is_empty());
+}
+
+#[test]
+fn migrate_returns_ok_not_err_for_all_bad_inputs() {
+    // The public API contract: migrate() returns Ok for any input, never Err.
+    // Errors are logged and swallowed; callers get a safe default instead.
+    let bad_inputs = [
+        "",
+        "   ",
+        "not toml {{{{",
+        "version = \"99.99.99\"",
+        "version = true",
+        "[[[invalid",
+    ];
+
+    for input in &bad_inputs {
+        assert!(
+            migration::migrate(input).is_ok(),
+            "migrate() returned Err for input: {input:?}"
+        );
+    }
+}
