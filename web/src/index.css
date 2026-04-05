@@ -122,6 +122,18 @@ body {
   background: var(--color-bg-hover);
 }
 
+/* MixEffectsRow expand animation */
+@keyframes osg-effects-row-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Custom slider styling */
 input[type="range"] {
   -webkit-appearance: none;

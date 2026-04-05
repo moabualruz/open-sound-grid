@@ -1,4 +1,5 @@
 import { For, Show, createSignal, onMount, onCleanup } from "solid-js";
+import MixEffectsRow from "./MixEffectsRow";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import MixHeader from "./MixHeader";
@@ -26,6 +27,13 @@ export default function Mixer() {
 
   const { channels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder } =
     useMixerViewModel();
+
+  // --- Mix expand accordion (only one mix expanded at a time) ---
+  const [expandedMixKey, setExpandedMixKey] = createSignal<string | null>(null);
+
+  function toggleMixExpand(mixKey: string) {
+    setExpandedMixKey((current) => (current === mixKey ? null : mixKey));
+  }
 
   const { mixOutputs, setMixOutput, usedDeviceIds } = useMixOutputs(
     mixes,
@@ -192,6 +200,10 @@ export default function Mixer() {
                           onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
                           onOpenEq={() => openMixEq(mix.ep, mix.desc)}
                           dragHandle={dragHandle}
+                          expanded={expandedMixKey() === mixKey}
+                          onToggleExpand={() => toggleMixExpand(mixKey)}
+                          peakLeft={getPeaks(mix.desc).left}
+                          peakRight={getPeaks(mix.desc).right}
                         />
                       </div>
                     );
@@ -207,45 +219,71 @@ export default function Mixer() {
                   onReorder={persistChannelOrder}
                 >
                   {(ch, rowIdx, dragHandle) => (
-                    <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
-                      <ChannelLabel
-                        descriptor={ch.desc}
-                        endpoint={ch.ep}
-                        channel={
-                          "channel" in ch.desc ? state.session.channels[ch.desc.channel] : undefined
-                        }
-                        apps={Object.values(state.session.apps)}
-                        dragHandle={dragHandle}
-                        peakLeft={getPeaks(ch.desc).left}
-                        peakRight={getPeaks(ch.desc).right}
-                      />
-                      <For each={mixes()}>
-                        {({ desc: sinkDesc, ep: sinkEp }, colIdx) => (
-                          <div
-                            role="gridcell"
-                            aria-label={`${ch.ep.customName ?? ch.ep.displayName} to ${sinkEp?.customName ?? sinkEp?.displayName ?? "mix"}`}
-                            onClick={() => setFocusedCell({ row: rowIdx(), col: colIdx() })}
-                          >
-                            <MatrixCell
-                              link={findLink(state.session.links, ch.desc, sinkDesc)}
-                              sourceEndpoint={ch.ep}
-                              sourceDescriptor={ch.desc}
-                              sinkDescriptor={sinkDesc}
-                              mixColor={getMixColor(sinkEp?.displayName ?? "")}
-                              peakLeft={getPeaks(ch.desc).left}
-                              peakRight={getPeaks(ch.desc).right}
-                              onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
-                              focused={
-                                focusedCell()?.row === rowIdx() && focusedCell()?.col === colIdx()
-                              }
-                              onActionsReady={(actions) =>
-                                registerCellActions(rowIdx(), colIdx(), actions)
-                              }
+                    <>
+                      <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+                        <ChannelLabel
+                          descriptor={ch.desc}
+                          endpoint={ch.ep}
+                          channel={
+                            "channel" in ch.desc ? state.session.channels[ch.desc.channel] : undefined
+                          }
+                          apps={Object.values(state.session.apps)}
+                          dragHandle={dragHandle}
+                          peakLeft={getPeaks(ch.desc).left}
+                          peakRight={getPeaks(ch.desc).right}
+                        />
+                        <For each={mixes()}>
+                          {({ desc: sinkDesc, ep: sinkEp }, colIdx) => (
+                            <div
+                              role="gridcell"
+                              aria-label={`${ch.ep.customName ?? ch.ep.displayName} to ${sinkEp?.customName ?? sinkEp?.displayName ?? "mix"}`}
+                              onClick={() => setFocusedCell({ row: rowIdx(), col: colIdx() })}
+                            >
+                              <MatrixCell
+                                link={findLink(state.session.links, ch.desc, sinkDesc)}
+                                sourceEndpoint={ch.ep}
+                                sourceDescriptor={ch.desc}
+                                sinkDescriptor={sinkDesc}
+                                mixColor={getMixColor(sinkEp?.displayName ?? "")}
+                                peakLeft={getPeaks(ch.desc).left}
+                                peakRight={getPeaks(ch.desc).right}
+                                onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
+                                focused={
+                                  focusedCell()?.row === rowIdx() && focusedCell()?.col === colIdx()
+                                }
+                                onActionsReady={(actions) =>
+                                  registerCellActions(rowIdx(), colIdx(), actions)
+                                }
+                              />
+                            </div>
+                          )}
+                        </For>
+                      </div>
+
+                      {/* Effects sub-row — shown below each channel row when a mix is expanded */}
+                      <Show when={expandedMixKey() !== null}>
+                        {() => {
+                          const expandedKey = expandedMixKey()!;
+                          const expandedMix = mixes().find((m) => descKey(m.desc) === expandedKey);
+                          if (!expandedMix) return null;
+                          const mixColor = getMixColor(expandedMix.ep.displayName);
+                          const link = findLink(state.session.links, ch.desc, expandedMix.desc);
+                          return (
+                            <MixEffectsRow
+                              cells={[{
+                                sourceDescriptor: ch.desc,
+                                cellEq: link?.cellEq,
+                                cellEffects: link?.cellEffects,
+                                linked: link !== null,
+                              }]}
+                              mixColor={mixColor}
+                              gridTemplateColumns={`12rem 1fr`}
+                              onOpenCellEq={() => openCellEq(ch.desc, expandedMix.desc)}
                             />
-                          </div>
-                        )}
-                      </For>
-                    </div>
+                          );
+                        }}
+                      </Show>
+                    </>
                   )}
                 </DragReorder>
 

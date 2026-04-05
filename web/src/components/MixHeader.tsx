@@ -1,7 +1,9 @@
-import { Show, For, createSignal } from "solid-js";
+import { Show, For, createSignal, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
+import VuSlider from "./VuSlider";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import {
   Headphones,
   Radio,
@@ -10,6 +12,7 @@ import {
   Speaker,
   X,
   ChevronDown,
+  ChevronUp,
   SlidersVertical,
 } from "lucide-solid";
 import type { EndpointDescriptor, Endpoint } from "../types/session";
@@ -36,6 +39,13 @@ interface MixHeaderProps {
   onSelectOutput: (deviceId: string | null) => void;
   onOpenEq?: () => void;
   dragHandle?: () => JSX.Element;
+  /** Whether the effects row for this mix is currently expanded. */
+  expanded?: boolean;
+  /** Called when the user clicks the header to toggle expand. */
+  onToggleExpand?: () => void;
+  /** Peak level for the mix output (0–1), used by the VuSlider fill. */
+  peakLeft?: number;
+  peakRight?: number;
 }
 
 function pickIcon(displayName: string, color: string): JSX.Element {
@@ -91,6 +101,25 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
   const [editValue, setEditValue] = createSignal("");
   const [showOutputPicker, setShowOutputPicker] = createSignal(false);
   const [dropdownPos, setDropdownPos] = createSignal({ top: 0, left: 0 });
+  const [localVol, setLocalVol] = createSignal(1);
+  let userDragging = false;
+
+  const sendVolDebounced = useVolumeDebounce((v) => {
+    send({ type: "setVolume", endpoint: props.descriptor, volume: v });
+    userDragging = false;
+  });
+
+  createEffect(() => {
+    if (!userDragging) setLocalVol(props.endpoint.volume);
+  });
+
+  function handleVolumeInput(v: number) {
+    userDragging = true;
+    setLocalVol(v);
+    sendVolDebounced(v);
+  }
+
+  const volPct = () => Math.round(localVol() * 100);
 
   function openOutputPicker(e: MouseEvent) {
     const btn = e.currentTarget as HTMLElement;
@@ -130,7 +159,17 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
   };
 
   return (
-    <div class="relative flex flex-col rounded-t-lg bg-bg-elevated">
+    <div
+      class="relative flex flex-col rounded-t-lg bg-bg-elevated"
+      style={{ cursor: props.onToggleExpand ? "pointer" : "default" }}
+      onClick={(e) => {
+        // Only toggle when clicking the header background (not buttons/inputs inside)
+        const target = e.target as HTMLElement;
+        if (target.closest("button") || target.closest("input") || target.closest("select")) return;
+        props.onToggleExpand?.();
+      }}
+      title={props.onToggleExpand ? (props.expanded ? "Collapse effects view" : "Expand effects view") : undefined}
+    >
       <div class="h-[3px] w-full rounded-t-lg" style={{ "background-color": props.color }} />
       <div class="flex items-center gap-1.5 px-2 py-2">
         <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
@@ -180,6 +219,22 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         >
           <SlidersVertical class="h-[12px] w-[12px]" />
         </button>
+        <Show when={props.onToggleExpand}>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onToggleExpand!();
+            }}
+            class="flex-shrink-0 text-text-muted/50 transition-colors duration-150 hover:text-text-secondary"
+            aria-label={props.expanded ? "Collapse effects view" : "Expand effects view"}
+            aria-expanded={props.expanded}
+          >
+            <Show when={props.expanded} fallback={<ChevronDown class="h-[12px] w-[12px]" />}>
+              <ChevronUp class="h-[12px] w-[12px]" />
+            </Show>
+          </button>
+        </Show>
         <button
           type="button"
           onClick={() => props.onRemove()}
@@ -188,6 +243,23 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         >
           <X class="h-[14px] w-[14px]" />
         </button>
+      </div>
+
+      {/* Mix master volume with VU fill */}
+      <div class="flex items-center gap-1.5 px-2 pb-2">
+        <div class="flex-1">
+          <VuSlider
+            value={localVol()}
+            peak={Math.max(props.peakLeft ?? 0, props.peakRight ?? 0)}
+            color={props.color}
+            onInput={handleVolumeInput}
+            ariaLabel={`${label()} master volume`}
+            ariaValueText={`${volPct()}%`}
+          />
+        </div>
+        <span class="w-7 shrink-0 text-right font-mono text-[10px] text-text-muted">
+          {volPct()}
+        </span>
       </div>
 
       <Show when={showOutputPicker()}>
