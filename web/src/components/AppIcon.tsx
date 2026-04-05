@@ -132,10 +132,9 @@ function LetterAvatar(props: { name: string; size: number }) {
         text-anchor="middle"
         dominant-baseline="central"
         fill="white"
-        font-size={fontSize()}
+        font-size={`${fontSize()}`}
         font-family="system-ui, sans-serif"
         font-weight="600"
-        style={{ "text-anchor": "middle", "dominant-baseline": "central" }}
       >
         {letter()}
       </text>

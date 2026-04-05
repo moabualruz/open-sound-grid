@@ -8,6 +8,8 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import type { Endpoint, EndpointDescriptor, Channel } from "../types/session";
 import type { Command } from "../types/commands";
 
+type MockSendCall = [Command, ...unknown[]];
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -141,9 +143,7 @@ describe("ChannelLabel — mute button", () => {
     const { getByRole } = renderLabel({ volumeLockedMuted: "unmutedUnlocked" });
     const muteBtn = getByRole("button", { name: /mute channel/i });
     fireEvent.click(muteBtn);
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setMute",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setMute");
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "setMute" }>;
     expect(cmd.muted).toBe(true);
@@ -154,9 +154,7 @@ describe("ChannelLabel — mute button", () => {
     const { getByRole } = renderLabel({ volumeLockedMuted: "mutedUnlocked" });
     const unmuteBtn = getByRole("button", { name: /unmute channel/i });
     fireEvent.click(unmuteBtn);
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setMute",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setMute");
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "setMute" }>;
     expect(cmd.muted).toBe(false);
@@ -174,8 +172,8 @@ describe("ChannelLabel — hide button", () => {
     const { getByRole } = renderLabel({}, makeChannel({ autoApp: false }));
     const hideBtn = getByRole("button", { name: /hide channel/i });
     fireEvent.click(hideBtn);
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setEndpointVisible",
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setEndpointVisible",
     );
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "setEndpointVisible" }>;
@@ -201,9 +199,7 @@ describe("ChannelLabel — master volume slider (mono)", () => {
     const { container } = renderLabel({ volume: 0.8 });
     const slider = container.querySelector('input[aria-label="Master volume"]') as HTMLInputElement;
     fireEvent.input(slider, { target: { value: "0.5" } });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const cmd = calls[calls.length - 1][0] as Extract<Command, { type: "setVolume" }>;
     expect(cmd.volume).toBeCloseTo(0.5, 5);
@@ -232,8 +228,8 @@ describe("ChannelLabel — master volume slider (stereo)", () => {
     const { container } = renderLabel();
     const leftSlider = container.querySelector('input[aria-label="Left volume"]') as HTMLInputElement;
     fireEvent.input(leftSlider, { target: { value: "0.3" } });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setStereoVolume",
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setStereoVolume",
     );
     expect(calls.length).toBeGreaterThanOrEqual(1);
   });
@@ -263,8 +259,8 @@ describe("ChannelLabel — inline rename (custom name channels only)", () => {
     // Change value then press Enter
     fireEvent.input(input, { target: { value: "Renamed" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "renameEndpoint",
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "renameEndpoint",
     );
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "renameEndpoint" }>;

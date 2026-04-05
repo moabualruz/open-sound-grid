@@ -8,6 +8,8 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
 import type { Command } from "../types/commands";
 
+type MockSendCall = [Command, ...unknown[]];
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -147,9 +149,7 @@ describe("MixHeader — volume slider", () => {
     const { getByTestId } = renderHeader({ volume: 0.8 });
     const slider = getByTestId("meter-input") as HTMLInputElement;
     fireEvent.input(slider, { target: { value: "0.5" } });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const cmd = calls[calls.length - 1][0] as Extract<Command, { type: "setVolume" }>;
     expect(cmd.volume).toBeCloseTo(0.5, 5);
@@ -259,8 +259,8 @@ describe("MixHeader — inline rename (custom-named mixes)", () => {
     const input = container.querySelector('input[type="text"]') as HTMLInputElement;
     fireEvent.input(input, { target: { value: "Renamed Mix" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "renameEndpoint",
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "renameEndpoint",
     );
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "renameEndpoint" }>;

@@ -8,6 +8,8 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import type { MixerSession } from "../types/session";
 import type { Command } from "../types/commands";
 
+type MockSendCall = [Command, ...unknown[]];
+
 
 interface MockSessionState {
   session: MixerSession;
@@ -217,11 +219,11 @@ describe("WelcomeWizard — Create Mixer", () => {
     expect(createBtn).toBeTruthy();
     fireEvent.click(createBtn!);
 
-    const createChannelCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
+    const createChannelCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "createChannel",
     );
     expect(createChannelCalls.length).toBe(2);
-    const names = createChannelCalls.map(([cmd]: [Command]) =>
+    const names = createChannelCalls.map(([cmd]) =>
       cmd.type === "createChannel" ? cmd.name : "",
     );
     expect(names).toContain("Firefox");
@@ -237,8 +239,8 @@ describe("WelcomeWizard — Create Mixer", () => {
     );
     fireEvent.click(createBtn!);
 
-    const dismissCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "dismissWelcome",
+    const dismissCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "dismissWelcome",
     );
     expect(dismissCalls.length).toBe(1);
   });
@@ -271,10 +273,10 @@ describe("WelcomeWizard — Create Mixer", () => {
     );
     fireEvent.click(createBtn!);
 
-    const createChannelCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
+    const createChannelCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "createChannel",
     );
-    const names = createChannelCalls.map(([cmd]: [Command]) =>
+    const names = createChannelCalls.map(([cmd]) =>
       cmd.type === "createChannel" ? cmd.name : "",
     );
     expect(names).toContain("Firefox");
@@ -298,8 +300,8 @@ describe("WelcomeWizard — Skip", () => {
 
     fireEvent.click(getByText("Skip"));
 
-    const dismissCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "dismissWelcome",
+    const dismissCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "dismissWelcome",
     );
     expect(dismissCalls.length).toBe(1);
   });
@@ -320,8 +322,8 @@ describe("WelcomeWizard — Skip", () => {
     expect(closeBtn).toBeTruthy();
     fireEvent.click(closeBtn!);
 
-    const dismissCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "dismissWelcome",
+    const dismissCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "dismissWelcome",
     );
     expect(dismissCalls.length).toBe(1);
   });

@@ -6,6 +6,8 @@ import type { EqConfig } from "./eq";
 import type { EffectsConfig } from "./effects";
 
 export type Command =
+  | { type: "undo" }
+  | { type: "redo" }
   | { type: "createChannel"; name: string; kind: GroupNodeKind }
   | { type: "removeEndpoint"; endpoint: EndpointDescriptor }
   | { type: "setVolume"; endpoint: EndpointDescriptor; volume: number }

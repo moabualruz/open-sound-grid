@@ -9,6 +9,8 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import type { MixerSession, MixerLink, Endpoint, EndpointDescriptor } from "../types/session";
 import type { Command } from "../types/commands";
 
+type MockSendCall = [Command, ...unknown[]];
+
 // ---------------------------------------------------------------------------
 // Store mocks — must be declared before component import
 // ---------------------------------------------------------------------------
@@ -139,9 +141,7 @@ describe("MatrixCell — mono mode (default)", () => {
     const { container } = renderCell(makeLink());
     const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
     fireEvent.input(slider, { target: { value: "0.60" } });
-    const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setLinkVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setLinkVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const last = calls[calls.length - 1][0] as Extract<Command, { type: "setLinkVolume" }>;
     expect(last.volume).toBeCloseTo(0.6, 5);
@@ -154,9 +154,7 @@ describe("MatrixCell — mono mode (default)", () => {
     const muteBtn = container.querySelector('button[aria-label="Mute cell"]') as HTMLButtonElement;
     expect(muteBtn).toBeTruthy();
     fireEvent.click(muteBtn);
-    const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setLinkVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setLinkVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const last = calls[calls.length - 1][0] as Extract<Command, { type: "setLinkVolume" }>;
     expect(last.volume).toBe(0);
@@ -195,9 +193,7 @@ describe("MatrixCell — mono mode (default)", () => {
     const { container } = renderCell(makeLink({ cellVolume: 0.5 }));
     const wrapper = container.querySelector(".flex-1") as HTMLElement;
     fireEvent.wheel(wrapper, { deltaY: -1 });
-    const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setLinkVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setLinkVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);
     const v = (calls[calls.length - 1][0] as Extract<Command, { type: "setLinkVolume" }>).volume;
     expect(v).toBeCloseTo(0.51, 5);
@@ -207,9 +203,7 @@ describe("MatrixCell — mono mode (default)", () => {
     const { container } = renderCell(makeLink({ cellVolume: 0.5 }));
     const wrapper = container.querySelector(".flex-1") as HTMLElement;
     fireEvent.wheel(wrapper, { deltaY: 1 });
-    const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setLinkVolume",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setLinkVolume");
     const v = (calls[calls.length - 1][0] as Extract<Command, { type: "setLinkVolume" }>).volume;
     expect(v).toBeCloseTo(0.49, 5);
   });
@@ -255,8 +249,8 @@ describe("MatrixCell — stereo mode", () => {
     const { container } = renderCell(makeLink());
     const leftSlider = container.querySelector('input[aria-label="Cell volume left"]') as HTMLInputElement;
     fireEvent.input(leftSlider, { target: { value: "0.4" } });
-    const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "setLinkStereoVolume",
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setLinkStereoVolume",
     );
     expect(calls.length).toBeGreaterThanOrEqual(1);
   });

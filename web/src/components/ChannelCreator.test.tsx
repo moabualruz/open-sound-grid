@@ -8,6 +8,8 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import type { Command } from "../types/commands";
 import type { MixerSession } from "../types/session";
 
+type MockSendCall = [Command, ...unknown[]];
+
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -132,9 +134,7 @@ describe("ChannelCreator — channel templates (presets)", () => {
     const { getByText } = renderCreator();
     fireEvent.click(getByText("Create channel"));
     fireEvent.click(getByText("Music"));
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "createChannel");
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "createChannel" }>;
     expect(cmd.name).toBe("Music");
@@ -202,9 +202,7 @@ describe("ChannelCreator — custom name input", () => {
     const input = container.querySelector('input[placeholder="Custom name..."]') as HTMLInputElement;
     fireEvent.input(input, { target: { value: "My Custom Channel" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "createChannel");
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "createChannel" }>;
     expect(cmd.name).toBe("My Custom Channel");
@@ -217,9 +215,7 @@ describe("ChannelCreator — custom name input", () => {
     const input = container.querySelector('input[placeholder="Custom name..."]') as HTMLInputElement;
     fireEvent.input(input, { target: { value: "Studio Bus" } });
     fireEvent.click(getByText("Add"));
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "createChannel");
     expect(calls.length).toBe(1);
     expect((calls[0][0] as Extract<Command, { type: "createChannel" }>).name).toBe("Studio Bus");
   });
@@ -260,9 +256,7 @@ describe("ChannelCreator — hardware input devices", () => {
     const { getByText } = renderCreator();
     fireEvent.click(getByText("Create channel"));
     fireEvent.click(getByText("USB Microphone"));
-    const calls = mockSend.mock.calls.filter(
-      ([cmd]: [Command]) => cmd.type === "createChannel",
-    );
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "createChannel");
     expect(calls.length).toBe(1);
     const cmd = calls[0][0] as Extract<Command, { type: "createChannel" }>;
     expect(cmd.kind).toBe("source");

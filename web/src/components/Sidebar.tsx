@@ -3,12 +3,13 @@
  * Currently exposes: Mixer (home), Analyzer.
  * Uses hash-based routing consistent with App.tsx.
  */
+import type { JSX } from "solid-js";
 import { Activity, Grid2x2 } from "lucide-solid";
 
 interface NavItem {
   label: string;
   hash: string;
-  icon: () => unknown;
+  icon: () => JSX.Element;
   ariaLabel: string;
 }
 

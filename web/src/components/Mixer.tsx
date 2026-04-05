@@ -288,7 +288,7 @@ export default function Mixer() {
 
                       {/* Effects sub-row — shown below each channel row when a mix is expanded */}
                       <Show when={expandedMixKey() !== null}>
-                        {() => {
+                        {(() => {
                           const expandedKey = expandedMixKey()!;
                           const expandedMix = mixes().find((m) => descKey(m.desc) === expandedKey);
                           if (!expandedMix) return null;
@@ -309,7 +309,7 @@ export default function Mixer() {
                               onOpenCellEq={() => openCellEq(ch.desc, expandedMix.desc)}
                             />
                           );
-                        }}
+                        })()}
                       </Show>
                     </>
                   )}
