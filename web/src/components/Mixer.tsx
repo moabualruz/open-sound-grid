@@ -191,7 +191,7 @@ export default function Mixer() {
             "background-color": "var(--color-bg-primary)",
           }}
         >
-          <Show when={graphState.connected} fallback={<EmptyState kind="disconnected" />}>
+          <Show when={state.connected} fallback={<EmptyState kind="disconnected" />}>
             <div
               ref={gridRef}
               role="grid"
