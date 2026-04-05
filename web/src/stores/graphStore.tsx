@@ -41,7 +41,13 @@ export function GraphProvider(props: ParentProps) {
     };
 
     ws.onmessage = (event) => {
-      const graph: AudioGraph = JSON.parse(event.data);
+      let graph: AudioGraph;
+      try {
+        graph = JSON.parse(event.data);
+      } catch (e) {
+        console.warn("OSG: malformed WS frame", e);
+        return;
+      }
       setState("graph", reconcile(graph));
     };
 

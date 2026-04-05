@@ -99,7 +99,13 @@ export function SessionProvider(props: ParentProps) {
       setState("reconnectAttempt", 0);
     };
     session.onmessage = (event) => {
-      const data: MixerSession = JSON.parse(event.data);
+      let data: MixerSession;
+      try {
+        data = JSON.parse(event.data);
+      } catch (e) {
+        console.warn("OSG: malformed WS frame", e);
+        return;
+      }
       setState("session", reconcile(data));
     };
     session.onclose = () => {

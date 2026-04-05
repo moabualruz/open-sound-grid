@@ -64,6 +64,7 @@ export default function ContextMenu(props: ContextMenuProps): JSX.Element {
         style={{
           top: `${resolvedPosition().y}px`,
           left: `${resolvedPosition().x}px`,
+          animation: "osg-context-menu-in 100ms ease-out both",
         }}
         onMouseDown={(event) => event.stopPropagation()}
         onContextMenu={(event) => event.preventDefault()}

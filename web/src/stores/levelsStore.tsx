@@ -36,7 +36,13 @@ export function LevelsProvider(props: ParentProps) {
     };
 
     ws.onmessage = (event) => {
-      const levels: PeakLevel[] = JSON.parse(event.data);
+      let levels: PeakLevel[];
+      try {
+        levels = JSON.parse(event.data);
+      } catch (e) {
+        console.warn("OSG: malformed WS frame", e);
+        return;
+      }
       const peaks: Record<string, { left: number; right: number }> = {};
       for (const l of levels) {
         peaks[String(l.nodeId)] = { left: l.left, right: l.right };

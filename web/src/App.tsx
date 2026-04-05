@@ -7,6 +7,14 @@ import { MonitorProvider } from "./stores/monitorStore";
 import Mixer from "./components/Mixer";
 import Sidebar from "./components/Sidebar";
 
+function useCompactMode() {
+  const [compact, setCompact] = createSignal(false);
+  const handler = (e: Event) => setCompact((e as CustomEvent<boolean>).detail);
+  window.addEventListener("osg:compact-mode", handler);
+  onCleanup(() => window.removeEventListener("osg:compact-mode", handler));
+  return compact;
+}
+
 const EqDemo = lazy(() => import("./eq/EqDemo"));
 const AnalyzerPage = lazy(() => import("./spectrum/AnalyzerPage"));
 
@@ -21,6 +29,7 @@ function useRoute() {
 /** Inner shell rendered inside providers so hooks (useGraph) are available. */
 function AppShell(shellProps: { route: () => string }) {
   const graphState = useGraph();
+  const compact = useCompactMode();
 
   function openSettings() {
     window.dispatchEvent(new CustomEvent("osg:open-settings"));
@@ -28,11 +37,13 @@ function AppShell(shellProps: { route: () => string }) {
 
   return (
     <div class="flex h-screen">
-      <Sidebar
-        currentHash={shellProps.route()}
-        devices={graphState.graph.devices}
-        onOpenSettings={openSettings}
-      />
+      <div style={{ display: compact() ? "none" : undefined }}>
+        <Sidebar
+          currentHash={shellProps.route()}
+          devices={graphState.graph.devices}
+          onOpenSettings={openSettings}
+        />
+      </div>
       <div class="flex-1 min-w-0">
         <Show when={shellProps.route() !== "#analyzer"} fallback={<AnalyzerPage />}>
           <Mixer />
