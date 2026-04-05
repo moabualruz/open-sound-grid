@@ -31,6 +31,11 @@ export interface EqPageTarget {
   initialEffects?: EffectsConfig;
   /** Sink descriptor for monitor (solo) functionality. */
   sinkDescriptor?: EndpointDescriptor;
+  /**
+   * When provided, a SpectrumAnalyzer overlay is rendered behind the EQ graph.
+   * Must be a valid /ws/spectrum node key.
+   */
+  spectrumNodeKey?: string;
 }
 
 interface EqPageProps {
@@ -154,6 +159,7 @@ export default function EqPage(props: EqPageProps) {
           initialEq={props.target.initialEq}
           onEqChange={handleEqChange}
           category={props.target.sourceType === "mic" ? "mic" : props.target.sourceType}
+          spectrumNodeKey={props.target.spectrumNodeKey}
         />
         <EffectsBlock
           sourceType={props.target.sourceType}

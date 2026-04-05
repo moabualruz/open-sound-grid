@@ -5,8 +5,10 @@ import { MixerSettingsProvider } from "./stores/mixerSettings";
 import { LevelsProvider } from "./stores/levelsStore";
 import { MonitorProvider } from "./stores/monitorStore";
 import Mixer from "./components/Mixer";
+import Sidebar from "./components/Sidebar";
 
 const EqDemo = lazy(() => import("./eq/EqDemo"));
+const AnalyzerPage = lazy(() => import("./spectrum/AnalyzerPage"));
 
 function useRoute() {
   const [hash, setHash] = createSignal(window.location.hash);
@@ -24,7 +26,17 @@ export default function App() {
           <MonitorProvider>
             <MixerSettingsProvider>
               <LevelsProvider>
-                <Mixer />
+                <div class="flex h-screen">
+                  <Sidebar currentHash={route()} />
+                  <div class="flex-1 min-w-0">
+                    <Show
+                      when={route() !== "#analyzer"}
+                      fallback={<AnalyzerPage />}
+                    >
+                      <Mixer />
+                    </Show>
+                  </div>
+                </div>
               </LevelsProvider>
             </MixerSettingsProvider>
           </MonitorProvider>

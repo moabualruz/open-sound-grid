@@ -5,13 +5,15 @@
  *
  * Layout composition only — state lives in useEqState, preset UI in EqPresetManager.
  */
-import { Show } from "solid-js";
+import { Show, lazy } from "solid-js";
 import type { EqConfig } from "../types/eq";
 import { useEqState, MAX_BANDS } from "./useEqState";
 import EqGraph from "./EqGraph";
 import EqBandPopup from "./EqBandPopup";
 import EqMacroSliders from "./EqMacroSliders";
 import EqPresetManager from "./EqPresetManager";
+
+const SpectrumAnalyzer = lazy(() => import("../spectrum/SpectrumAnalyzer"));
 
 interface EqPanelProps {
   label: string;
@@ -23,6 +25,11 @@ interface EqPanelProps {
   onEqChange?: (eq: EqConfig) => void;
   /** Category determines which presets appear in the dropdown. */
   category?: "app" | "mic" | "mix" | "cell";
+  /**
+   * When provided, renders a SpectrumAnalyzer in overlay mode behind the EQ graph.
+   * Must be a valid /ws/spectrum node key.
+   */
+  spectrumNodeKey?: string;
 }
 
 export default function EqPanel(props: EqPanelProps) {
@@ -104,8 +111,31 @@ export default function EqPanel(props: EqPanelProps) {
         </div>
       </div>
 
-      {/* EQ Graph */}
-      <div style={{ opacity: s.enabled() ? 1 : 0.3 }} class="transition-opacity duration-200">
+      {/* EQ Graph — optional spectrum overlay sits behind the SVG */}
+      <div
+        style={{ opacity: s.enabled() ? 1 : 0.3, position: "relative" }}
+        class="transition-opacity duration-200"
+      >
+        <Show when={props.spectrumNodeKey}>
+          {(nodeKey) => (
+            <div
+              style={{
+                position: "absolute",
+                inset: "0",
+                "pointer-events": "none",
+                overflow: "hidden",
+              }}
+              aria-hidden="true"
+            >
+              <SpectrumAnalyzer
+                nodeKey={nodeKey()}
+                overlay={true}
+                width={720}
+                height={280}
+              />
+            </div>
+          )}
+        </Show>
         <EqGraph
           bands={s.bands()}
           selectedBandId={s.selectedBandId()}
