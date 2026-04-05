@@ -12,11 +12,26 @@ use tracing::{error, warn};
 
 use crate::config::{PersistentSettings, PersistentState};
 use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
+use crate::graph::undo::UndoStack;
 use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
 use crate::routing::event_translator;
 use crate::routing::handler_registry::HandlerRegistry;
 use crate::routing::messages::{ReducerMsg, StateMsg, StateOutputMsg};
+
+/// Returns `true` for commands that structurally alter the session and should
+/// be snapshotted before dispatch so the user can undo them.
+fn needs_snapshot(msg: &StateMsg) -> bool {
+    matches!(
+        msg,
+        StateMsg::AddChannel(..)
+            | StateMsg::RemoveEndpoint(..)
+            | StateMsg::Link(..)
+            | StateMsg::RemoveLink(..)
+            | StateMsg::AssignApp(..)
+            | StateMsg::UnassignApp(..)
+    )
+}
 
 /// Debounce interval for PipeWire graph updates (20 Hz).
 /// 50ms balances responsiveness with CPU cost — graph events arrive in bursts
@@ -159,6 +174,7 @@ pub async fn run_reducer(
     tokio::spawn(async move {
         let mut graph: Box<AudioGraph> = Box::default();
         let mut runtime = RuntimeState::default();
+        let mut undo_stack = UndoStack::new();
         let settings = settings_clone;
         let registry = HandlerRegistry::new();
         let mut last_reconciled_generation: u64 = 0;
@@ -201,14 +217,54 @@ pub async fn run_reducer(
 
             match message {
                 ReducerMsg::Update(msg) => {
-                    let mut state = state_tx.borrow().as_ref().clone();
                     let current_settings = settings.read().await.clone();
+
+                    // --- Undo/Redo: handled before registry dispatch ---
+                    let new_state = match msg {
+                        StateMsg::Undo => {
+                            let current = state_tx.borrow().as_ref().clone();
+                            undo_stack.undo(current)
+                        }
+                        StateMsg::Redo => {
+                            let current = state_tx.borrow().as_ref().clone();
+                            undo_stack.redo(current)
+                        }
+                        ref regular_msg => {
+                            // Snapshot before destructive commands.
+                            if needs_snapshot(regular_msg) {
+                                let snapshot = state_tx.borrow().as_ref().clone();
+                                undo_stack.push(snapshot);
+                            }
+                            None // fall through to registry dispatch
+                        }
+                    };
+
+                    let mut state = if let Some(restored) = new_state {
+                        // Undo/Redo: skip registry, use restored state directly.
+                        restored
+                    } else {
+                        // Normal command: dispatch through registry.
+                        let mut state = state_tx.borrow().as_ref().clone();
+                        runtime.generation = runtime.generation.wrapping_add(1);
+                        let (output_msg, domain_events) =
+                            registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
+                        let domain_pw = event_translator::translate_all(&domain_events);
+                        for m in domain_pw {
+                            if pw_sender.send(m).is_err() {
+                                error!("[Reducer] PipeWire channel closed");
+                                return;
+                            }
+                        }
+                        if let Some(out) = output_msg {
+                            let _ = output_tx.send(out);
+                        }
+                        state
+                    };
+
+                    // Full reconcile (applies to both normal mutations and undo/redo).
                     runtime.generation = runtime.generation.wrapping_add(1);
-                    let (output_msg, domain_events) =
-                        registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
-                    let mut pw_messages = event_translator::translate_all(&domain_events);
                     let diff_events = state.diff(&graph, &current_settings, &mut runtime);
-                    pw_messages.extend(event_translator::translate_all(&diff_events));
+                    let pw_messages = event_translator::translate_all(&diff_events);
                     last_reconciled_generation = runtime.generation;
 
                     for m in pw_messages {
@@ -218,9 +274,6 @@ pub async fn run_reducer(
                         }
                     }
 
-                    if let Some(out) = output_msg {
-                        let _ = output_tx.send(out);
-                    }
                     let _ = state_tx.send(Arc::new(state));
 
                     // Reset auto-save timer on every mutation

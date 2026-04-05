@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, onMount, onCleanup } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import MixHeader from "./MixHeader";
@@ -33,6 +33,24 @@ export default function Mixer() {
     () => graphState.graph,
     send,
   );
+
+  // --- Undo/Redo keyboard handler ---
+  function handleUndoRedo(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+    if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
+      if (e.shiftKey) {
+        e.preventDefault();
+        send({ type: "redo" });
+      } else {
+        e.preventDefault();
+        send({ type: "undo" });
+      }
+    }
+  }
+
+  onMount(() => document.addEventListener("keydown", handleUndoRedo));
+  onCleanup(() => document.removeEventListener("keydown", handleUndoRedo));
 
   // --- EQ page navigation ---
   function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {
@@ -85,24 +103,6 @@ export default function Mixer() {
 
   return (
     <div class="flex h-screen flex-col">
-      {/* Reconnecting banner */}
-      <Show when={state.reconnecting}>
-        <div
-          class="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium"
-          style={{
-            "background-color": "var(--color-vu-hot, #ef4444)",
-            color: "#fff",
-          }}
-          role="status"
-          aria-live="polite"
-        >
-          <span>Reconnecting...</span>
-          <span>
-            (attempt {state.reconnectAttempt + 1})
-          </span>
-        </div>
-      </Show>
-
       {/* Top bar */}
       <header
         class="flex items-center justify-between border-b px-5 py-2"
@@ -166,11 +166,7 @@ export default function Mixer() {
               class="outline-none"
             >
               {/* Mix column headers */}
-              <div
-                class="mb-2 grid items-stretch gap-2"
-                style={{ "grid-template-columns": gridCols() }}
-                role="row"
-              >
+              <div class="mb-2 grid items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
                 <div class="flex items-stretch justify-end" role="columnheader">
                   <MixCreator maxMixes={8} currentCount={mixes().length} />
                 </div>
@@ -211,11 +207,7 @@ export default function Mixer() {
                   onReorder={persistChannelOrder}
                 >
                   {(ch, rowIdx, dragHandle) => (
-                    <div
-                      class="grid min-h-[4.5rem] items-stretch gap-2"
-                      style={{ "grid-template-columns": gridCols() }}
-                      role="row"
-                    >
+                    <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
                       <ChannelLabel
                         descriptor={ch.desc}
                         endpoint={ch.ep}

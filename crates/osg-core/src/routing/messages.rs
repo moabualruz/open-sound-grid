@@ -54,6 +54,10 @@ pub enum StateMsg {
     SetEffects(EndpointDescriptor, EffectsConfig),
     /// Set effects chain configuration for a per-route cell.
     SetCellEffects(EndpointDescriptor, EndpointDescriptor, EffectsConfig),
+    /// Undo the last destructive operation.
+    Undo,
+    /// Redo the last undone operation.
+    Redo,
 }
 
 // ---------------------------------------------------------------------------

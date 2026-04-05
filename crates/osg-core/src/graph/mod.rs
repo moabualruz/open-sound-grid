@@ -17,6 +17,7 @@ pub mod runtime;
 pub mod serde_helpers;
 pub mod session;
 pub mod types;
+pub mod undo;
 pub mod utils;
 pub mod volume_state;
 

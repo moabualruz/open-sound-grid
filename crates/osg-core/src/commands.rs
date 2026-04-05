@@ -147,6 +147,12 @@ pub enum Command {
         target: EndpointDescriptor,
         effects: EffectsConfig,
     },
+
+    /// Undo the last destructive operation.
+    Undo,
+
+    /// Redo the last undone operation.
+    Redo,
 }
 
 impl Command {
@@ -224,6 +230,8 @@ impl Command {
                 target,
                 effects,
             } => StateMsg::SetCellEffects(source, target, effects),
+            Self::Undo => StateMsg::Undo,
+            Self::Redo => StateMsg::Redo,
         }
     }
 }
