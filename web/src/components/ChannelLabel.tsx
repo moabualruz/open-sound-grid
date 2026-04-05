@@ -16,7 +16,7 @@ import {
 } from "lucide-solid";
 import AppAssignment from "./AppAssignment";
 import MeterSlider from "./MeterSlider";
-import { useLevels } from "../stores/levelsStore";
+import { useSmoothedAggregatePeak } from "../hooks/useSmoothedPeak";
 import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
@@ -50,24 +50,14 @@ function channelIcon(displayName: string) {
 export default function ChannelLabel(props: ChannelLabelProps) {
   const { state, send } = useSession();
   const { settings } = useMixerSettings();
-  const levels = useLevels();
 
-  /** Reactive peak accessor: aggregate max peaks across all cell sinks for this channel. */
-  const channelPeak = () => {
-    if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
-    let maxLeft = 0;
-    let maxRight = 0;
-    for (const link of state.session.links ?? []) {
-      if (!("channel" in link.start) || link.start.channel !== props.descriptor.channel) continue;
-      if (link.cellNodeId == null) continue;
-      const p = levels.peaks[String(link.cellNodeId)];
-      if (p) {
-        if (p.left > maxLeft) maxLeft = p.left;
-        if (p.right > maxRight) maxRight = p.right;
-      }
-    }
-    return { left: maxLeft, right: maxRight };
-  };
+  const channelPeak = useSmoothedAggregatePeak(() => {
+    if (!("channel" in props.descriptor)) return [];
+    const chId = props.descriptor.channel;
+    return (state.session.links ?? [])
+      .filter((link) => "channel" in link.start && link.start.channel === chId)
+      .map((link) => link.cellNodeId);
+  });
 
   const [local, setLocal] = createSignal(0);
   const [localL, setLocalL] = createSignal(1);
@@ -238,7 +228,8 @@ export default function ChannelLabel(props: ChannelLabelProps) {
               <div class="flex-1" onWheel={handleWheel}>
                 <MeterSlider
                   value={local()}
-                  peak={channelPeak}
+                  peakLeft={channelPeak.left()}
+                  peakRight={channelPeak.right()}
                   onInput={handleInput}
                   muted={isMuted()}
                   label="Master volume"
@@ -255,7 +246,8 @@ export default function ChannelLabel(props: ChannelLabelProps) {
               <div class="flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
                 <MeterSlider
                   value={localL()}
-                  peak={() => ({ left: channelPeak().left, right: channelPeak().left })}
+                  peakLeft={channelPeak.left()}
+                  peakRight={channelPeak.left()}
                   onInput={(v) => handleStereoInput("left", v)}
                   muted={isMuted()}
                   label="Left volume"
@@ -268,7 +260,8 @@ export default function ChannelLabel(props: ChannelLabelProps) {
               <div class="flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
                 <MeterSlider
                   value={localR()}
-                  peak={() => ({ left: channelPeak().right, right: channelPeak().right })}
+                  peakLeft={channelPeak.right()}
+                  peakRight={channelPeak.right()}
                   onInput={(v) => handleStereoInput("right", v)}
                   muted={isMuted()}
                   label="Right volume"

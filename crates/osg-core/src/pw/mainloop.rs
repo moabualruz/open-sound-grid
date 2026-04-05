@@ -412,6 +412,37 @@ pub(super) fn init_mainloop(
                         debug!("[PW] updated effects on filter '{filter_key}'");
                     }
                 }
+                ToPipewireMessage::PeakTick => {
+                    for (key, filter) in active_filters.borrow().iter() {
+                        let (l, r) = filter.handle().peak();
+                        if l > 0.0 || r > 0.0 {
+                            if let Some(node_id) = filter.node_id() {
+                                peak_store.get_or_insert(node_id).store(l, r);
+                            }
+                            if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-") {
+                                let s = store.borrow();
+                                if let Some(&cell_pw_id) =
+                                    s.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
+                                {
+                                    peak_store.get_or_insert(cell_pw_id).store(l, r);
+                                }
+                            }
+                            if let Some(ulid) = key
+                                .strip_prefix("mix.")
+                                .and_then(|s| s.parse::<Ulid>().ok())
+                            {
+                                let s = store.borrow();
+                                if let Some((&ch_pw_id, _)) = s.nodes.iter().find(|(_, n)| {
+                                    n.identifier
+                                        .node_name()
+                                        .is_some_and(|name| name.contains(&ulid.to_string()))
+                                }) {
+                                    peak_store.get_or_insert(ch_pw_id).store(l, r);
+                                }
+                            }
+                        }
+                    }
+                }
                 ToPipewireMessage::Exit => {
                     let s = store.borrow();
                     for (&node_id, node) in &s.nodes {
@@ -435,7 +466,20 @@ pub(super) fn init_mainloop(
     });
 
     match init_status_rx.recv() {
-        Ok(Ok(_)) => Ok((handle, to_pw_tx, from_pw_rx)),
+        Ok(Ok(_)) => {
+            // 30 Hz timer copies FilterHandle peaks → PeakStore continuously.
+            let peak_tx = to_pw_tx.clone();
+            std::thread::Builder::new()
+                .name("osg-peak-tick".into())
+                .spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(33));
+                    if peak_tx.send(ToPipewireMessage::PeakTick).is_err() {
+                        break;
+                    }
+                })
+                .ok();
+            Ok((handle, to_pw_tx, from_pw_rx))
+        }
         Ok(Err(init_error)) => Err(init_error),
         Err(_) => Err(PwError::ThreadExited),
     }

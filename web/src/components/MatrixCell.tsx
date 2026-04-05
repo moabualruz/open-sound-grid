@@ -6,7 +6,7 @@ import { useMonitor } from "../stores/monitorStore";
 import { Volume2, VolumeX, SlidersVertical, Headphones, Plus } from "lucide-solid";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import MeterSlider from "./MeterSlider";
-import { useLevels } from "../stores/levelsStore";
+import { useSmoothedPeak } from "../hooks/useSmoothedPeak";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
 
 /** Imperative actions exposed to the parent grid for keyboard shortcuts. */
@@ -31,14 +31,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const { settings } = useMixerSettings();
   const monitor = useMonitor();
-  const levels = useLevels();
-
-  /** Reactive peak accessor for this cell's PipeWire node. */
-  const cellPeak = () => {
-    const nodeId = props.link?.cellNodeId;
-    if (!nodeId) return { left: 0, right: 0 };
-    return levels.peaks[String(nodeId)] ?? { left: 0, right: 0 };
-  };
+  const peak = useSmoothedPeak(() => props.link?.cellNodeId);
   const [cellVol, setCellVol] = createSignal(1);
   const [cellL, setCellL] = createSignal(1);
   const [cellR, setCellR] = createSignal(1);
@@ -240,7 +233,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               <div class="flex-1" onWheel={handleWheel}>
                 <MeterSlider
                   value={cellVol()}
-                  peak={cellPeak}
+                  peakLeft={peak.left()}
+                  peakRight={peak.right()}
                   onInput={handleInput}
                   muted={isMuted()}
                   label="Cell volume"
@@ -255,7 +249,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                 <div class="flex-1">
                   <MeterSlider
                     value={cellL()}
-                    peak={() => ({ left: cellPeak().left, right: cellPeak().left })}
+                    peakLeft={peak.left()}
+                    peakRight={peak.left()}
                     onInput={(v) => handleStereoInput("left", v)}
                     muted={isMuted()}
                     label="Cell volume left"
@@ -273,7 +268,8 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                 <div class="flex-1">
                   <MeterSlider
                     value={cellR()}
-                    peak={() => ({ left: cellPeak().right, right: cellPeak().right })}
+                    peakLeft={peak.right()}
+                    peakRight={peak.right()}
                     onInput={(v) => handleStereoInput("right", v)}
                     muted={isMuted()}
                     label="Cell volume right"

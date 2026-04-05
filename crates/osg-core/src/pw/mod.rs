@@ -315,6 +315,9 @@ pub enum ToPipewireMessage {
         filter_key: String,
         effects: crate::graph::EffectsConfig,
     },
+    /// Periodic peak-level tick (~30 Hz). Copies live peaks from
+    /// FilterHandle atomics into PeakStore for WebSocket broadcast.
+    PeakTick,
     Exit,
 }
 

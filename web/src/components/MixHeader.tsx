@@ -4,7 +4,7 @@ import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import MeterSlider from "./MeterSlider";
-import { useLevels } from "../stores/levelsStore";
+import { useSmoothedAggregatePeak } from "../hooks/useSmoothedPeak";
 import {
   Headphones,
   Radio,
@@ -97,32 +97,17 @@ export function getOutputDevices(
 export default function MixHeader(props: MixHeaderProps): JSX.Element {
   const { state, send } = useSession();
   const graphState = useGraph();
-  const levels = useLevels();
 
-  /** Reactive peak accessor: use outputNodeId if available, otherwise aggregate
-   *  max peaks from all cells ending at this mix (link.end matches this descriptor). */
-  const mixPeak = () => {
-    if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
-    const ch = state.session.channels[props.descriptor.channel];
-    // Direct output node peak (when mix has a hardware output assigned)
-    if (ch?.outputNodeId) {
-      const p = levels.peaks[String(ch.outputNodeId)];
-      if (p) return p;
-    }
-    // Fallback: aggregate max peaks from all cell sinks feeding this mix
-    let maxLeft = 0;
-    let maxRight = 0;
-    for (const link of state.session.links ?? []) {
-      if (!("channel" in link.end) || link.end.channel !== props.descriptor.channel) continue;
-      if (link.cellNodeId == null) continue;
-      const p = levels.peaks[String(link.cellNodeId)];
-      if (p) {
-        if (p.left > maxLeft) maxLeft = p.left;
-        if (p.right > maxRight) maxRight = p.right;
-      }
-    }
-    return { left: maxLeft, right: maxRight };
-  };
+  const mixPeak = useSmoothedAggregatePeak(() => {
+    if (!("channel" in props.descriptor)) return [];
+    const chId = props.descriptor.channel;
+    const ch = state.session.channels[chId];
+    // Prefer the direct output node; fall back to cell sinks feeding this mix
+    if (ch?.outputNodeId) return [ch.outputNodeId];
+    return (state.session.links ?? [])
+      .filter((link) => "channel" in link.end && link.end.channel === chId)
+      .map((link) => link.cellNodeId);
+  });
 
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
@@ -361,7 +346,8 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         <div class="flex-1">
           <MeterSlider
             value={localVol()}
-            peak={mixPeak}
+            peakLeft={mixPeak.left()}
+            peakRight={mixPeak.right()}
             onInput={handleVolumeInput}
             muted={props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"}
             label={`${label()} master volume`}
