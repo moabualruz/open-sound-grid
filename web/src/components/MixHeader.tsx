@@ -11,6 +11,8 @@ import {
   Film,
   MessageCircle,
   Speaker,
+  Volume2,
+  VolumeX,
   X,
   ChevronDown,
   ChevronUp,
@@ -97,12 +99,29 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
   const graphState = useGraph();
   const levels = useLevels();
 
-  /** Reactive peak accessor for this mix's output node. */
+  /** Reactive peak accessor: use outputNodeId if available, otherwise aggregate
+   *  max peaks from all cells ending at this mix (link.end matches this descriptor). */
   const mixPeak = () => {
     if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
     const ch = state.session.channels[props.descriptor.channel];
-    if (!ch?.outputNodeId) return { left: 0, right: 0 };
-    return levels.peaks[String(ch.outputNodeId)] ?? { left: 0, right: 0 };
+    // Direct output node peak (when mix has a hardware output assigned)
+    if (ch?.outputNodeId) {
+      const p = levels.peaks[String(ch.outputNodeId)];
+      if (p) return p;
+    }
+    // Fallback: aggregate max peaks from all cell sinks feeding this mix
+    let maxLeft = 0;
+    let maxRight = 0;
+    for (const link of state.session.links ?? []) {
+      if (!("channel" in link.end) || link.end.channel !== props.descriptor.channel) continue;
+      if (link.cellNodeId == null) continue;
+      const p = levels.peaks[String(link.cellNodeId)];
+      if (p) {
+        if (p.left > maxLeft) maxLeft = p.left;
+        if (p.right > maxRight) maxRight = p.right;
+      }
+    }
+    return { left: maxLeft, right: maxRight };
   };
 
   const [editing, setEditing] = createSignal(false);
@@ -308,13 +327,43 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         </button>
       </div>
 
-      {/* Mix master volume with VU meter */}
+      {/* Mix master volume with VU meter + mute */}
       <div class="flex items-center gap-1.5 px-2 pb-2">
+        <button
+          type="button"
+          onClick={() => {
+            const muted = props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked";
+            send({ type: "setMute", endpoint: props.descriptor, muted: !muted });
+          }}
+          class={`flex h-6 w-6 shrink-0 items-center justify-center rounded transition-colors duration-150 ${
+            props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"
+              ? "text-vu-hot"
+              : "text-text-muted hover:text-text-secondary"
+          }`}
+          aria-label={
+            props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"
+              ? "Unmute mix"
+              : "Mute mix"
+          }
+          title={
+            props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"
+              ? "Unmute"
+              : "Mute"
+          }
+        >
+          <Show
+            when={props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"}
+            fallback={<Volume2 size={12} />}
+          >
+            <VolumeX size={12} />
+          </Show>
+        </button>
         <div class="flex-1">
           <MeterSlider
             value={localVol()}
             peak={mixPeak}
             onInput={handleVolumeInput}
+            muted={props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"}
             label={`${label()} master volume`}
             valueText={`${volPct()}%`}
           />

@@ -57,7 +57,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
     let maxLeft = 0;
     let maxRight = 0;
-    for (const link of state.session.links) {
+    for (const link of state.session.links ?? []) {
       if (!("channel" in link.start) || link.start.channel !== props.descriptor.channel) continue;
       if (link.cellNodeId == null) continue;
       const p = levels.peaks[String(link.cellNodeId)];
