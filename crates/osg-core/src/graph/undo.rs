@@ -43,6 +43,10 @@ impl UndoStack {
     pub fn undo(&mut self, current: MixerSession) -> Option<MixerSession> {
         let snapshot = self.undo_stack.pop_back()?;
         self.redo_stack.push_back(current);
+        // F3-P0-1: Cap redo stack the same as undo stack.
+        if self.redo_stack.len() > MAX_UNDO_DEPTH {
+            self.redo_stack.pop_front();
+        }
         Some(snapshot)
     }
 
@@ -52,6 +56,10 @@ impl UndoStack {
     pub fn redo(&mut self, current: MixerSession) -> Option<MixerSession> {
         let snapshot = self.redo_stack.pop_back()?;
         self.undo_stack.push_back(current);
+        // Cap undo stack (same as push).
+        if self.undo_stack.len() > MAX_UNDO_DEPTH {
+            self.undo_stack.pop_front();
+        }
         Some(snapshot)
     }
 }

@@ -46,14 +46,14 @@ pub fn parse_desktop_entry(content: &str) -> Option<DesktopEntry> {
         if !in_section {
             continue;
         }
-        if let Some(val) = line.strip_prefix("Name=") {
-            if name.is_none() {
-                name = Some(val.to_owned());
-            }
-        } else if let Some(val) = line.strip_prefix("Icon=") {
-            if icon.is_none() {
-                icon = Some(val.to_owned());
-            }
+        if let Some(val) = line.strip_prefix("Name=")
+            && name.is_none()
+        {
+            name = Some(val.to_owned());
+        } else if let Some(val) = line.strip_prefix("Icon=")
+            && icon.is_none()
+        {
+            icon = Some(val.to_owned());
         }
         if name.is_some() && icon.is_some() {
             break;
@@ -190,16 +190,16 @@ pub fn normalize_name(name: &str) -> String {
     let mut s = name.to_lowercase();
     // Strip reverse-DNS prefix
     for prefix in &["org.", "com.", "net.", "io.", "app."] {
-        if let Some(rest) = s.strip_prefix(prefix) {
-            if let Some(dot) = rest.find('.') {
-                s = rest[dot + 1..].to_owned();
-                break;
-            }
+        if let Some(rest) = s.strip_prefix(prefix)
+            && let Some(dot) = rest.find('.')
+        {
+            s = rest[dot + 1..].to_owned();
+            break;
         }
     }
     // Strip version suffix
     if let Some(idx) = s
-        .rfind(|c: char| c == '-' || c == '_')
+        .rfind(['-', '_'])
         .filter(|&i| {
             s[i + 1..]
                 .chars()
@@ -254,12 +254,54 @@ fn find_icon_for_app(normalized: &str) -> Option<PathBuf> {
 // Icon serving
 // ---------------------------------------------------------------------------
 
+/// Returns `true` if the app name contains characters that could be used
+/// for path traversal or injection.
+pub fn is_valid_app_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("..")
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+}
+
+/// Allowed parent directories for resolved icon paths.
+fn allowed_icon_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".local/share/icons"));
+        roots.push(home.join(".local/share/applications"));
+    }
+    roots.push(PathBuf::from("/usr/share/icons"));
+    roots.push(PathBuf::from("/usr/share/pixmaps"));
+    roots.push(PathBuf::from("/usr/share/applications"));
+    roots
+}
+
+/// Verify that a resolved icon path is within an allowed directory.
+fn path_is_allowed(path: &Path) -> bool {
+    let Ok(canonical) = path.canonicalize() else {
+        return false;
+    };
+    allowed_icon_roots()
+        .iter()
+        .any(|root| canonical.starts_with(root))
+}
+
 /// Resolve and serve an icon for `app_name`.  Called from the axum handler in
 /// `main.rs` which owns the `AppState` containing the `IconCache`.
 pub fn serve_icon(cache: &IconCache, app_name: &str) -> Response<Body> {
+    if !is_valid_app_name(app_name) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     match cache.resolve(app_name) {
         None => StatusCode::NOT_FOUND.into_response(),
-        Some(path) => serve_file(&path),
+        Some(path) => {
+            // CRIT-1: Verify resolved path is within allowed icon directories.
+            if !path_is_allowed(&path) {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            serve_file(&path)
+        }
     }
 }
 
@@ -277,6 +319,10 @@ fn serve_file(path: &Path) -> Response<Body> {
             .header(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(content_type),
+            )
+            .header(
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
             )
             .body(Body::from(bytes))
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),

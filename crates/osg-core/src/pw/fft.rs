@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
-use realfft::RealFftPlanner;
+use realfft::{RealFftPlanner, RealToComplex};
 
 use super::filter::filter_handle::SAMPLE_RATE;
 
@@ -113,6 +113,8 @@ pub struct FftRingBuffer {
     window: [f32; FFT_SIZE],
     /// Pre-computed log-frequency bin mapping.
     bin_mapping: [(usize, usize); SPECTRUM_BINS],
+    /// Pre-allocated FFT plan (avoids allocating planner on RT thread).
+    fft_plan: Arc<dyn RealToComplex<f32>>,
     /// Scratch buffer for windowed time-domain data (input to FFT).
     scratch_input: Vec<f32>,
     /// Scratch buffer for FFT complex output.
@@ -138,12 +140,16 @@ impl FftRingBuffer {
     /// Create a new ring buffer with all memory pre-allocated.
     pub fn new() -> Self {
         let output_len = FFT_SIZE / 2 + 1;
+        // Pre-allocate planner and plan at construction (not on RT thread).
+        let mut planner = RealFftPlanner::<f32>::new();
+        let fft_plan = planner.plan_fft_forward(FFT_SIZE);
         Self {
             buffer: [0.0; FFT_SIZE],
             write_pos: 0,
             samples_accumulated: 0,
             window: hann_window(),
             bin_mapping: log_bin_mapping(),
+            fft_plan,
             scratch_input: vec![0.0; FFT_SIZE],
             scratch_output: vec![realfft::num_complex::Complex::new(0.0, 0.0); output_len],
         }
@@ -172,21 +178,20 @@ impl FftRingBuffer {
         }
         self.samples_accumulated = 0;
 
-        // Copy samples from ring buffer in order, applying Hann window
+        // P1-3: Copy samples from ring buffer using two contiguous slices
+        // instead of per-element modulo indexing.
         let start = self.write_pos; // oldest sample
-        for i in 0..FFT_SIZE {
-            let idx = (start + i) % FFT_SIZE;
-            self.scratch_input[i] = self.buffer[idx] * self.window[i];
+        let first_len = FFT_SIZE - start;
+        for i in 0..first_len {
+            self.scratch_input[i] = self.buffer[start + i] * self.window[i];
+        }
+        for i in 0..start {
+            self.scratch_input[first_len + i] = self.buffer[i] * self.window[first_len + i];
         }
 
-        // Compute real FFT
-        let mut planner = RealFftPlanner::<f32>::new();
-        let fft = planner.plan_fft_forward(FFT_SIZE);
-        // Reset output buffer
-        for c in &mut self.scratch_output {
-            *c = realfft::num_complex::Complex::new(0.0, 0.0);
-        }
-        if fft
+        // Compute real FFT using pre-allocated plan (P0-1: no allocation on RT thread).
+        // P1-1: process() overwrites scratch_output; no need to zero it first.
+        if self.fft_plan
             .process(&mut self.scratch_input, &mut self.scratch_output)
             .is_err()
         {
@@ -223,20 +228,48 @@ impl FftRingBuffer {
 // Spectrum shared state (for FilterHandle)
 // ---------------------------------------------------------------------------
 
+/// Raw spectrum bins written by the RT thread (lock-free via atomics).
+/// The WS broadcast thread reads these and wraps in `Arc<SpectrumData>`.
+#[derive(Debug)]
+struct RawSpectrumBins {
+    left: [std::sync::atomic::AtomicU32; SPECTRUM_BINS],
+    right: [std::sync::atomic::AtomicU32; SPECTRUM_BINS],
+    /// Monotonic counter incremented on every publish; reader uses it to
+    /// detect new data without allocating on the RT side.
+    generation: std::sync::atomic::AtomicU64,
+}
+
+impl Default for RawSpectrumBins {
+    fn default() -> Self {
+        const NEG_INF_BITS: u32 = 0xff80_0000; // f32::NEG_INFINITY
+        Self {
+            left: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(NEG_INF_BITS)),
+            right: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(NEG_INF_BITS)),
+            generation: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
 /// Shared spectrum state published by the RT thread and read by WebSocket.
 #[derive(Debug, Clone)]
 pub struct SpectrumHandle {
     /// Whether any WebSocket client is subscribed to this node's spectrum.
     pub subscribed: Arc<AtomicBool>,
-    /// Latest computed spectrum data.
-    pub data: Arc<ArcSwap<SpectrumData>>,
+    /// Raw bins written by RT thread (no allocation).
+    raw: Arc<RawSpectrumBins>,
+    /// Cached Arc for the reader side (WS handler does the Arc::new).
+    cached: Arc<ArcSwap<SpectrumData>>,
+    /// Last generation the reader saw.
+    reader_gen: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for SpectrumHandle {
     fn default() -> Self {
         Self {
             subscribed: Arc::new(AtomicBool::new(false)),
-            data: Arc::new(ArcSwap::new(Arc::new(SpectrumData::default()))),
+            raw: Arc::new(RawSpectrumBins::default()),
+            cached: Arc::new(ArcSwap::new(Arc::new(SpectrumData::default()))),
+            reader_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -252,14 +285,43 @@ impl SpectrumHandle {
         self.subscribed.store(subscribed, Ordering::Relaxed);
     }
 
-    /// Publish new spectrum data (called from RT thread, lock-free).
+    /// Publish new spectrum data (called from RT thread).
+    ///
+    /// Writes raw f32 bins via atomic stores — zero allocation, lock-free.
+    /// The reader side (`load`) materialises the `Arc<SpectrumData>`.
     pub fn publish(&self, data: SpectrumData) {
-        self.data.store(Arc::new(data));
+        for (i, &v) in data.left.iter().enumerate() {
+            self.raw.left[i].store(v.to_bits(), Ordering::Relaxed);
+        }
+        for (i, &v) in data.right.iter().enumerate() {
+            self.raw.right[i].store(v.to_bits(), Ordering::Relaxed);
+        }
+        // Release fence so the reader sees all bin writes before the new generation.
+        self.raw.generation.fetch_add(1, Ordering::Release);
     }
 
     /// Load current spectrum data (called from WebSocket handler, lock-free).
+    ///
+    /// Allocates a new `Arc<SpectrumData>` only when new data is available,
+    /// keeping the allocation off the RT thread.
     pub fn load(&self) -> Arc<SpectrumData> {
-        self.data.load_full()
+        let current_gen = self.raw.generation.load(Ordering::Acquire);
+        let last_gen = self.reader_gen.load(Ordering::Relaxed);
+        if current_gen != last_gen {
+            let mut sd = SpectrumData::default();
+            for (i, atom) in self.raw.left.iter().enumerate() {
+                sd.left[i] = f32::from_bits(atom.load(Ordering::Relaxed));
+            }
+            for (i, atom) in self.raw.right.iter().enumerate() {
+                sd.right[i] = f32::from_bits(atom.load(Ordering::Relaxed));
+            }
+            let arc = Arc::new(sd);
+            self.cached.store(arc.clone());
+            self.reader_gen.store(current_gen, Ordering::Relaxed);
+            arc
+        } else {
+            self.cached.load_full()
+        }
     }
 }
 

@@ -26,6 +26,10 @@ fn needs_snapshot(msg: &StateMsg) -> bool {
         msg,
         StateMsg::AddChannel(..)
             | StateMsg::RemoveEndpoint(..)
+            | StateMsg::RenameEndpoint(..)
+            | StateMsg::SetMixOutput(..)
+            | StateMsg::SetChannelOrder(..)
+            | StateMsg::SetMixOrder(..)
             | StateMsg::Link(..)
             | StateMsg::RemoveLink(..)
             | StateMsg::AssignApp(..)

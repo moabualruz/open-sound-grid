@@ -7,15 +7,13 @@ import type { Command } from "../types/commands";
 export const BACKOFF_INITIAL_MS = 1000;
 export const BACKOFF_CAP_MS = 30_000;
 
+/** Maximum number of pending commands queued while disconnected. */
+const PENDING_COMMANDS_CAP = 100;
+
 /** Returns the delay in ms for the given attempt index (0-based). */
 export function computeBackoffDelay(attempt: number): number {
   const delay = BACKOFF_INITIAL_MS * Math.pow(2, attempt);
   return Math.min(delay, BACKOFF_CAP_MS);
-}
-
-/** Returns the next backoff delay given the current delay. */
-export function nextBackoffDelay(current: number): number {
-  return Math.min(current * 2, BACKOFF_CAP_MS);
 }
 
 const EMPTY_SESSION: MixerSession = {
@@ -67,35 +65,67 @@ export function SessionProvider(props: ParentProps) {
   }
 
   function connect(attempt = 0) {
+    // F1-P0-3: Close existing sockets before reconnect
+    if (sessionWs) {
+      sessionWs.onclose = null;
+      sessionWs.onerror = null;
+      sessionWs.onmessage = null;
+      sessionWs.close();
+      sessionWs = null;
+    }
+    if (commandWs) {
+      commandWs.onclose = null;
+      commandWs.onerror = null;
+      commandWs.onopen = null;
+      commandWs.close();
+      commandWs = null;
+    }
+
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const host = location.host;
 
+    // Track whether this connection was successfully opened so onclose
+    // can decide the correct reconnect attempt (F1-P0-1).
+    let opened = false;
+
     // Session state WebSocket (read)
-    sessionWs = new WebSocket(`${protocol}//${host}/ws/session`);
-    sessionWs.onopen = () => {
+    const session = new WebSocket(`${protocol}//${host}/ws/session`);
+    sessionWs = session;
+    session.onopen = () => {
+      opened = true;
       setState("connected", true);
       setState("reconnecting", false);
       setState("reconnectAttempt", 0);
     };
-    sessionWs.onmessage = (event) => {
-      const session: MixerSession = JSON.parse(event.data);
-      setState("session", reconcile(session));
+    session.onmessage = (event) => {
+      const data: MixerSession = JSON.parse(event.data);
+      setState("session", reconcile(data));
     };
-    sessionWs.onclose = () => {
+    session.onclose = () => {
       setState("connected", false);
-      scheduleReconnect(attempt);
+      // F1-P0-1: If connection had been open, restart backoff from 0.
+      // If it never opened, continue the existing backoff sequence.
+      scheduleReconnect(opened ? 0 : attempt);
     };
-    sessionWs.onerror = () => sessionWs?.close();
+    session.onerror = () => session.close();
 
     // Command WebSocket (write)
-    commandWs = new WebSocket(`${protocol}//${host}/ws/commands`);
-    commandWs.onopen = () => {
+    const command = new WebSocket(`${protocol}//${host}/ws/commands`);
+    commandWs = command;
+    command.onopen = () => {
       // Flush any commands queued while disconnected
       while (pendingCommands.length > 0) {
-        commandWs!.send(pendingCommands.shift()!);
+        command.send(pendingCommands.shift()!);
       }
     };
-    commandWs.onerror = () => commandWs?.close();
+    // F1-P0-2: commandWs reconnect piggybacks on sessionWs reconnect
+    command.onclose = () => {
+      // If sessionWs is still open, close it to trigger unified reconnect
+      if (sessionWs && sessionWs.readyState === WebSocket.OPEN) {
+        sessionWs.close();
+      }
+    };
+    command.onerror = () => command.close();
   }
 
   function send(cmd: Command) {
@@ -104,6 +134,10 @@ export function SessionProvider(props: ParentProps) {
       commandWs.send(json);
     } else {
       pendingCommands.push(json);
+      // F1-P0-2: Cap pending commands — drop oldest on overflow
+      while (pendingCommands.length > PENDING_COMMANDS_CAP) {
+        pendingCommands.shift();
+      }
     }
   }
 

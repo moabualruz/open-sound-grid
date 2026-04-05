@@ -1,6 +1,19 @@
 import { Show, createSignal, createMemo } from "solid-js";
 import { ICON_PACK, ICON_KEYS } from "../assets/icons/index";
 
+/**
+ * Sanitize an SVG string by stripping dangerous elements and attributes.
+ * Removes <script>, <foreignObject>, and event handler attributes (on*=).
+ */
+function sanitizeSvg(svg: string): string {
+  return svg
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<script[\s\S]*?\/>/gi, "")
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "")
+    .replace(/<foreignObject[\s\S]*?\/>/gi, "")
+    .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+}
+
 // 12-color palette for deterministic letter avatars
 const AVATAR_COLORS = [
   "#e74c3c",
@@ -176,9 +189,11 @@ export default function AppIcon(props: AppIconProps) {
         style={{ display: "inline-flex", width: `${size()}px`, height: `${size()}px` }}
         aria-label={props.name}
         // eslint-disable-next-line solid/no-innerhtml
-        innerHTML={bundledSvg()!.replace(
-          /<svg /,
-          `<svg width="${size()}" height="${size()}" `,
+        innerHTML={sanitizeSvg(
+          bundledSvg()!.replace(
+            /<svg /,
+            `<svg width="${size()}" height="${size()}" `,
+          ),
         )}
       />
     </Show>

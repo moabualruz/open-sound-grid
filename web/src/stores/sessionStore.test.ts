@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   computeBackoffDelay,
-  nextBackoffDelay,
   BACKOFF_INITIAL_MS,
   BACKOFF_CAP_MS,
 } from "./sessionStore";
@@ -37,24 +36,6 @@ describe("computeBackoffDelay", () => {
 
   it("caps at 30000ms for large attempt numbers", () => {
     expect(computeBackoffDelay(100)).toBe(30000);
-  });
-});
-
-describe("nextBackoffDelay", () => {
-  it("doubles delay from previous", () => {
-    expect(nextBackoffDelay(1000)).toBe(2000);
-  });
-
-  it("doubles again", () => {
-    expect(nextBackoffDelay(2000)).toBe(4000);
-  });
-
-  it("caps at 30000ms", () => {
-    expect(nextBackoffDelay(16000)).toBe(30000);
-  });
-
-  it("does not exceed cap when already at cap", () => {
-    expect(nextBackoffDelay(30000)).toBe(30000);
   });
 });
 

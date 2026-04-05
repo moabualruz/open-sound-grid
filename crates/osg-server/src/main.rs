@@ -7,7 +7,7 @@ use axum::{
     routing::get,
 };
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::services::ServeDir;
 use tracing_subscriber::EnvFilter;
 
@@ -46,7 +46,14 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .route("/ws/commands", get(ws_commands))
         .route("/ws/levels", get(ws_levels))
         .fallback_service(ServeDir::new("web/dist"))
-        .layer(CorsLayer::permissive())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::exact(
+                    axum::http::HeaderValue::from_static("http://127.0.0.1:9100"),
+                ))
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        )
         .with_state(state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:9100")
