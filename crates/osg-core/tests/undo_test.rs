@@ -46,7 +46,10 @@ fn undo_restores_previous_state() {
 
     // Undo: should return state0
     let restored = stack.undo(state1.clone());
-    assert!(restored.is_some(), "undo should return Some on non-empty stack");
+    assert!(
+        restored.is_some(),
+        "undo should return Some on non-empty stack"
+    );
     let restored = restored.unwrap();
     assert_eq!(
         restored.channels.len(),
@@ -106,7 +109,10 @@ fn new_command_clears_redo_stack() {
 
     // Redo stack should be cleared — redo returns None
     let result = stack.redo(MixerSession::default());
-    assert!(result.is_none(), "redo stack should be cleared after new command");
+    assert!(
+        result.is_none(),
+        "redo stack should be cleared after new command"
+    );
 }
 
 // ---------------------------------------------------------------------------

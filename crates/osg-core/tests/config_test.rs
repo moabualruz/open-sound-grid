@@ -233,9 +233,7 @@ fn channel_order_and_mix_order_persist_across_round_trip() {
     );
 
     assert_eq!(loaded_session.mix_order.len(), 1);
-    assert!(
-        matches!(loaded_session.mix_order[0], EndpointDescriptor::Channel(id) if id == mix_id)
-    );
+    assert!(matches!(loaded_session.mix_order[0], EndpointDescriptor::Channel(id) if id == mix_id));
 }
 
 #[test]

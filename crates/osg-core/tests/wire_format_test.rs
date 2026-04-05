@@ -639,7 +639,9 @@ fn spectrum_response_wire_format() {
     });
     let json = serde_json::to_string(&payload).expect("serialize");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
-    let spectra = parsed["spectra"]["osg.filter.abc"].as_object().expect("node object");
+    let spectra = parsed["spectra"]["osg.filter.abc"]
+        .as_object()
+        .expect("node object");
     assert_eq!(
         spectra["left"].as_array().expect("left array").len(),
         SPECTRUM_BINS

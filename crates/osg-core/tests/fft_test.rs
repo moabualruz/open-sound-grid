@@ -1,4 +1,4 @@
-use osg_core::pw::fft::{FftRingBuffer, SpectrumData, SpectrumHandle, FFT_SIZE, SPECTRUM_BINS};
+use osg_core::pw::fft::{FFT_SIZE, FftRingBuffer, SPECTRUM_BINS, SpectrumData, SpectrumHandle};
 
 #[test]
 fn fft_dc_signal_energy_in_low_bins() {
@@ -65,10 +65,7 @@ fn ring_buffer_accumulation_and_full_detection() {
         "should return None when not full"
     );
     assert!(rb.push_samples(&half), "should be full now");
-    assert!(
-        rb.compute_spectrum().is_some(),
-        "should compute after full"
-    );
+    assert!(rb.compute_spectrum().is_some(), "should compute after full");
     assert!(
         rb.compute_spectrum().is_none(),
         "should be None after reset"

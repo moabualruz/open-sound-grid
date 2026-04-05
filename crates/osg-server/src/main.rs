@@ -48,9 +48,9 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .fallback_service(ServeDir::new("web/dist"))
         .layer(
             CorsLayer::new()
-                .allow_origin(AllowOrigin::exact(
-                    axum::http::HeaderValue::from_static("http://127.0.0.1:9100"),
-                ))
+                .allow_origin(AllowOrigin::exact(axum::http::HeaderValue::from_static(
+                    "http://127.0.0.1:9100",
+                )))
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )

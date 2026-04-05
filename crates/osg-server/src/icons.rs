@@ -95,10 +95,7 @@ pub fn resolve_icon_path(icon_name: &str) -> Option<PathBuf> {
         return Some(p);
     }
 
-    let base = p
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(icon_name);
+    let base = p.file_stem().and_then(|s| s.to_str()).unwrap_or(icon_name);
 
     for dir in icon_search_dirs() {
         // Check pixmaps-style flat directory (SVG then PNG)
@@ -153,10 +150,7 @@ impl IconCache {
     }
 
     fn get(&self, key: &str) -> Option<Option<PathBuf>> {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|g| g.get(key).cloned())
+        self.inner.lock().ok().and_then(|g| g.get(key).cloned())
     }
 
     fn set(&self, key: String, value: Option<PathBuf>) {
@@ -198,16 +192,13 @@ pub fn normalize_name(name: &str) -> String {
         }
     }
     // Strip version suffix
-    if let Some(idx) = s
-        .rfind(['-', '_'])
-        .filter(|&i| {
-            s[i + 1..]
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_digit() || c == 'v')
-                .unwrap_or(false)
-        })
-    {
+    if let Some(idx) = s.rfind(['-', '_']).filter(|&i| {
+        s[i + 1..]
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit() || c == 'v')
+            .unwrap_or(false)
+    }) {
         s.truncate(idx);
     }
     s.replace(['_', ' '], "-")
@@ -316,10 +307,7 @@ fn serve_file(path: &Path) -> Response<Body> {
         Err(_) => StatusCode::NOT_FOUND.into_response(),
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
-            .header(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(content_type),
-            )
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(content_type))
             .header(
                 header::X_CONTENT_TYPE_OPTIONS,
                 HeaderValue::from_static("nosniff"),
@@ -369,7 +357,8 @@ mod tests {
 
     #[test]
     fn parse_desktop_ignores_non_desktop_entry_sections() {
-        let content = "[Other Section]\nName=Other\nIcon=other\n\n[Desktop Entry]\nName=Real\nIcon=real\n";
+        let content =
+            "[Other Section]\nName=Other\nIcon=other\n\n[Desktop Entry]\nName=Real\nIcon=real\n";
         let de = parse_desktop_entry(content).expect("should parse");
         assert_eq!(de.name, "Real");
         assert_eq!(de.icon, "real");
