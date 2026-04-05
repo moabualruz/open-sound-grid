@@ -22,7 +22,7 @@ import type { Endpoint, EndpointDescriptor } from "../types/session";
 import ContextMenu from "./ContextMenu";
 import VuSlider from "./VuSlider";
 
-const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux"];
+const PRESET_NAMES = ["Monitor", "Stream", "VOD", "Chat", "Aux", "Music", "Game", "Browser", "System"];
 
 export interface OutputDevice {
   deviceId: string;
@@ -437,7 +437,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         position={contextMenuPosition()}
         onClose={() => setContextMenuPosition(null)}
         items={[
-          { label: "Rename", onSelect: startEdit },
+          { label: "Rename", onSelect: startEdit, disabled: isPresetName(props.endpoint.displayName) },
           {
             label: "Change Output",
             onSelect: () => {

@@ -169,7 +169,7 @@ export default function Mixer() {
   let gridRef: HTMLDivElement | undefined;
 
   return (
-    <div class="flex h-screen flex-col">
+    <div class="flex h-full flex-col">
       <Show when={state.reconnecting}>
         <div
           aria-live="assertive"

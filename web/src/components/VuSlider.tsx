@@ -51,6 +51,8 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
     setEditing(true);
   }
 
+  const editPlaceholder = () => `${Math.round(props.value * 100)}%`;
+
   function cancelExactEdit() {
     setEditing(false);
     setEditValue("");
@@ -97,7 +99,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
                   </div>
                 </>
               ) : (
-                <div class="h-2.5 w-full overflow-hidden rounded-full bg-transparent">
+                <div class="h-[6px] w-full overflow-hidden rounded-full bg-transparent">
                   <div
                     class="h-full rounded-full"
                     style={vuFillStyle(monoPeak(), !!props.muted)}
@@ -130,6 +132,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
         <input
           type="text"
           value={editValue()}
+          placeholder={editPlaceholder()}
           inputmode="decimal"
           autofocus
           onInput={(event) => setEditValue(event.currentTarget.value)}
@@ -141,7 +144,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
               cancelExactEdit();
             }
           }}
-          aria-label={`${props.label} exact value`}
+          aria-label={`${props.label} exact value (%)`}
           class="w-full rounded border border-border-active bg-bg-primary px-2 py-1 text-center font-mono text-[11px] text-text-primary focus:outline-none"
           data-testid="vu-exact-input"
         />

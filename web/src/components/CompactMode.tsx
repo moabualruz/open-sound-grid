@@ -1,6 +1,6 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
-import { Plus, SlidersVertical, Volume2, VolumeX } from "lucide-solid";
+import { ChevronDown, Plus, SlidersVertical, Volume2, VolumeX } from "lucide-solid";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { useSession } from "../stores/sessionStore";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
@@ -278,13 +278,51 @@ function CompactChannelRow(props: CompactChannelRowProps): JSX.Element {
 }
 
 export default function CompactMode(props: CompactModeProps): JSX.Element {
+  const [dropdownOpen, setDropdownOpen] = createSignal(false);
+  let dropdownRef: HTMLDivElement | undefined;
+
   const selectedMix = createMemo(() => {
     if (props.mixes.length === 0) return null;
     return props.mixes.find((mix) => props.descKey(mix.desc) === props.selectedMixKey) ?? props.mixes[0];
   });
 
-  const selectedMixValue = () =>
-    props.selectedMixKey ?? (selectedMix() ? props.descKey(selectedMix()!.desc) : "");
+  const selectedMixLabel = () => {
+    const mix = selectedMix();
+    return mix ? (mix.ep.customName ?? mix.ep.displayName) : "Select mix";
+  };
+
+  function handleSelect(mixKey: string) {
+    props.onSelectMixKey(mixKey);
+    setDropdownOpen(false);
+  }
+
+  function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDropdownOpen(false);
+    }
+  }
+
+  function handleClickOutside(event: MouseEvent) {
+    if (dropdownRef && !dropdownRef.contains(event.target as Node)) {
+      setDropdownOpen(false);
+    }
+  }
+
+  createEffect(() => {
+    if (dropdownOpen()) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("keydown", handleKeyDown);
+    } else {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    }
+  });
+
+  onCleanup(() => {
+    document.removeEventListener("mousedown", handleClickOutside);
+    document.removeEventListener("keydown", handleKeyDown);
+  });
 
   return (
     <div class="mx-auto flex h-full w-full max-w-[400px] flex-col gap-3" data-testid="compact-mode">
@@ -292,22 +330,47 @@ export default function CompactMode(props: CompactModeProps): JSX.Element {
         <div class="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
           Compact Mixer
         </div>
-        <label class="flex flex-col gap-1 text-[11px] text-text-secondary">
+        <div class="flex flex-col gap-1 text-[11px] text-text-secondary">
           Active mix
-          <select
-            value={selectedMixValue()}
-            onChange={(event) => props.onSelectMixKey(event.currentTarget.value)}
-            class="w-full rounded-lg border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus:border-border-active focus:outline-none"
-          >
-            <For each={props.mixes}>
-              {(mix) => (
-                <option value={props.descKey(mix.desc)}>
-                  {mix.ep.customName ?? mix.ep.displayName}
-                </option>
-              )}
-            </For>
-          </select>
-        </label>
+          <div ref={dropdownRef} class="relative">
+            <button
+              type="button"
+              onClick={() => setDropdownOpen((prev) => !prev)}
+              class="flex w-full items-center justify-between rounded-lg border border-border bg-bg-elevated px-3 py-2 text-sm text-text-primary transition-colors duration-150 hover:border-border-active focus:border-border-active focus:outline-none"
+              aria-haspopup="listbox"
+              aria-expanded={dropdownOpen()}
+            >
+              <span class="truncate">{selectedMixLabel()}</span>
+              <ChevronDown size={14} class={`shrink-0 text-text-muted transition-transform duration-150 ${dropdownOpen() ? "rotate-180" : ""}`} />
+            </button>
+            <Show when={dropdownOpen()}>
+              <div
+                role="listbox"
+                class="absolute z-50 mt-1 w-full rounded-lg border border-border bg-bg-elevated shadow-xl"
+              >
+                <For each={props.mixes}>
+                  {(mix) => {
+                    const mixKey = props.descKey(mix.desc);
+                    const isSelected = () => mixKey === props.selectedMixKey;
+                    return (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected()}
+                        onClick={() => handleSelect(mixKey)}
+                        class={`flex w-full items-center px-3 py-2 text-left text-sm transition-colors duration-150 first:rounded-t-lg last:rounded-b-lg hover:bg-bg-hover ${
+                          isSelected() ? "text-accent" : "text-text-primary"
+                        }`}
+                      >
+                        {mix.ep.customName ?? mix.ep.displayName}
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </div>
       </div>
 
       <Show
