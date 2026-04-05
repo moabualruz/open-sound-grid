@@ -72,8 +72,18 @@ export default function Mixer() {
     }
   }
 
-  onMount(() => document.addEventListener("keydown", handleUndoRedo));
-  onCleanup(() => document.removeEventListener("keydown", handleUndoRedo));
+  function handleOpenSettings() {
+    setSettingsOpen(true);
+  }
+
+  onMount(() => {
+    document.addEventListener("keydown", handleUndoRedo);
+    window.addEventListener("osg:open-settings", handleOpenSettings);
+  });
+  onCleanup(() => {
+    document.removeEventListener("keydown", handleUndoRedo);
+    window.removeEventListener("osg:open-settings", handleOpenSettings);
+  });
 
   // --- EQ page navigation ---
   function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {

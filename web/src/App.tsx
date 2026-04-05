@@ -1,5 +1,5 @@
 import { createSignal, Show, lazy } from "solid-js";
-import { GraphProvider } from "./stores/graphStore";
+import { GraphProvider, useGraph } from "./stores/graphStore";
 import { SessionProvider } from "./stores/sessionStore";
 import { MixerSettingsProvider } from "./stores/mixerSettings";
 import { LevelsProvider } from "./stores/levelsStore";
@@ -16,6 +16,31 @@ function useRoute() {
   return hash;
 }
 
+/** Inner shell rendered inside providers so hooks (useGraph) are available. */
+function AppShell() {
+  const route = useRoute();
+  const graphState = useGraph();
+
+  function openSettings() {
+    window.dispatchEvent(new CustomEvent("osg:open-settings"));
+  }
+
+  return (
+    <div class="flex h-screen">
+      <Sidebar
+        currentHash={route()}
+        devices={graphState.graph.devices}
+        onOpenSettings={openSettings}
+      />
+      <div class="flex-1 min-w-0">
+        <Show when={route() !== "#analyzer"} fallback={<AnalyzerPage />}>
+          <Mixer />
+        </Show>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const route = useRoute();
 
@@ -26,14 +51,7 @@ export default function App() {
           <MonitorProvider>
             <MixerSettingsProvider>
               <LevelsProvider>
-                <div class="flex h-screen">
-                  <Sidebar currentHash={route()} />
-                  <div class="flex-1 min-w-0">
-                    <Show when={route() !== "#analyzer"} fallback={<AnalyzerPage />}>
-                      <Mixer />
-                    </Show>
-                  </div>
-                </div>
+                <AppShell />
               </LevelsProvider>
             </MixerSettingsProvider>
           </MonitorProvider>
