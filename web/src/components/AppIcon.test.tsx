@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
 import AppIcon, { normalizeAppName, findIconKey } from "./AppIcon";
 
@@ -79,18 +79,14 @@ describe("AppIcon", () => {
   });
 
   it("renders an img tag for an unknown name (tier 2)", () => {
-    const { container } = render(() => (
-      <AppIcon name="this-app-xyzzy-unknown-12345" />
-    ));
+    const { container } = render(() => <AppIcon name="this-app-xyzzy-unknown-12345" />);
     const img = container.querySelector("img");
     expect(img).toBeTruthy();
     expect(img?.getAttribute("src")).toContain("/api/icons/");
   });
 
   it("renders letter avatar after img onError for unknown name", async () => {
-    const { container } = render(() => (
-      <AppIcon name="this-app-xyzzy-unknown-12345" />
-    ));
+    const { container } = render(() => <AppIcon name="this-app-xyzzy-unknown-12345" />);
     const img = container.querySelector("img");
     // Simulate load failure
     img?.dispatchEvent(new Event("error"));

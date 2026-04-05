@@ -86,7 +86,7 @@ export default function SpectrumAnalyzer(props: SpectrumAnalyzerProps) {
   const width = () => props.width ?? 600;
   const height = () => props.height ?? 200;
   const overlay = () => props.overlay ?? false;
-  const showLabels = () => (props.showLabels ?? !overlay());
+  const showLabels = () => props.showLabels ?? !overlay();
 
   // Subscribe to spectrum data on mount
   onMount(() => {
@@ -100,14 +100,17 @@ export default function SpectrumAnalyzer(props: SpectrumAnalyzerProps) {
   });
 
   // Re-subscribe if nodeKey changes
-  createEffect((prevKey: string | undefined) => {
-    const key = props.nodeKey;
-    if (prevKey !== undefined && prevKey !== key) {
-      spectrumStore.unsubscribe(prevKey);
-      spectrumStore.subscribe(key);
-    }
-    return key;
-  }, undefined as string | undefined);
+  createEffect(
+    (prevKey: string | undefined) => {
+      const key = props.nodeKey;
+      if (prevKey !== undefined && prevKey !== key) {
+        spectrumStore.unsubscribe(prevKey);
+        spectrumStore.subscribe(key);
+      }
+      return key;
+    },
+    undefined as string | undefined,
+  );
 
   // ---------------------------------------------------------------------------
   // Rendering
@@ -149,7 +152,8 @@ export default function SpectrumAnalyzer(props: SpectrumAnalyzerProps) {
 
     // Background
     if (!overlay()) {
-      ctx.fillStyle = "var(--color-bg-secondary, #1a1a2e)";
+      ctx.fillStyle =
+        getComputedStyle(canvasRef).getPropertyValue("--color-bg-secondary").trim() || "#1e1e1e";
       ctx.fillRect(0, 0, w, h);
     } else {
       ctx.clearRect(0, 0, w, h);
@@ -217,7 +221,7 @@ export default function SpectrumAnalyzer(props: SpectrumAnalyzerProps) {
     const now = performance.now();
 
     // Draw left channel (or silence if no data yet)
-    const leftBins = bins?.left ?? new Array(SPECTRUM_BINS).fill(0) as number[];
+    const leftBins = bins?.left ?? (new Array(SPECTRUM_BINS).fill(0) as number[]);
     const rightBins = bins?.right ?? leftBins;
 
     drawChannel(ctx, leftBins, peakLeft, peakLeftTime, plotW, plotH, grad, now);

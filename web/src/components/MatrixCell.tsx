@@ -179,8 +179,9 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
     <div class="group h-full">
       <div
         style={{ "--mix-accent": props.mixColor }}
+        style={{ "--tw-ring-color": props.focused ? "var(--color-accent)" : undefined }}
         class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
-          props.focused ? "ring-2 ring-blue-500" : ""
+          props.focused ? "ring-2" : ""
         } ${
           isMonitored()
             ? "border-accent bg-bg-elevated ring-2 ring-accent/40"

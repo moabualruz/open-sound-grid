@@ -32,7 +32,14 @@ export default function VuMeter(props: VuMeterProps): JSX.Element {
   };
 
   return (
-    <div class="flex w-full flex-col gap-px">
+    <div
+      class="flex w-full flex-col gap-px"
+      role="meter"
+      aria-label="Peak level"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(Math.max(peaks().left, peaks().right) * 100)}
+    >
       {/* Left channel */}
       <div class="h-1 w-full overflow-hidden rounded-full bg-bg-primary/60">
         <div

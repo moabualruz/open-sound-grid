@@ -23,7 +23,7 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-40 flex items-center justify-center">
-        <div class="absolute inset-0 bg-black/50" onClick={() => props.onClose()} />
+        <div class="absolute inset-0 bg-[var(--color-bg-primary)]/50" onClick={() => props.onClose()} />
         <div
           class="relative z-50 w-full max-w-md rounded-lg border border-border bg-bg-elevated shadow-2xl"
           onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && props.onClose()}
@@ -207,9 +207,6 @@ export default function SettingsPanel(props: SettingsPanelProps): JSX.Element {
                 Not Yet Implemented
               </h3>
               <div class="space-y-1 text-[10px] text-text-muted">
-                <p>Real-time VU meters (needs /ws/levels backend endpoint)</p>
-                <p>Preset save/load (needs backend persistence)</p>
-                <p>Keyboard navigation (arrow keys, shortcuts)</p>
                 <p>Compact view</p>
               </div>
             </section>

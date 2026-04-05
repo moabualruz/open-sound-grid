@@ -38,8 +38,7 @@ function descriptorKey(d: EndpointDescriptor): string {
   if ("channel" in d) return `channel:${d.channel}`;
   if ("app" in d) return `app:${d.app[0]}:${d.app[1]}`;
   if ("ephemeralNode" in d) return `ephemeralNode:${d.ephemeralNode[0]}:${d.ephemeralNode[1]}`;
-  if ("persistentNode" in d)
-    return `persistentNode:${d.persistentNode[0]}:${d.persistentNode[1]}`;
+  if ("persistentNode" in d) return `persistentNode:${d.persistentNode[0]}:${d.persistentNode[1]}`;
   if ("device" in d) return `device:${d.device[0]}:${d.device[1]}`;
   return "";
 }

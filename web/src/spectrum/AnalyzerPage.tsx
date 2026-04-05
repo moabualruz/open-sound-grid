@@ -38,14 +38,11 @@ export default function AnalyzerPage() {
     const key = selectedKey();
     if (key) return key;
     const eps = endpoints();
-    return eps.length > 0 ? (eps[0]!.key) : null;
+    return eps.length > 0 ? eps[0]!.key : null;
   };
 
   return (
-    <div
-      class="flex flex-col h-full"
-      style={{ "background-color": "var(--color-bg-primary)" }}
-    >
+    <div class="flex flex-col h-full" style={{ "background-color": "var(--color-bg-primary)" }}>
       {/* Header */}
       <div
         class="flex items-center gap-4 px-4 py-2.5 border-b"
@@ -54,10 +51,7 @@ export default function AnalyzerPage() {
           "border-color": "var(--color-border)",
         }}
       >
-        <span
-          class="text-sm font-semibold"
-          style={{ color: "var(--color-text-primary)" }}
-        >
+        <span class="text-sm font-semibold" style={{ color: "var(--color-text-primary)" }}>
           Spectrum Analyzer
         </span>
 
@@ -82,9 +76,7 @@ export default function AnalyzerPage() {
             aria-label="Select node"
           >
             <For each={endpoints()}>
-              {(entry) => (
-                <option value={entry.key}>{endpointLabel(entry.ep)}</option>
-              )}
+              {(entry) => <option value={entry.key}>{endpointLabel(entry.ep)}</option>}
             </For>
           </select>
         </Show>

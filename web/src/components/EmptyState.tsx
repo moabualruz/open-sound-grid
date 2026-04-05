@@ -14,8 +14,7 @@ export default function EmptyState(props: EmptyStateProps): JSX.Element {
           <SlidersVertical class="w-8 h-8 text-text-muted/40 mx-auto mb-3" />
           <p class="text-sm text-text-secondary mb-1">No channels yet</p>
           <p class="text-xs text-text-muted leading-relaxed">
-            Create a channel to start routing audio. Click '+ Create channel' below or add a device
-            from the sidebar.
+            Create a channel to start routing audio. Use the + button above to create a channel.
           </p>
         </Show>
         <Show when={props.kind === "disconnected"}>

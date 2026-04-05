@@ -1,9 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  computeBackoffDelay,
-  BACKOFF_INITIAL_MS,
-  BACKOFF_CAP_MS,
-} from "./sessionStore";
+import { describe, it, expect } from "vitest";
+import { computeBackoffDelay, BACKOFF_INITIAL_MS, BACKOFF_CAP_MS } from "./sessionStore";
 
 describe("computeBackoffDelay", () => {
   it("returns 1000ms for attempt 0", () => {

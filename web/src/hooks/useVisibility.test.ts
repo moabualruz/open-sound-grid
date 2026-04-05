@@ -56,19 +56,29 @@ describe("setEndpointVisible command shape", () => {
     const desc: EndpointDescriptor = { channel: "music" };
     const cmd: Command = { type: "setEndpointVisible", endpoint: desc, visible: false };
     expect(cmd.type).toBe("setEndpointVisible");
-    expect((cmd as { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }).visible).toBe(false);
+    expect(
+      (cmd as { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean })
+        .visible,
+    ).toBe(false);
   });
 
   it("show produces {type: setEndpointVisible, visible: true}", () => {
     const desc: EndpointDescriptor = { channel: "music" };
     const cmd: Command = { type: "setEndpointVisible", endpoint: desc, visible: true };
-    expect((cmd as { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }).visible).toBe(true);
+    expect(
+      (cmd as { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean })
+        .visible,
+    ).toBe(true);
   });
 
   it("endpoint is preserved in command", () => {
     const desc: EndpointDescriptor = { channel: "browser" };
     const cmd: Command = { type: "setEndpointVisible", endpoint: desc, visible: false };
-    const typed = cmd as { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean };
+    const typed = cmd as {
+      type: "setEndpointVisible";
+      endpoint: EndpointDescriptor;
+      visible: boolean;
+    };
     expect(typed.endpoint).toEqual({ channel: "browser" });
   });
 });
@@ -82,21 +92,33 @@ describe("setEndpointDisabled command shape", () => {
     const desc: EndpointDescriptor = { channel: "music" };
     const cmd: Command = { type: "setEndpointDisabled", endpoint: desc, disabled: true };
     expect(cmd.type).toBe("setEndpointDisabled");
-    const typed = cmd as { type: "setEndpointDisabled"; endpoint: EndpointDescriptor; disabled: boolean };
+    const typed = cmd as {
+      type: "setEndpointDisabled";
+      endpoint: EndpointDescriptor;
+      disabled: boolean;
+    };
     expect(typed.disabled).toBe(true);
   });
 
   it("re-enable produces {type: setEndpointDisabled, disabled: false}", () => {
     const desc: EndpointDescriptor = { channel: "music" };
     const cmd: Command = { type: "setEndpointDisabled", endpoint: desc, disabled: false };
-    const typed = cmd as { type: "setEndpointDisabled"; endpoint: EndpointDescriptor; disabled: boolean };
+    const typed = cmd as {
+      type: "setEndpointDisabled";
+      endpoint: EndpointDescriptor;
+      disabled: boolean;
+    };
     expect(typed.disabled).toBe(false);
   });
 
   it("endpoint is preserved in command", () => {
     const desc: EndpointDescriptor = { channel: "game" };
     const cmd: Command = { type: "setEndpointDisabled", endpoint: desc, disabled: true };
-    const typed = cmd as { type: "setEndpointDisabled"; endpoint: EndpointDescriptor; disabled: boolean };
+    const typed = cmd as {
+      type: "setEndpointDisabled";
+      endpoint: EndpointDescriptor;
+      disabled: boolean;
+    };
     expect(typed.endpoint).toEqual({ channel: "game" });
   });
 });
@@ -134,19 +156,13 @@ describe("channel visibility filtering", () => {
   });
 
   it("all hidden — main grid is empty, hidden list has all", () => {
-    const entries = [
-      makeEntry("music", { visible: false }),
-      makeEntry("game", { visible: false }),
-    ];
+    const entries = [makeEntry("music", { visible: false }), makeEntry("game", { visible: false })];
     expect(filterVisible(entries)).toHaveLength(0);
     expect(filterHidden(entries)).toHaveLength(2);
   });
 
   it("none hidden — hidden list is empty", () => {
-    const entries = [
-      makeEntry("music", { visible: true }),
-      makeEntry("game", { visible: true }),
-    ];
+    const entries = [makeEntry("music", { visible: true }), makeEntry("game", { visible: true })];
     expect(filterHidden(entries)).toHaveLength(0);
   });
 });

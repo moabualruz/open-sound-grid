@@ -160,17 +160,13 @@ export default function AppIcon(props: AppIconProps) {
 
   const [desktopFailed, setDesktopFailed] = createSignal(false);
 
-  const apiUrl = () =>
-    `/api/icons/${encodeURIComponent(normalizeAppName(props.name))}`;
+  const apiUrl = () => `/api/icons/${encodeURIComponent(normalizeAppName(props.name))}`;
 
   return (
     <Show
       when={bundledSvg()}
       fallback={
-        <Show
-          when={!desktopFailed()}
-          fallback={<LetterAvatar name={props.name} size={size()} />}
-        >
+        <Show when={!desktopFailed()} fallback={<LetterAvatar name={props.name} size={size()} />}>
           {/* Tier 2: desktop entry icon via backend */}
           <img
             src={apiUrl()}
@@ -190,10 +186,7 @@ export default function AppIcon(props: AppIconProps) {
         aria-label={props.name}
         // eslint-disable-next-line solid/no-innerhtml
         innerHTML={sanitizeSvg(
-          bundledSvg()!.replace(
-            /<svg /,
-            `<svg width="${size()}" height="${size()}" `,
-          ),
+          bundledSvg()!.replace(/<svg /, `<svg width="${size()}" height="${size()}" `),
         )}
       />
     </Show>

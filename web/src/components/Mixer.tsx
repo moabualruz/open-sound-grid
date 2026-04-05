@@ -32,8 +32,15 @@ export default function Mixer() {
     !state.session.welcomeDismissed &&
     Object.keys(state.session.channels).length === 0;
 
-  const { channels, hiddenChannels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder } =
-    useMixerViewModel();
+  const {
+    channels,
+    hiddenChannels,
+    mixes,
+    getPeaks,
+    descKey,
+    persistChannelOrder,
+    persistMixOrder,
+  } = useMixerViewModel();
 
   const [hiddenSectionOpen, setHiddenSectionOpen] = createSignal(false);
 
@@ -120,6 +127,17 @@ export default function Mixer() {
 
   return (
     <div class="flex h-screen flex-col">
+      {/* Reconnecting banner */}
+      <Show when={state.reconnecting}>
+        <div
+          aria-live="assertive"
+          role="status"
+          class="flex items-center justify-center gap-2 bg-vu-hot/10 px-4 py-1.5 text-xs text-vu-hot"
+        >
+          Reconnecting to PipeWire… (attempt {state.reconnectAttempt})
+        </div>
+      </Show>
+
       {/* Top bar */}
       <header
         class="flex items-center justify-between border-b px-5 py-2"
@@ -183,7 +201,11 @@ export default function Mixer() {
               class="outline-none"
             >
               {/* Mix column headers */}
-              <div class="mb-2 grid items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+              <div
+                class="mb-2 grid items-stretch gap-2"
+                style={{ "grid-template-columns": gridCols() }}
+                role="row"
+              >
                 <div class="flex items-stretch justify-end" role="columnheader">
                   <MixCreator maxMixes={8} currentCount={mixes().length} />
                 </div>
@@ -229,12 +251,18 @@ export default function Mixer() {
                 >
                   {(ch, rowIdx, dragHandle) => (
                     <>
-                      <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+                      <div
+                        class="grid min-h-[4.5rem] items-stretch gap-2"
+                        style={{ "grid-template-columns": gridCols() }}
+                        role="row"
+                      >
                         <ChannelLabel
                           descriptor={ch.desc}
                           endpoint={ch.ep}
                           channel={
-                            "channel" in ch.desc ? state.session.channels[ch.desc.channel] : undefined
+                            "channel" in ch.desc
+                              ? state.session.channels[ch.desc.channel]
+                              : undefined
                           }
                           apps={Object.values(state.session.apps)}
                           dragHandle={dragHandle}
@@ -279,12 +307,14 @@ export default function Mixer() {
                           const link = findLink(state.session.links, ch.desc, expandedMix.desc);
                           return (
                             <MixEffectsRow
-                              cells={[{
-                                sourceDescriptor: ch.desc,
-                                cellEq: link?.cellEq,
-                                cellEffects: link?.cellEffects,
-                                linked: link !== null,
-                              }]}
+                              cells={[
+                                {
+                                  sourceDescriptor: ch.desc,
+                                  cellEq: link?.cellEq,
+                                  cellEffects: link?.cellEffects,
+                                  linked: link !== null,
+                                },
+                              ]}
                               mixColor={mixColor}
                               gridTemplateColumns={`12rem 1fr`}
                               onOpenCellEq={() => openCellEq(ch.desc, expandedMix.desc)}
@@ -315,7 +345,8 @@ export default function Mixer() {
                     >
                       <EyeOff size={12} />
                       <span>
-                        {hiddenChannels().length} hidden channel{hiddenChannels().length !== 1 ? "s" : ""}
+                        {hiddenChannels().length} hidden channel
+                        {hiddenChannels().length !== 1 ? "s" : ""}
                       </span>
                       <span class="ml-1">{hiddenSectionOpen() ? "▲" : "▼"}</span>
                     </button>
@@ -382,6 +413,7 @@ export default function Mixer() {
 
       {/* Status bar */}
       <footer
+        aria-live="polite"
         class="flex items-center justify-between border-t px-5 py-1 text-[11px]"
         style={{
           "background-color": "var(--color-bg-secondary)",

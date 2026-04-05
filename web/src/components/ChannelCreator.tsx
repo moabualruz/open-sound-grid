@@ -259,7 +259,7 @@ export default function ChannelCreator(): JSX.Element {
                 <button
                   onClick={() => customName().trim() && create(customName().trim(), "duplex")}
                   disabled={!customName().trim()}
-                  class="rounded bg-accent px-2 py-1 text-xs text-white disabled:opacity-30"
+                  class="rounded bg-accent px-2 py-1 text-xs text-[var(--color-text-on-accent,#fff)] disabled:opacity-30"
                 >
                   Add
                 </button>

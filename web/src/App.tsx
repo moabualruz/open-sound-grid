@@ -29,10 +29,7 @@ export default function App() {
                 <div class="flex h-screen">
                   <Sidebar currentHash={route()} />
                   <div class="flex-1 min-w-0">
-                    <Show
-                      when={route() !== "#analyzer"}
-                      fallback={<AnalyzerPage />}
-                    >
+                    <Show when={route() !== "#analyzer"} fallback={<AnalyzerPage />}>
                       <Mixer />
                     </Show>
                   </div>

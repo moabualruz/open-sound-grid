@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
-import { createStore } from "solid-js/store";
 
 // ---------------------------------------------------------------------------
 // Mock useSession
@@ -9,7 +8,6 @@ import { createStore } from "solid-js/store";
 import type { MixerSession } from "../types/session";
 import type { Command } from "../types/commands";
 
-type SendFn = (cmd: Command) => void;
 
 interface MockSessionState {
   session: MixerSession;
@@ -101,11 +99,46 @@ describe("WelcomeWizard app grouping", () => {
     mockSend = vi.fn();
     mockState = makeState({
       apps: {
-        ff: { id: "ff", kind: "source", name: "Firefox", binary: "firefox", iconName: "", exceptions: [] },
-        sp: { id: "sp", kind: "source", name: "Spotify", binary: "spotify", iconName: "", exceptions: [] },
-        dc: { id: "dc", kind: "source", name: "Discord", binary: "discord", iconName: "", exceptions: [] },
-        st: { id: "st", kind: "source", name: "Steam", binary: "steam", iconName: "", exceptions: [] },
-        un: { id: "un", kind: "source", name: "CustomApp", binary: "customapp", iconName: "", exceptions: [] },
+        ff: {
+          id: "ff",
+          kind: "source",
+          name: "Firefox",
+          binary: "firefox",
+          iconName: "",
+          exceptions: [],
+        },
+        sp: {
+          id: "sp",
+          kind: "source",
+          name: "Spotify",
+          binary: "spotify",
+          iconName: "",
+          exceptions: [],
+        },
+        dc: {
+          id: "dc",
+          kind: "source",
+          name: "Discord",
+          binary: "discord",
+          iconName: "",
+          exceptions: [],
+        },
+        st: {
+          id: "st",
+          kind: "source",
+          name: "Steam",
+          binary: "steam",
+          iconName: "",
+          exceptions: [],
+        },
+        un: {
+          id: "un",
+          kind: "source",
+          name: "CustomApp",
+          binary: "customapp",
+          iconName: "",
+          exceptions: [],
+        },
       },
     });
   });
@@ -154,8 +187,22 @@ describe("WelcomeWizard — Create Mixer", () => {
     mockSend = vi.fn();
     mockState = makeState({
       apps: {
-        ff: { id: "ff", kind: "source", name: "Firefox", binary: "firefox", iconName: "", exceptions: [] },
-        sp: { id: "sp", kind: "source", name: "Spotify", binary: "spotify", iconName: "", exceptions: [] },
+        ff: {
+          id: "ff",
+          kind: "source",
+          name: "Firefox",
+          binary: "firefox",
+          iconName: "",
+          exceptions: [],
+        },
+        sp: {
+          id: "sp",
+          kind: "source",
+          name: "Spotify",
+          binary: "spotify",
+          iconName: "",
+          exceptions: [],
+        },
       },
     });
   });
@@ -164,7 +211,9 @@ describe("WelcomeWizard — Create Mixer", () => {
     const onDone = vi.fn();
     const { container } = render(() => <WelcomeWizard onDone={onDone} />);
 
-    const createBtn = container.querySelector<HTMLButtonElement>('button[aria-label*="Create mixer"]');
+    const createBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Create mixer"]',
+    );
     expect(createBtn).toBeTruthy();
     fireEvent.click(createBtn!);
 
@@ -183,7 +232,9 @@ describe("WelcomeWizard — Create Mixer", () => {
     const onDone = vi.fn();
     const { container } = render(() => <WelcomeWizard onDone={onDone} />);
 
-    const createBtn = container.querySelector<HTMLButtonElement>('button[aria-label*="Create mixer"]');
+    const createBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Create mixer"]',
+    );
     fireEvent.click(createBtn!);
 
     const dismissCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -196,7 +247,9 @@ describe("WelcomeWizard — Create Mixer", () => {
     const onDone = vi.fn();
     const { container } = render(() => <WelcomeWizard onDone={onDone} />);
 
-    const createBtn = container.querySelector<HTMLButtonElement>('button[aria-label*="Create mixer"]');
+    const createBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Create mixer"]',
+    );
     fireEvent.click(createBtn!);
     expect(onDone).toHaveBeenCalledOnce();
   });
@@ -213,7 +266,9 @@ describe("WelcomeWizard — Create Mixer", () => {
     expect(spotifyCb).toBeTruthy();
     fireEvent.click(spotifyCb!);
 
-    const createBtn = container.querySelector<HTMLButtonElement>('button[aria-label*="Create mixer"]');
+    const createBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Create mixer"]',
+    );
     fireEvent.click(createBtn!);
 
     const createChannelCalls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(

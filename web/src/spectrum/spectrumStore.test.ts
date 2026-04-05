@@ -225,8 +225,6 @@ describe("spectrumStore", () => {
     const sock2 = MockWebSocket.latest();
     sock2.simulateOpen();
 
-    expect(sock2.sentMessages.some((m) => JSON.parse(m)?.subscribe?.includes("node-j"))).toBe(
-      true,
-    );
+    expect(sock2.sentMessages.some((m) => JSON.parse(m)?.subscribe?.includes("node-j"))).toBe(true);
   });
 });

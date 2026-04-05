@@ -127,12 +127,7 @@ export default function EqPanel(props: EqPanelProps) {
               }}
               aria-hidden="true"
             >
-              <SpectrumAnalyzer
-                nodeKey={nodeKey()}
-                overlay={true}
-                width={720}
-                height={280}
-              />
+              <SpectrumAnalyzer nodeKey={nodeKey()} overlay={true} width={720} height={280} />
             </div>
           )}
         </Show>

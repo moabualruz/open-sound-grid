@@ -38,7 +38,10 @@ beforeEach(() => {
   // Stub rAF: do NOT invoke the callback synchronously — the render loop is
   // recursive and would overflow the stack. Just return a stable ID.
   let rafId = 0;
-  vi.stubGlobal("requestAnimationFrame", vi.fn(() => ++rafId));
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    vi.fn(() => ++rafId),
+  );
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
 
   // Stub canvas getContext so jsdom doesn't crash
@@ -81,9 +84,7 @@ import SpectrumAnalyzer from "./SpectrumAnalyzer";
 
 describe("SpectrumAnalyzer", () => {
   it("renders a canvas element", () => {
-    const { getByTestId } = render(() => (
-      <SpectrumAnalyzer nodeKey="test-node" />
-    ));
+    const { getByTestId } = render(() => <SpectrumAnalyzer nodeKey="test-node" />);
     const canvas = getByTestId("spectrum-canvas");
     expect(canvas.tagName).toBe("CANVAS");
     cleanup();
@@ -101,18 +102,14 @@ describe("SpectrumAnalyzer", () => {
   });
 
   it("overlay mode sets transparent background", () => {
-    const { getByTestId } = render(() => (
-      <SpectrumAnalyzer nodeKey="test-node" overlay={true} />
-    ));
+    const { getByTestId } = render(() => <SpectrumAnalyzer nodeKey="test-node" overlay={true} />);
     const canvas = getByTestId("spectrum-canvas") as HTMLCanvasElement;
     expect(canvas.style.background).toBe("transparent");
     cleanup();
   });
 
   it("non-overlay mode does not force transparent background", () => {
-    const { getByTestId } = render(() => (
-      <SpectrumAnalyzer nodeKey="test-node" overlay={false} />
-    ));
+    const { getByTestId } = render(() => <SpectrumAnalyzer nodeKey="test-node" overlay={false} />);
     const canvas = getByTestId("spectrum-canvas") as HTMLCanvasElement;
     // background should not be explicitly set to transparent
     expect(canvas.style.background).not.toBe("transparent");

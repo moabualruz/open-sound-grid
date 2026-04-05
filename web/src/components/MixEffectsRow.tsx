@@ -71,7 +71,8 @@ export function EffectsBadges(props: EffectsBadgesProps): JSX.Element {
                   width: "6px",
                   height: "6px",
                   "border-radius": "50%",
-                  "background-color": state() === "active" ? def.activeColor : "var(--color-text-muted)",
+                  "background-color":
+                    state() === "active" ? def.activeColor : "var(--color-text-muted)",
                   opacity: state() === "active" ? 1 : 0.45,
                   transition: "background-color 150ms ease",
                 }}
@@ -138,7 +139,7 @@ export default function MixEffectsRow(props: MixEffectsRowProps): JSX.Element {
       class="grid gap-2 overflow-hidden"
       style={{
         "grid-template-columns": props.gridTemplateColumns,
-        "animation": "osg-effects-row-expand 200ms ease both",
+        animation: "osg-effects-row-expand 200ms ease both",
       }}
       role="row"
       aria-label="Effects overview row"
@@ -153,7 +154,7 @@ export default function MixEffectsRow(props: MixEffectsRowProps): JSX.Element {
             class="flex items-center gap-1.5 rounded-md px-2 py-1"
             style={{
               "background-color": "var(--color-bg-primary)",
-              "border": "1px solid var(--color-border)",
+              border: "1px solid var(--color-border)",
               "min-height": "40px",
             }}
             role="gridcell"

@@ -20,10 +20,59 @@ import type { App } from "../types/session";
 
 type AppCategory = "Browsers" | "Games" | "Music" | "Communication" | "Other";
 
-const BROWSER_KEYWORDS = ["firefox", "chrome", "chromium", "brave", "opera", "vivaldi", "edge", "safari", "browser"];
-const GAME_KEYWORDS = ["steam", "game", "lutris", "heroic", "wine", "proton", "minecraft", "csgo", "dota", "overwatch", "valorant"];
-const MUSIC_KEYWORDS = ["spotify", "vlc", "mpv", "rhythmbox", "clementine", "amarok", "cantata", "deadbeef", "audacious", "cmus", "mopidy", "music", "soundcloud"];
-const COMM_KEYWORDS = ["discord", "teamspeak", "mumble", "telegram", "signal", "zoom", "teams", "slack", "skype", "element", "matrix", "mumble"];
+const BROWSER_KEYWORDS = [
+  "firefox",
+  "chrome",
+  "chromium",
+  "brave",
+  "opera",
+  "vivaldi",
+  "edge",
+  "safari",
+  "browser",
+];
+const GAME_KEYWORDS = [
+  "steam",
+  "game",
+  "lutris",
+  "heroic",
+  "wine",
+  "proton",
+  "minecraft",
+  "csgo",
+  "dota",
+  "overwatch",
+  "valorant",
+];
+const MUSIC_KEYWORDS = [
+  "spotify",
+  "vlc",
+  "mpv",
+  "rhythmbox",
+  "clementine",
+  "amarok",
+  "cantata",
+  "deadbeef",
+  "audacious",
+  "cmus",
+  "mopidy",
+  "music",
+  "soundcloud",
+];
+const COMM_KEYWORDS = [
+  "discord",
+  "teamspeak",
+  "mumble",
+  "telegram",
+  "signal",
+  "zoom",
+  "teams",
+  "slack",
+  "skype",
+  "element",
+  "matrix",
+  "mumble",
+];
 
 function detectCategory(app: App): AppCategory {
   const needle = (app.binary + " " + app.name).toLowerCase();
@@ -71,9 +120,7 @@ export default function WelcomeWizard(props: WelcomeWizardProps): JSX.Element {
 
   // --- Output device selection ---
   const devices = () => Object.entries(state.session.devices) as [string, unknown][];
-  const [selectedOutput, setSelectedOutput] = createSignal<string>(
-    devices()[0]?.[0] ?? "",
-  );
+  const [selectedOutput, setSelectedOutput] = createSignal<string>(devices()[0]?.[0] ?? "");
 
   // Group apps by category
   const grouped = (): Array<{ category: AppCategory; apps: App[] }> => {
@@ -308,10 +355,11 @@ export default function WelcomeWizard(props: WelcomeWizardProps): JSX.Element {
                 aria-label="Primary output device"
               >
                 <For each={devices()}>
-                  {([id]) => (
-                    <option value={id}>{id}</option>
-                  )}
-                </For>
+                {([id]) => {
+                  const label = id.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+                  return <option value={id}>{label || id}</option>;
+                }}
+              </For>
               </select>
             </section>
           </Show>
@@ -347,7 +395,7 @@ export default function WelcomeWizard(props: WelcomeWizardProps): JSX.Element {
           </button>
           <button
             onClick={handleCreateMixer}
-            class="flex items-center gap-2 rounded-md px-5 py-2 text-xs font-semibold text-white transition-colors"
+            class="flex items-center gap-2 rounded-md px-5 py-2 text-xs font-semibold text-[var(--color-text-on-accent,#fff)] transition-colors"
             style={{ "background-color": "var(--color-accent)" }}
             aria-label={
               checkedCount() > 0
