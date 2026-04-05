@@ -148,6 +148,9 @@ pub enum Command {
         effects: EffectsConfig,
     },
 
+    /// Dismiss the first-launch welcome wizard (persists welcome_dismissed = true).
+    DismissWelcome,
+
     /// Undo the last destructive operation.
     Undo,
 
@@ -230,6 +233,7 @@ impl Command {
                 target,
                 effects,
             } => StateMsg::SetCellEffects(source, target, effects),
+            Self::DismissWelcome => StateMsg::DismissWelcome,
             Self::Undo => StateMsg::Undo,
             Self::Redo => StateMsg::Redo,
         }

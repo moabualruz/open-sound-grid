@@ -54,6 +54,8 @@ pub enum StateMsg {
     SetEffects(EndpointDescriptor, EffectsConfig),
     /// Set effects chain configuration for a per-route cell.
     SetCellEffects(EndpointDescriptor, EndpointDescriptor, EffectsConfig),
+    /// Dismiss the first-launch welcome wizard (sets welcome_dismissed = true).
+    DismissWelcome,
     /// Undo the last destructive operation.
     Undo,
     /// Redo the last undone operation.

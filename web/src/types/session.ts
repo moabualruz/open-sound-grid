@@ -37,6 +37,7 @@ export interface Endpoint {
   volumeMixed: boolean;
   volumeLockedMuted: VolumeLockMuteState;
   visible: boolean;
+  disabled: boolean;
   eq?: EqConfig;
   effects?: EffectsConfig;
 }
@@ -81,6 +82,7 @@ export interface App {
 }
 
 export interface MixerSession {
+  welcomeDismissed: boolean;
   activeSources: EndpointDescriptor[];
   activeSinks: EndpointDescriptor[];
   endpoints: [EndpointDescriptor, Endpoint][];

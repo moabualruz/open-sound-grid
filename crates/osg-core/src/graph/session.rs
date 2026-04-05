@@ -17,6 +17,9 @@ use super::port_kind::PortKind;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MixerSession {
+    /// Whether the user has dismissed the first-launch welcome wizard.
+    #[serde(default)]
+    pub welcome_dismissed: bool,
     #[serde(default)]
     pub active_sources: Vec<EndpointDescriptor>,
     #[serde(default)]

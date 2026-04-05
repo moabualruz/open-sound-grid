@@ -36,6 +36,7 @@ export type Command =
     }
   | { type: "setMixOutput"; channel: string; outputNodeId: number | null }
   | { type: "setEndpointVisible"; endpoint: EndpointDescriptor; visible: boolean }
+  | { type: "setEndpointDisabled"; endpoint: EndpointDescriptor; disabled: boolean }
   | { type: "setChannelOrder"; order: EndpointDescriptor[] }
   | { type: "setMixOrder"; order: EndpointDescriptor[] }
   | { type: "assignApp"; channel: string; applicationName: string; binaryName: string }
@@ -53,4 +54,5 @@ export type Command =
       source: EndpointDescriptor;
       target: EndpointDescriptor;
       effects: EffectsConfig;
-    };
+    }
+  | { type: "dismissWelcome" };

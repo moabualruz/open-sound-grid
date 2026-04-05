@@ -9,8 +9,9 @@ import MatrixCell from "./MatrixCell";
 import ChannelCreator from "./ChannelCreator";
 import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
+import WelcomeWizard from "./WelcomeWizard";
 import DragReorder from "./DragReorder";
-import { Settings } from "lucide-solid";
+import { Settings, EyeOff } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
@@ -24,9 +25,17 @@ export default function Mixer() {
   const graphState = useGraph();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [eqTarget, setEqTarget] = createSignal<EqPageTarget | null>(null);
+  const [wizardDismissed, setWizardDismissed] = createSignal(false);
 
-  const { channels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder } =
+  const showWelcomeWizard = () =>
+    !wizardDismissed() &&
+    !state.session.welcomeDismissed &&
+    Object.keys(state.session.channels).length === 0;
+
+  const { channels, hiddenChannels, mixes, getPeaks, descKey, persistChannelOrder, persistMixOrder } =
     useMixerViewModel();
+
+  const [hiddenSectionOpen, setHiddenSectionOpen] = createSignal(false);
 
   // --- Mix expand accordion (only one mix expanded at a time) ---
   const [expandedMixKey, setExpandedMixKey] = createSignal<string | null>(null);
@@ -294,6 +303,57 @@ export default function Mixer() {
                   </div>
                 </div>
 
+                {/* Hidden channels collapsible section */}
+                <Show when={hiddenChannels().length > 0}>
+                  <div class="mt-2 border-t pt-2" style={{ "border-color": "var(--color-border)" }}>
+                    <button
+                      class="flex items-center gap-1.5 text-[11px] transition-colors"
+                      style={{ color: "var(--color-text-muted)" }}
+                      onClick={() => setHiddenSectionOpen((v) => !v)}
+                      aria-expanded={hiddenSectionOpen()}
+                      aria-label="Toggle hidden channels"
+                    >
+                      <EyeOff size={12} />
+                      <span>
+                        {hiddenChannels().length} hidden channel{hiddenChannels().length !== 1 ? "s" : ""}
+                      </span>
+                      <span class="ml-1">{hiddenSectionOpen() ? "▲" : "▼"}</span>
+                    </button>
+                    <Show when={hiddenSectionOpen()}>
+                      <div class="mt-2 flex flex-wrap gap-2">
+                        <For each={hiddenChannels()}>
+                          {(ch) => (
+                            <div
+                              class="flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] opacity-60"
+                              style={{
+                                "border-color": "var(--color-border)",
+                                "background-color": "var(--color-bg-elevated)",
+                                color: "var(--color-text-muted)",
+                              }}
+                            >
+                              <span>{ch.ep.customName ?? ch.ep.displayName}</span>
+                              <button
+                                onClick={() =>
+                                  send({
+                                    type: "setEndpointVisible",
+                                    endpoint: ch.desc,
+                                    visible: true,
+                                  })
+                                }
+                                class="transition-colors hover:text-text-primary"
+                                title="Show channel"
+                                aria-label={`Show ${ch.ep.customName ?? ch.ep.displayName}`}
+                              >
+                                <EyeOff size={11} />
+                              </button>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
                 {/* Empty states */}
                 <Show when={channels().length === 0 && mixes().length > 0}>
                   <EmptyState kind="no-channels" />
@@ -344,6 +404,10 @@ export default function Mixer() {
       </footer>
 
       <SettingsPanel open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
+
+      <Show when={showWelcomeWizard()}>
+        <WelcomeWizard onDone={() => setWizardDismissed(true)} />
+      </Show>
     </div>
   );
 }

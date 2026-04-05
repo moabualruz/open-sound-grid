@@ -27,6 +27,7 @@ impl CommandHandler for EndpointCommandHandler {
                 | StateMsg::RenameEndpoint(..)
                 | StateMsg::ChangeChannelKind(..)
                 | StateMsg::SetEndpointVisible(..)
+                | StateMsg::DismissWelcome
         )
     }
 
@@ -65,6 +66,10 @@ impl CommandHandler for EndpointCommandHandler {
                     settings,
                     &mut events,
                 );
+                None
+            }
+            StateMsg::DismissWelcome => {
+                session.welcome_dismissed = true;
                 None
             }
             _ => unreachable!(),

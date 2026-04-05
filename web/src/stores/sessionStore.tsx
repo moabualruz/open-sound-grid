@@ -17,6 +17,7 @@ export function computeBackoffDelay(attempt: number): number {
 }
 
 const EMPTY_SESSION: MixerSession = {
+  welcomeDismissed: false,
   activeSources: [],
   activeSinks: [],
   endpoints: [],
