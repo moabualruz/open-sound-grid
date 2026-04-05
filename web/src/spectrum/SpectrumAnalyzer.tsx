@@ -126,6 +126,11 @@ export default function SpectrumAnalyzer(props: SpectrumAnalyzerProps) {
 
   function drawFrame(): void {
     if (!canvasRef) return;
+
+    // Skip painting when there is no spectrum data for this node
+    const bins = spectrumStore.state.bins[props.nodeKey];
+    if (!bins) return;
+
     const ctx = canvasRef.getContext("2d");
     if (!ctx) return;
 

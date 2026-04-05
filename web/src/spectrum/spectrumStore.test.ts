@@ -135,6 +135,19 @@ describe("spectrumStore", () => {
     expect(store.state.bins["node-c"]?.right[0]).toBe(0.3);
   });
 
+  it("normalizes backend nodeId+bins messages into stereo bins", async () => {
+    const store = await freshStore();
+    store.subscribe("node-k");
+
+    const sock = MockWebSocket.latest();
+    sock.simulateOpen();
+
+    sock.simulateMessage({ nodeId: "node-k", bins: new Array(256).fill(0.42) });
+
+    expect(store.state.bins["node-k"]?.left[0]).toBe(0.42);
+    expect(store.state.bins["node-k"]?.right[0]).toBe(0.42);
+  });
+
   it("auto-disconnect when last subscriber leaves", async () => {
     const store = await freshStore();
     store.subscribe("node-d");

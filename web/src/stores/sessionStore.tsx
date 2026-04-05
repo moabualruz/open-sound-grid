@@ -12,6 +12,7 @@ const PENDING_COMMANDS_CAP = 100;
 
 const EMPTY_SESSION: MixerSession = {
   welcomeDismissed: false,
+  lastPresetName: null,
   activeSources: [],
   activeSinks: [],
   endpoints: [],

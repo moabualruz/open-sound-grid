@@ -37,7 +37,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const [cellR, setCellR] = createSignal(1);
   const [cellMuted, setCellMuted] = createSignal(false);
   let preMuteVol: { vol: number; left: number; right: number } | null = null;
-  let userDragging = false;
+  const [userDragging, setUserDragging] = createSignal(false);
 
   const sendDebounced = useVolumeDebounce((v) => {
     send({
@@ -46,7 +46,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
       target: props.sinkDescriptor,
       volume: v,
     });
-    userDragging = false;
+    setUserDragging(false);
   });
 
   const sendStereoDebounced = useVolumeDebounce((_v) => {
@@ -57,7 +57,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
       left: cellL(),
       right: cellR(),
     });
-    userDragging = false;
+    setUserDragging(false);
   });
 
   const isStereo = () => settings.stereoMode === "stereo";
@@ -74,7 +74,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   // Sync from backend — but not while the user is actively dragging the slider
   createEffect(() => {
-    if (userDragging) return;
+    if (userDragging()) return;
     setCellVol(props.link?.cellVolume ?? 1);
     setCellL(props.link?.cellVolumeLeft ?? 1);
     setCellR(props.link?.cellVolumeRight ?? 1);
@@ -106,7 +106,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   function handleInput(value: number) {
     ensureLinked();
-    userDragging = true;
+    setUserDragging(true);
     setCellVol(value);
     setCellL(value);
     setCellR(value);
@@ -115,7 +115,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   function handleStereoInput(channel: "left" | "right", value: number) {
     ensureLinked();
-    userDragging = true;
+    setUserDragging(true);
     if (channel === "left") setCellL(value);
     else setCellR(value);
     setCellVol((cellL() + cellR()) / 2);

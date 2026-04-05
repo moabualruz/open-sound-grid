@@ -1,4 +1,4 @@
-import { createSignal, Show, lazy } from "solid-js";
+import { createSignal, Show, lazy, onCleanup } from "solid-js";
 import { GraphProvider, useGraph } from "./stores/graphStore";
 import { SessionProvider } from "./stores/sessionStore";
 import { MixerSettingsProvider } from "./stores/mixerSettings";
@@ -12,13 +12,14 @@ const AnalyzerPage = lazy(() => import("./spectrum/AnalyzerPage"));
 
 function useRoute() {
   const [hash, setHash] = createSignal(window.location.hash);
-  window.addEventListener("hashchange", () => setHash(window.location.hash));
+  const handler = () => setHash(window.location.hash);
+  window.addEventListener("hashchange", handler);
+  onCleanup(() => window.removeEventListener("hashchange", handler));
   return hash;
 }
 
 /** Inner shell rendered inside providers so hooks (useGraph) are available. */
-function AppShell() {
-  const route = useRoute();
+function AppShell(shellProps: { route: () => string }) {
   const graphState = useGraph();
 
   function openSettings() {
@@ -28,12 +29,12 @@ function AppShell() {
   return (
     <div class="flex h-screen">
       <Sidebar
-        currentHash={route()}
+        currentHash={shellProps.route()}
         devices={graphState.graph.devices}
         onOpenSettings={openSettings}
       />
       <div class="flex-1 min-w-0">
-        <Show when={route() !== "#analyzer"} fallback={<AnalyzerPage />}>
+        <Show when={shellProps.route() !== "#analyzer"} fallback={<AnalyzerPage />}>
           <Mixer />
         </Show>
       </div>
@@ -51,7 +52,7 @@ export default function App() {
           <MonitorProvider>
             <MixerSettingsProvider>
               <LevelsProvider>
-                <AppShell />
+                <AppShell route={route} />
               </LevelsProvider>
             </MixerSettingsProvider>
           </MonitorProvider>

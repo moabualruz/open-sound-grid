@@ -5,12 +5,14 @@
  *
  * Wire format (server → client):
  *   { spectra: { [nodeKey]: { left: number[256], right: number[256] } } }
+ *   { nodeId: string, bins: number[256] }
  *
  * Wire format (client → server):
  *   { subscribe: [nodeKey, ...] }
  *   { unsubscribe: [nodeKey, ...] }
  */
 import { createStore } from "solid-js/store";
+import { computeBackoffDelay } from "../stores/backoff";
 
 export const SPECTRUM_BINS = 256;
 
@@ -29,17 +31,6 @@ interface SpectrumStoreApi {
   state: SpectrumState;
   subscribe: (nodeKey: string) => void;
   unsubscribe: (nodeKey: string) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Backoff — reuse same constants as sessionStore
-// ---------------------------------------------------------------------------
-
-const BACKOFF_INITIAL_MS = 1000;
-const BACKOFF_CAP_MS = 30_000;
-
-function computeBackoffDelay(attempt: number): number {
-  return Math.min(BACKOFF_INITIAL_MS * Math.pow(2, attempt), BACKOFF_CAP_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +61,13 @@ function sendMessage(msg: object): void {
   }
 }
 
+function toStereoBins(magnitudes: number[]): SpectrumBins {
+  return {
+    left: magnitudes.slice(0, SPECTRUM_BINS),
+    right: magnitudes.slice(0, SPECTRUM_BINS),
+  };
+}
+
 function connect(): void {
   if (ws) return; // already connecting/connected
 
@@ -90,6 +88,8 @@ function connect(): void {
     try {
       const data = JSON.parse(event.data as string) as {
         spectra?: Record<string, SpectrumBins>;
+        nodeId?: string;
+        bins?: number[];
       };
       if (data.spectra) {
         for (const [key, bins] of Object.entries(data.spectra)) {
@@ -98,6 +98,8 @@ function connect(): void {
             setState("bins", key, bins);
           }
         }
+      } else if (data.nodeId && Array.isArray(data.bins) && subscribedKeys.has(data.nodeId)) {
+        setState("bins", data.nodeId, toStereoBins(data.bins));
       }
     } catch {
       // Malformed frame — ignore

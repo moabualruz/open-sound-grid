@@ -1,27 +1,26 @@
 import { Show, createEffect, createMemo, createSignal } from "solid-js";
 import type { JSX } from "solid-js";
-import { useSession } from "../stores/sessionStore";
-import { useGraph } from "../stores/graphStore";
-import { useMixerSettings } from "../stores/mixerSettings";
-import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import {
+  Bell,
+  EyeOff,
+  Gamepad2,
+  Globe,
+  MessageCircle,
+  Music,
+  Power,
+  Speaker,
   Volume2,
   VolumeX,
-  EyeOff,
-  Power,
-  Music,
-  Globe,
-  Bell,
-  Gamepad2,
-  MessageCircle,
-  Speaker,
-  X,
 } from "lucide-solid";
-import AppAssignment from "./AppAssignment";
-import VuSlider from "./VuSlider";
+import { useGraph } from "../stores/graphStore";
+import { useMixerSettings } from "../stores/mixerSettings";
+import { useSession } from "../stores/sessionStore";
+import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import { useSmoothedAggregatePeak } from "../hooks/useSmoothedPeak";
-import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
-import type { SourceType } from "../types/session";
+import type { App, Channel, Endpoint, EndpointDescriptor, SourceType } from "../types/session";
+import AppAssignment from "./AppAssignment";
+import ContextMenu from "./ContextMenu";
+import VuSlider from "./VuSlider";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
 
@@ -31,6 +30,7 @@ interface ChannelLabelProps {
   channel?: Channel;
   apps?: App[];
   dragHandle?: () => JSX.Element;
+  onOpenEffects?: () => void;
 }
 
 function channelIcon(displayName: string) {
@@ -85,42 +85,45 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     }
 
     if (!("channel" in props.descriptor)) return [];
-    const chId = props.descriptor.channel;
+    const channelId = props.descriptor.channel;
     return (state.session.links ?? [])
-      .filter((link) => "channel" in link.start && link.start.channel === chId)
+      .filter((link) => "channel" in link.start && link.start.channel === channelId)
       .map((link) => link.cellNodeId)
       .filter((nodeId): nodeId is number => nodeId != null);
   });
 
-  const channelPeak = useSmoothedAggregatePeak(channelPeakNodeIds);
+  const channelPeak = useSmoothedAggregatePeak(() => channelPeakNodeIds());
 
   const [local, setLocal] = createSignal(0);
   const [localL, setLocalL] = createSignal(1);
   const [localR, setLocalR] = createSignal(1);
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
-  let userDragging = false;
+  const [userDragging, setUserDragging] = createSignal(false);
+  const [contextMenuPosition, setContextMenuPosition] = createSignal<{
+    x: number;
+    y: number;
+  } | null>(null);
 
-  const sendDebounced = useVolumeDebounce((v) => {
-    send({ type: "setVolume", endpoint: props.descriptor, volume: v });
-    userDragging = false;
+  const sendDebounced = useVolumeDebounce((value) => {
+    send({ type: "setVolume", endpoint: props.descriptor, volume: value });
+    setUserDragging(false);
   });
 
-  const sendStereoDebounced = useVolumeDebounce((_v) => {
+  const sendStereoDebounced = useVolumeDebounce(() => {
     send({
       type: "setStereoVolume",
       endpoint: props.descriptor,
       left: localL(),
       right: localR(),
     });
-    userDragging = false;
+    setUserDragging(false);
   });
 
   const isStereo = () => settings.stereoMode === "stereo";
 
-  // Sync from backend — but not while the user is actively dragging the slider
   createEffect(() => {
-    if (userDragging) return;
+    if (userDragging()) return;
     setLocal(props.endpoint.volume);
     setLocalL(props.endpoint.volumeLeft);
     setLocalR(props.endpoint.volumeRight);
@@ -129,27 +132,27 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const displayName = () => props.endpoint.customName ?? props.endpoint.displayName;
   const isCustom = () => !PRESET_CHANNEL_NAMES.includes(props.endpoint.displayName);
 
-  function startEdit() {
-    if (!isCustom()) return;
+  function startEdit(force = false) {
+    if (!force && !isCustom()) return;
     setEditValue(displayName());
     setEditing(true);
   }
 
   function commitEdit() {
-    const val = editValue().trim();
-    if (val && val !== displayName()) {
-      send({ type: "renameEndpoint", endpoint: props.descriptor, name: val });
+    const value = editValue().trim();
+    if (value && value !== displayName()) {
+      send({ type: "renameEndpoint", endpoint: props.descriptor, name: value });
     }
     setEditing(false);
   }
 
   const isMuted = () => {
-    const s = props.endpoint.volumeLockedMuted;
-    return s === "mutedLocked" || s === "mutedUnlocked" || s === "muteMixed";
+    const state = props.endpoint.volumeLockedMuted;
+    return state === "mutedLocked" || state === "mutedUnlocked" || state === "muteMixed";
   };
 
   function handleInput(value: number) {
-    userDragging = true;
+    setUserDragging(true);
     setLocal(value);
     setLocalL(value);
     setLocalR(value);
@@ -157,26 +160,29 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   }
 
   function handleStereoInput(channel: "left" | "right", value: number) {
-    userDragging = true;
+    setUserDragging(true);
     if (channel === "left") setLocalL(value);
     else setLocalR(value);
     setLocal((localL() + localR()) / 2);
     sendStereoDebounced(value);
   }
 
-  function handleWheel(e: WheelEvent) {
-    e.preventDefault();
-    const step = e.deltaY > 0 ? -0.01 : 0.01;
-    const next = Math.max(0, Math.min(1, local() + step));
-    handleInput(next);
+  function handleWheel(event: WheelEvent) {
+    event.preventDefault();
+    const step = event.deltaY > 0 ? -0.01 : 0.01;
+    handleInput(Math.max(0, Math.min(1, local() + step)));
   }
 
-  function handleWheelStereo(channel: "left" | "right", e: WheelEvent) {
-    e.preventDefault();
-    const step = e.deltaY > 0 ? -0.01 : 0.01;
+  function handleWheelStereo(channel: "left" | "right", event: WheelEvent) {
+    event.preventDefault();
+    const step = event.deltaY > 0 ? -0.01 : 0.01;
     const current = channel === "left" ? localL() : localR();
-    const next = Math.max(0, Math.min(1, current + step));
-    handleStereoInput(channel, next);
+    handleStereoInput(channel, Math.max(0, Math.min(1, current + step)));
+  }
+
+  function openContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    setContextMenuPosition({ x: event.clientX, y: event.clientY });
   }
 
   const pct = () => Math.round(local() * 100);
@@ -184,154 +190,193 @@ export default function ChannelLabel(props: ChannelLabelProps) {
   const pctR = () => Math.round(localR() * 100);
 
   return (
-    <div
-      class={`w-48 shrink-0 rounded-lg border border-border bg-bg-elevated transition-opacity duration-150 ${
-        props.endpoint.disabled ? "opacity-50" : ""
-      }`}
-    >
-      {/* Row 1: drag handle + icon + name + mute + remove */}
-      <div class="flex items-center gap-1.5 px-3 pt-2.5">
-        <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
-        {channelIcon(props.endpoint.displayName)}
+    <>
+      <div
+        class={`w-48 shrink-0 rounded-lg border border-border bg-bg-elevated transition-opacity duration-150 ${
+          props.endpoint.disabled ? "opacity-50" : ""
+        }`}
+        onContextMenu={openContextMenu}
+      >
+        <div class="flex items-center gap-1.5 px-3 pt-2.5">
+          <Show when={props.dragHandle}>{(handle) => handle()()}</Show>
+          {channelIcon(props.endpoint.displayName)}
 
-        <Show
-          when={editing()}
-          fallback={
-            <span
-              class="flex-1 truncate text-[13px] font-medium text-text-primary"
-              onDblClick={startEdit}
-              title={isCustom() ? "Double-click to rename" : undefined}
+          <Show
+            when={editing()}
+            fallback={
+              <span
+                class="flex-1 truncate text-[13px] font-medium text-text-primary"
+                onDblClick={() => startEdit()}
+                title={isCustom() ? "Double-click to rename" : undefined}
+              >
+                {displayName()}
+              </span>
+            }
+          >
+            <input
+              type="text"
+              value={editValue()}
+              onInput={(event) => setEditValue(event.currentTarget.value)}
+              onBlur={commitEdit}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitEdit();
+                if (event.key === "Escape") setEditing(false);
+              }}
+              autofocus
+              class="flex-1 rounded border border-border-active bg-bg-primary px-1 text-[13px] font-medium text-text-primary focus:outline-none"
+            />
+          </Show>
+
+          <button
+            onClick={() => send({ type: "setMute", endpoint: props.descriptor, muted: !isMuted() })}
+            class={`transition-colors duration-150 ${
+              isMuted() ? "text-vu-hot" : "text-text-muted hover:text-text-primary"
+            }`}
+            title={isMuted() ? "Unmute" : "Mute"}
+            aria-label={isMuted() ? "Unmute channel" : "Mute channel"}
+          >
+            <Show when={isMuted()} fallback={<Volume2 size={14} />}>
+              <VolumeX size={14} />
+            </Show>
+          </button>
+
+          <Show when={!props.channel?.autoApp && !("app" in props.descriptor)}>
+            <button
+              onClick={() =>
+                send({
+                  type: "setEndpointDisabled",
+                  endpoint: props.descriptor,
+                  disabled: !props.endpoint.disabled,
+                })
+              }
+              class={`transition-colors duration-150 ${
+                props.endpoint.disabled ? "text-vu-hot" : "text-text-muted hover:text-text-primary"
+              }`}
+              title={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
+              aria-label={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
             >
-              {displayName()}
-            </span>
-          }
-        >
-          <input
-            type="text"
-            value={editValue()}
-            onInput={(e) => setEditValue(e.currentTarget.value)}
-            onBlur={commitEdit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitEdit();
-              if (e.key === "Escape") setEditing(false);
-            }}
-            autofocus
-            class="flex-1 rounded border border-border-active bg-bg-primary px-1 text-[13px] font-medium text-text-primary focus:outline-none"
-          />
+              <Power size={12} />
+            </button>
+            <button
+              onClick={() =>
+                send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
+              }
+              class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
+              title="Hide channel"
+              aria-label="Hide channel"
+            >
+              <EyeOff size={12} />
+            </button>
+          </Show>
+        </div>
+
+        <Show when={props.channel}>
+          {(channel) => (
+            <div class="px-3 py-1.5">
+              <AppAssignment
+                channelId={"channel" in props.descriptor ? props.descriptor.channel : ""}
+                channel={channel()}
+                apps={props.apps ?? []}
+              />
+            </div>
+          )}
         </Show>
 
-        <button
-          onClick={() => send({ type: "setMute", endpoint: props.descriptor, muted: !isMuted() })}
-          class={`transition-colors duration-150 ${
-            isMuted() ? "text-vu-hot" : "text-text-muted hover:text-text-primary"
-          }`}
-          title={isMuted() ? "Unmute" : "Mute"}
-          aria-label={isMuted() ? "Unmute channel" : "Mute channel"}
-        >
-          {isMuted() ? <VolumeX size={14} /> : <Volume2 size={14} />}
-        </button>
+        <div class="px-3 pb-3 pt-2">
+          <Show
+            when={isStereo()}
+            fallback={
+              <div class="flex items-center gap-1">
+                <div class="flex-1" onWheel={handleWheel}>
+                  <VuSlider
+                    value={local()}
+                    peakLeft={channelPeak.left()}
+                    peakRight={channelPeak.right()}
+                    onInput={handleInput}
+                    muted={isMuted()}
+                    label="Master volume"
+                    valueText={`${pct()}%`}
+                    accentColor={channelAccentColor(props.channel?.sourceType)}
+                  />
+                </div>
+                <span class="w-7 text-right font-mono text-[11px] text-text-secondary">
+                  {pct()}
+                </span>
+              </div>
+            }
+          >
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center gap-1">
+                <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
+                <div class="flex-1" onWheel={(event) => handleWheelStereo("left", event)}>
+                  <VuSlider
+                    value={localL()}
+                    peakLeft={channelPeak.left()}
+                    peakRight={channelPeak.left()}
+                    onInput={(value) => handleStereoInput("left", value)}
+                    muted={isMuted()}
+                    label="Left volume"
+                    accentColor={channelAccentColor(props.channel?.sourceType)}
+                  />
+                </div>
+                <span class="w-7 text-right font-mono text-[10px] text-text-secondary">
+                  {pctL()}
+                </span>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
+                <div class="flex-1" onWheel={(event) => handleWheelStereo("right", event)}>
+                  <VuSlider
+                    value={localR()}
+                    peakLeft={channelPeak.right()}
+                    peakRight={channelPeak.right()}
+                    onInput={(value) => handleStereoInput("right", value)}
+                    muted={isMuted()}
+                    label="Right volume"
+                    accentColor={channelAccentColor(props.channel?.sourceType)}
+                  />
+                </div>
+                <span class="w-7 text-right font-mono text-[10px] text-text-secondary">
+                  {pctR()}
+                </span>
+              </div>
+            </div>
+          </Show>
+        </div>
+      </div>
 
-        <Show when={!props.channel?.autoApp && !("app" in props.descriptor)}>
-          <button
-            onClick={() =>
+      <ContextMenu
+        open={contextMenuPosition() !== null}
+        position={contextMenuPosition()}
+        onClose={() => setContextMenuPosition(null)}
+        items={[
+          { label: "Rename", onSelect: () => startEdit(true) },
+          {
+            label: "Effects",
+            onSelect: () => props.onOpenEffects?.(),
+            disabled: !props.onOpenEffects,
+          },
+          {
+            label: "Hide",
+            onSelect: () =>
+              send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false }),
+          },
+          {
+            label: props.endpoint.disabled ? "Enable" : "Disable",
+            onSelect: () =>
               send({
                 type: "setEndpointDisabled",
                 endpoint: props.descriptor,
                 disabled: !props.endpoint.disabled,
-              })
-            }
-            class={`transition-colors duration-150 ${
-              props.endpoint.disabled
-                ? "text-vu-hot"
-                : "text-text-muted hover:text-text-primary"
-            }`}
-            title={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
-            aria-label={props.endpoint.disabled ? "Enable channel" : "Disable channel"}
-          >
-            <Power size={12} />
-          </button>
-          <button
-            onClick={() =>
-              send({ type: "setEndpointVisible", endpoint: props.descriptor, visible: false })
-            }
-            class="text-text-muted transition-colors duration-150 hover:text-vu-hot"
-            title="Hide channel"
-            aria-label="Hide channel"
-          >
-            <EyeOff size={12} />
-          </button>
-        </Show>
-      </div>
-
-      {/* Row 2: assigned apps — hidden for auto-created app channels */}
-      <Show when={props.channel}>
-        {(ch) => (
-          <div class="px-3 py-1.5">
-            <AppAssignment
-              channelId={"channel" in props.descriptor ? props.descriptor.channel : ""}
-              channel={ch()}
-              apps={props.apps ?? []}
-            />
-          </div>
-        )}
-      </Show>
-
-      {/* Row 3: master volume slider(s) */}
-      <div class="px-3 pb-3 pt-2">
-        <Show
-          when={isStereo()}
-          fallback={
-            <div class="flex items-center gap-1">
-              <div class="flex-1" onWheel={handleWheel}>
-                <VuSlider
-                  value={local()}
-                  peakLeft={channelPeak.left()}
-                  peakRight={channelPeak.right()}
-                  onInput={handleInput}
-                  muted={isMuted()}
-                  label="Master volume"
-                  valueText={`${pct()}%`}
-                  accentColor={channelAccentColor(props.channel?.sourceType)}
-                />
-              </div>
-              <span class="w-7 text-right font-mono text-[11px] text-text-secondary">{pct()}</span>
-            </div>
-          }
-        >
-          <div class="flex flex-col gap-1.5">
-            <div class="flex items-center gap-1">
-              <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
-              <div class="flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
-                <VuSlider
-                  value={localL()}
-                  peakLeft={channelPeak.left()}
-                  peakRight={channelPeak.left()}
-                  onInput={(v) => handleStereoInput("left", v)}
-                  muted={isMuted()}
-                  label="Left volume"
-                  accentColor={channelAccentColor(props.channel?.sourceType)}
-                />
-              </div>
-              <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctL()}</span>
-            </div>
-            <div class="flex items-center gap-1">
-              <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
-              <div class="flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
-                <VuSlider
-                  value={localR()}
-                  peakLeft={channelPeak.right()}
-                  peakRight={channelPeak.right()}
-                  onInput={(v) => handleStereoInput("right", v)}
-                  muted={isMuted()}
-                  label="Right volume"
-                  accentColor={channelAccentColor(props.channel?.sourceType)}
-                />
-              </div>
-              <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctR()}</span>
-            </div>
-          </div>
-        </Show>
-      </div>
-    </div>
+              }),
+          },
+          {
+            label: "Remove",
+            onSelect: () => send({ type: "removeEndpoint", endpoint: props.descriptor }),
+            danger: true,
+          },
+        ]}
+      />
+    </>
   );
 }

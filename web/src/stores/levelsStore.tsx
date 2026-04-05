@@ -1,5 +1,5 @@
 import { createContext, useContext, onCleanup, type ParentProps } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
+import { createStore } from "solid-js/store";
 import { computeBackoffDelay } from "./backoff";
 
 interface PeakLevel {
@@ -41,7 +41,9 @@ export function LevelsProvider(props: ParentProps) {
       for (const l of levels) {
         peaks[String(l.nodeId)] = { left: l.left, right: l.right };
       }
-      setState("peaks", reconcile(peaks));
+      for (const [key, val] of Object.entries(peaks)) {
+        setState("peaks", key, val);
+      }
     };
 
     ws.onclose = () => {
