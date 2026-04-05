@@ -47,7 +47,7 @@ export default function PresetGallery(props: PresetGalleryProps) {
 
   return (
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-primary)]/60"
       onClick={handleOverlayClick}
     >
       <div
