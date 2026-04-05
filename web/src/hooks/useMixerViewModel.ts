@@ -5,7 +5,6 @@
  */
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { useSession } from "../stores/sessionStore";
-import { useLevels } from "../stores/levelsStore";
 import { findEndpoint, findLink, getMixColor, descriptorKey } from "../components/mixerUtils";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
 
@@ -32,12 +31,10 @@ function applyOrder(items: EndpointEntry[], order: EndpointDescriptor[]): Endpoi
 export interface MixerViewModel {
   /** Ordered visible source channels (non-sink). */
   channels: () => EndpointEntry[];
+  /** Hidden channels (visible === false). */
+  hiddenChannels: () => EndpointEntry[];
   /** Ordered visible mix destinations. */
   mixes: () => EndpointEntry[];
-  /** Peak L/R for a channel descriptor (reads from graph + levels store). */
-  getPeaks: (desc: EndpointDescriptor) => { left: number; right: number };
-  /** Peak L/R for a specific matrix cell via its PW cellNodeId. */
-  getCellPeaks: (cellNodeId: number | undefined) => { left: number; right: number };
   /** Serialise a descriptor to a stable string key for keyed loops. */
   descKey: (d: EndpointDescriptor) => string;
   /** Persist a new channel order to backend. */
@@ -48,48 +45,12 @@ export interface MixerViewModel {
 
 export function useMixerViewModel(): MixerViewModel {
   const { state, send } = useSession();
-  const levels = useLevels();
 
   // ── helpers ────────────────────────────────────────────────────────────────
 
   function channelKind(desc: EndpointDescriptor): string | undefined {
     if (!("channel" in desc)) return undefined;
     return state.session.channels[desc.channel]?.kind;
-  }
-
-  function getPeaks(desc: EndpointDescriptor): { left: number; right: number } {
-    if (!("channel" in desc)) return { left: 0, right: 0 };
-
-    const ch = state.session.channels[desc.channel];
-    const kind = ch?.kind;
-
-    // Sink (mix) channels have their own PW filter node — read peaks directly
-    // from the levels store using the channel's outputNodeId.
-    if (kind === "sink" && ch?.outputNodeId != null) {
-      return levels.peaks[String(ch.outputNodeId)] ?? { left: 0, right: 0 };
-    }
-
-    // Source channels are logical-only (no PW node). Peaks come from cell sinks
-    // (one per channel x mix pair). Aggregate the max peak across all cell sinks
-    // belonging to this channel by reading cellNodeId from each MixerLink.
-    let maxLeft = 0;
-    let maxRight = 0;
-    for (const link of state.session.links) {
-      if (!("channel" in link.start) || link.start.channel !== desc.channel) continue;
-      if (link.cellNodeId == null) continue;
-      const p = levels.peaks[String(link.cellNodeId)];
-      if (p) {
-        if (p.left > maxLeft) maxLeft = p.left;
-        if (p.right > maxRight) maxRight = p.right;
-      }
-    }
-    return { left: maxLeft, right: maxRight };
-  }
-
-  /** Peaks for a specific cell (channel x mix intersection) via its cellNodeId. */
-  function getCellPeaks(cellNodeId: number | undefined): { left: number; right: number } {
-    if (cellNodeId == null) return { left: 0, right: 0 };
-    return levels.peaks[String(cellNodeId)] ?? { left: 0, right: 0 };
   }
 
   // ── raw lists ───────────────────────────────────────────────────────────────
@@ -168,8 +129,6 @@ export function useMixerViewModel(): MixerViewModel {
     channels,
     mixes,
     hiddenChannels,
-    getPeaks,
-    getCellPeaks,
     descKey: descriptorKey,
     persistChannelOrder,
     persistMixOrder,

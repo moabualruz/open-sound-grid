@@ -14,8 +14,9 @@ import {
   MessageCircle,
   Speaker,
 } from "lucide-solid";
-import VuMeter from "./VuMeter";
 import AppAssignment from "./AppAssignment";
+import MeterSlider from "./MeterSlider";
+import { useLevels } from "../stores/levelsStore";
 import type { EndpointDescriptor, Endpoint, Channel, App } from "../types/session";
 
 const PRESET_CHANNEL_NAMES = ["Music", "Browser", "System", "Game", "SFX", "Voice Chat", "Aux 1"];
@@ -26,8 +27,6 @@ interface ChannelLabelProps {
   channel?: Channel;
   apps?: App[];
   dragHandle?: () => JSX.Element;
-  peakLeft?: number;
-  peakRight?: number;
 }
 
 function channelIcon(displayName: string) {
@@ -49,8 +48,27 @@ function channelIcon(displayName: string) {
 }
 
 export default function ChannelLabel(props: ChannelLabelProps) {
-  const { send } = useSession();
+  const { state, send } = useSession();
   const { settings } = useMixerSettings();
+  const levels = useLevels();
+
+  /** Reactive peak accessor: aggregate max peaks across all cell sinks for this channel. */
+  const channelPeak = () => {
+    if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
+    let maxLeft = 0;
+    let maxRight = 0;
+    for (const link of state.session.links) {
+      if (!("channel" in link.start) || link.start.channel !== props.descriptor.channel) continue;
+      if (link.cellNodeId == null) continue;
+      const p = levels.peaks[String(link.cellNodeId)];
+      if (p) {
+        if (p.left > maxLeft) maxLeft = p.left;
+        if (p.right > maxRight) maxRight = p.right;
+      }
+    }
+    return { left: maxLeft, right: maxRight };
+  };
+
   const [local, setLocal] = createSignal(0);
   const [localL, setLocalL] = createSignal(1);
   const [localR, setLocalR] = createSignal(1);
@@ -198,11 +216,6 @@ export default function ChannelLabel(props: ChannelLabelProps) {
         </Show>
       </div>
 
-      {/* VU meter — channel peak level */}
-      <div class="px-3 pt-2">
-        <VuMeter peakLeft={props.peakLeft} peakRight={props.peakRight} />
-      </div>
-
       {/* Row 2: assigned apps — hidden for auto-created app channels */}
       <Show when={props.channel}>
         {(ch) => (
@@ -222,28 +235,14 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           when={isStereo()}
           fallback={
             <div class="flex items-center gap-1">
-              <div class="relative flex-1" onWheel={handleWheel}>
-                {/* Peak level (behind slider) */}
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.4,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
+              <div class="flex-1" onWheel={handleWheel}>
+                <MeterSlider
                   value={local()}
-                  aria-label="Master volume"
-                  aria-valuetext={`${pct()}%`}
-                  onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
-                  class="relative z-10 w-full"
-                  style={{ "--value-pct": `${pct()}%` }}
+                  peak={channelPeak}
+                  onInput={handleInput}
+                  muted={isMuted()}
+                  label="Master volume"
+                  valueText={`${pct()}%`}
                 />
               </div>
               <span class="w-7 text-right font-mono text-[11px] text-text-secondary">{pct()}</span>
@@ -253,52 +252,26 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           <div class="flex flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
-              <div class="relative flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.4,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
+              <div class="flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
+                <MeterSlider
                   value={localL()}
-                  aria-label="Left volume"
-                  onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
-                  class="relative z-10 w-full"
-                  style={{ "--value-pct": `${pctL()}%` }}
+                  peak={() => ({ left: channelPeak().left, right: channelPeak().left })}
+                  onInput={(v) => handleStereoInput("left", v)}
+                  muted={isMuted()}
+                  label="Left volume"
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctL()}</span>
             </div>
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
-              <div class="relative flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.4,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
+              <div class="flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
+                <MeterSlider
                   value={localR()}
-                  aria-label="Right volume"
-                  onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
-                  class="relative z-10 w-full"
-                  style={{ "--value-pct": `${pctR()}%` }}
+                  peak={() => ({ left: channelPeak().right, right: channelPeak().right })}
+                  onInput={(v) => handleStereoInput("right", v)}
+                  muted={isMuted()}
+                  label="Right volume"
                 />
               </div>
               <span class="w-7 text-right font-mono text-[10px] text-text-secondary">{pctR()}</span>

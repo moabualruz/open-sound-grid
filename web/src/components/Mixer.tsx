@@ -36,8 +36,6 @@ export default function Mixer() {
     channels,
     hiddenChannels,
     mixes,
-    getPeaks,
-    getCellPeaks,
     descKey,
     persistChannelOrder,
     persistMixOrder,
@@ -234,8 +232,6 @@ export default function Mixer() {
                           dragHandle={dragHandle}
                           expanded={expandedMixKey() === mixKey}
                           onToggleExpand={() => toggleMixExpand(mixKey)}
-                          peakLeft={getPeaks(mix.desc).left}
-                          peakRight={getPeaks(mix.desc).right}
                         />
                       </div>
                     );
@@ -267,8 +263,6 @@ export default function Mixer() {
                           }
                           apps={Object.values(state.session.apps)}
                           dragHandle={dragHandle}
-                          peakLeft={getPeaks(ch.desc).left}
-                          peakRight={getPeaks(ch.desc).right}
                         />
                         <For each={mixes()}>
                           {({ desc: sinkDesc, ep: sinkEp }, colIdx) => (
@@ -283,8 +277,6 @@ export default function Mixer() {
                                 sourceDescriptor={ch.desc}
                                 sinkDescriptor={sinkDesc}
                                 mixColor={getMixColor(sinkEp?.displayName ?? "")}
-                                peakLeft={getCellPeaks(findLink(state.session.links, ch.desc, sinkDesc)?.cellNodeId).left}
-                                peakRight={getCellPeaks(findLink(state.session.links, ch.desc, sinkDesc)?.cellNodeId).right}
                                 onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
                                 focused={
                                   focusedCell()?.row === rowIdx() && focusedCell()?.col === colIdx()

@@ -17,7 +17,7 @@ let mockGraphDevices: Record<string, unknown>;
 let mockGraphNodes: Record<string, unknown>;
 
 vi.mock("../stores/sessionStore", () => ({
-  useSession: () => ({ state: {}, send: mockSend }),
+  useSession: () => ({ state: { session: { channels: {} } }, send: mockSend }),
 }));
 
 vi.mock("../stores/graphStore", () => ({
@@ -27,19 +27,9 @@ vi.mock("../stores/graphStore", () => ({
   }),
 }));
 
-// Stub VuSlider — just render an input[type=range] so we can interact with it
-vi.mock("./VuSlider", () => ({
-  default: (props: { value: number; onInput: (v: number) => void; ariaLabel?: string }) => (
-    <input
-      type="range"
-      min="0"
-      max="1"
-      step="0.01"
-      value={props.value}
-      aria-label={props.ariaLabel ?? "volume"}
-      onInput={(e) => props.onInput(parseFloat(e.currentTarget.value))}
-    />
-  ),
+// levelsStore — stub with empty peaks (component now uses useLevels directly)
+vi.mock("../stores/levelsStore", () => ({
+  useLevels: () => ({ peaks: {}, connected: true }),
 }));
 
 vi.mock("../hooks/useVolumeDebounce", () => ({
@@ -130,10 +120,9 @@ describe("MixHeader — rendering", () => {
     expect(bar).toBeTruthy();
   });
 
-  it("renders the VuSlider (master volume)", () => {
-    const { container } = renderHeader();
-    const slider = container.querySelector('input[type="range"]');
-    expect(slider).toBeTruthy();
+  it("renders the MeterSlider (master volume)", () => {
+    const { getByTestId } = renderHeader();
+    expect(getByTestId("meter-slider")).toBeTruthy();
   });
 
   it("renders Remove mix button", () => {
@@ -154,9 +143,9 @@ describe("MixHeader — volume slider", () => {
     mockGraphNodes = {};
   });
 
-  it("VuSlider input sends setVolume command", () => {
-    const { container } = renderHeader({ volume: 0.8 });
-    const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+  it("MeterSlider input sends setVolume command", () => {
+    const { getByTestId } = renderHeader({ volume: 0.8 });
+    const slider = getByTestId("meter-input") as HTMLInputElement;
     fireEvent.input(slider, { target: { value: "0.5" } });
     const calls = mockSend.mock.calls.filter(
       ([cmd]: [Command]) => cmd.type === "setVolume",

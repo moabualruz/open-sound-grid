@@ -4,8 +4,9 @@ import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { useMonitor } from "../stores/monitorStore";
 import { Volume2, VolumeX, SlidersVertical, Headphones, Plus } from "lucide-solid";
-import VuMeter from "./VuMeter";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
+import MeterSlider from "./MeterSlider";
+import { useLevels } from "../stores/levelsStore";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
 
 /** Imperative actions exposed to the parent grid for keyboard shortcuts. */
@@ -20,8 +21,6 @@ interface MatrixCellProps {
   sourceDescriptor: EndpointDescriptor;
   sinkDescriptor: EndpointDescriptor;
   mixColor: string;
-  peakLeft?: number;
-  peakRight?: number;
   onOpenEq?: () => void;
   focused?: boolean;
   /** Parent registers to receive imperative cell actions. */
@@ -32,6 +31,14 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
   const { send } = useSession();
   const { settings } = useMixerSettings();
   const monitor = useMonitor();
+  const levels = useLevels();
+
+  /** Reactive peak accessor for this cell's PipeWire node. */
+  const cellPeak = () => {
+    const nodeId = props.link?.cellNodeId;
+    if (!nodeId) return { left: 0, right: 0 };
+    return levels.peaks[String(nodeId)] ?? { left: 0, right: 0 };
+  };
   const [cellVol, setCellVol] = createSignal(1);
   const [cellL, setCellL] = createSignal(1);
   const [cellR, setCellR] = createSignal(1);
@@ -195,8 +202,10 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
         }
       >
         <div
-          style={{ "--mix-accent": props.mixColor }}
-          style={{ "--tw-ring-color": props.focused ? "var(--color-accent)" : undefined }}
+          style={{
+            "--mix-accent": props.mixColor,
+            "--tw-ring-color": props.focused ? "var(--color-accent)" : undefined,
+          }}
           class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
             props.focused ? "ring-2" : ""
           } ${
@@ -228,27 +237,14 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           <Show
             when={isStereo()}
             fallback={
-              <div class="relative flex-1" onWheel={handleWheel}>
-                {/* Peak level fill (behind slider) */}
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round(Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0 ? Math.round(100 / Math.max(props.peakLeft ?? 0.01, props.peakRight ?? 0.01)) : 100}% 100%`,
-                    opacity: isMuted() ? 0.08 : 0.45,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
+              <div class="flex-1" onWheel={handleWheel}>
+                <MeterSlider
                   value={cellVol()}
-                  onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
-                  aria-label="Cell volume"
-                  aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
-                  class="relative z-10 w-full"
+                  peak={cellPeak}
+                  onInput={handleInput}
+                  muted={isMuted()}
+                  label="Cell volume"
+                  valueText={`${cellPct()}% (effective ${effectivePct()}%)`}
                 />
               </div>
             }
@@ -256,25 +252,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             <div class="flex flex-1 flex-col gap-1.5">
               <div class="flex items-center gap-1">
                 <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
-                <div class="relative flex-1">
-                  <div
-                    class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                    style={{
-                      width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                      background: "var(--color-vu-gradient)",
-                      "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                      opacity: 0.45,
-                    }}
-                  />
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
+                <div class="flex-1">
+                  <MeterSlider
                     value={cellL()}
-                    onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
-                    aria-label="Cell volume left"
-                    class="relative z-10 w-full"
+                    peak={() => ({ left: cellPeak().left, right: cellPeak().left })}
+                    onInput={(v) => handleStereoInput("left", v)}
+                    muted={isMuted()}
+                    label="Cell volume left"
                   />
                 </div>
                 <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
@@ -286,25 +270,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               </div>
               <div class="flex items-center gap-1">
                 <span class="w-2 text-[8px] font-bold text-text-muted">R</span>
-                <div class="relative flex-1">
-                  <div
-                    class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                    style={{
-                      width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
-                      background: "var(--color-vu-gradient)",
-                      "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
-                      opacity: 0.45,
-                    }}
-                  />
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
+                <div class="flex-1">
+                  <MeterSlider
                     value={cellR()}
-                    onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
-                    aria-label="Cell volume right"
-                    class="relative z-10 w-full"
+                    peak={() => ({ left: cellPeak().right, right: cellPeak().right })}
+                    onInput={(v) => handleStereoInput("right", v)}
+                    muted={isMuted()}
+                    label="Cell volume right"
                   />
                 </div>
                 <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
@@ -349,10 +321,6 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
           </button>
         </div>
 
-        {/* VU meter — reads peak levels from the cell's PipeWire node */}
-        <div class="px-3 pb-1">
-          <VuMeter nodeId={props.link?.cellNodeId ?? undefined} />
-        </div>
       </Show>
     </div>
   );

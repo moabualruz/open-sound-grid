@@ -36,9 +36,9 @@ vi.mock("../stores/monitorStore", () => ({
   }),
 }));
 
-// VuMeter uses levelsStore via context — stub it out
-vi.mock("./VuMeter", () => ({
-  default: () => <div data-testid="vu-meter" />,
+// levelsStore — stub with empty peaks (components now use useLevels directly)
+vi.mock("../stores/levelsStore", () => ({
+  useLevels: () => ({ peaks: {}, connected: true }),
 }));
 
 // useVolumeDebounce — call the callback synchronously so tests see send() immediately
@@ -193,7 +193,7 @@ describe("MatrixCell — mono mode (default)", () => {
 
   it("scroll wheel up increases volume and sends command", () => {
     const { container } = renderCell(makeLink({ cellVolume: 0.5 }));
-    const wrapper = container.querySelector(".relative.flex-1") as HTMLElement;
+    const wrapper = container.querySelector(".flex-1") as HTMLElement;
     fireEvent.wheel(wrapper, { deltaY: -1 });
     const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([cmd]: [Command]) => cmd.type === "setLinkVolume",
@@ -205,7 +205,7 @@ describe("MatrixCell — mono mode (default)", () => {
 
   it("scroll wheel down decreases volume", () => {
     const { container } = renderCell(makeLink({ cellVolume: 0.5 }));
-    const wrapper = container.querySelector(".relative.flex-1") as HTMLElement;
+    const wrapper = container.querySelector(".flex-1") as HTMLElement;
     fireEvent.wheel(wrapper, { deltaY: 1 });
     const calls = (mockSend as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([cmd]: [Command]) => cmd.type === "setLinkVolume",

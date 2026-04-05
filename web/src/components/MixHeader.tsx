@@ -2,8 +2,9 @@ import { Show, For, createSignal, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
-import VuSlider from "./VuSlider";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
+import MeterSlider from "./MeterSlider";
+import { useLevels } from "../stores/levelsStore";
 import {
   Headphones,
   Radio,
@@ -43,9 +44,6 @@ interface MixHeaderProps {
   expanded?: boolean;
   /** Called when the user clicks the header to toggle expand. */
   onToggleExpand?: () => void;
-  /** Peak level for the mix output (0–1), used by the VuSlider fill. */
-  peakLeft?: number;
-  peakRight?: number;
 }
 
 function pickIcon(displayName: string, color: string): JSX.Element {
@@ -95,8 +93,18 @@ export function getOutputDevices(
 }
 
 export default function MixHeader(props: MixHeaderProps): JSX.Element {
-  const { send } = useSession();
+  const { state, send } = useSession();
   const graphState = useGraph();
+  const levels = useLevels();
+
+  /** Reactive peak accessor for this mix's output node. */
+  const mixPeak = () => {
+    if (!("channel" in props.descriptor)) return { left: 0, right: 0 };
+    const ch = state.session.channels[props.descriptor.channel];
+    if (!ch?.outputNodeId) return { left: 0, right: 0 };
+    return levels.peaks[String(ch.outputNodeId)] ?? { left: 0, right: 0 };
+  };
+
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
   const [showOutputPicker, setShowOutputPicker] = createSignal(false);
@@ -300,16 +308,15 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         </button>
       </div>
 
-      {/* Mix master volume with VU fill */}
+      {/* Mix master volume with VU meter */}
       <div class="flex items-center gap-1.5 px-2 pb-2">
         <div class="flex-1">
-          <VuSlider
+          <MeterSlider
             value={localVol()}
-            peak={Math.max(props.peakLeft ?? 0, props.peakRight ?? 0)}
-            color={props.color}
+            peak={mixPeak}
             onInput={handleVolumeInput}
-            ariaLabel={`${label()} master volume`}
-            ariaValueText={`${volPct()}%`}
+            label={`${label()} master volume`}
+            valueText={`${volPct()}%`}
           />
         </div>
         <span class="w-7 shrink-0 text-right font-mono text-[10px] text-text-muted">

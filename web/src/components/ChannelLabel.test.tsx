@@ -16,7 +16,7 @@ let mockSend: ReturnType<typeof vi.fn>;
 let mockStereoMode: "mono" | "stereo";
 
 vi.mock("../stores/sessionStore", () => ({
-  useSession: () => ({ state: {}, send: mockSend }),
+  useSession: () => ({ state: { session: { links: [] } }, send: mockSend }),
 }));
 
 vi.mock("../stores/mixerSettings", () => ({
@@ -27,8 +27,9 @@ vi.mock("../stores/mixerSettings", () => ({
   }),
 }));
 
-vi.mock("./VuMeter", () => ({
-  default: () => <div data-testid="vu-meter" />,
+// levelsStore — stub with empty peaks (component now uses useLevels directly)
+vi.mock("../stores/levelsStore", () => ({
+  useLevels: () => ({ peaks: {}, connected: true }),
 }));
 
 vi.mock("./AppAssignment", () => ({
@@ -114,9 +115,9 @@ describe("ChannelLabel — rendering", () => {
     expect(getByText("My Custom")).toBeTruthy();
   });
 
-  it("renders VuMeter", () => {
+  it("renders MeterSlider", () => {
     const { getByTestId } = renderLabel();
-    expect(getByTestId("vu-meter")).toBeTruthy();
+    expect(getByTestId("meter-slider")).toBeTruthy();
   });
 
   it("renders AppAssignment when channel prop is provided", () => {

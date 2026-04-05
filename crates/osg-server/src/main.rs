@@ -31,7 +31,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
     tracing::info!("Open Sound Grid server starting");
 
     // Server configuration from environment variables
-    let host = std::env::var("OSG_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let host = std::env::var("OSG_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("OSG_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
