@@ -30,12 +30,33 @@ async fn main() -> Result<(), osg_core::CoreError> {
 
     tracing::info!("Open Sound Grid server starting");
 
+    // Server configuration from environment variables
+    let host = std::env::var("OSG_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port: u16 = std::env::var("OSG_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9100);
+    let dev_port: u16 = std::env::var("OSG_DEV_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5173);
+    let bind_addr = format!("{host}:{port}");
+
     let core = OsgCore::new().await?;
 
     let state = Arc::new(AppState {
         core,
         icon_cache: icons::IconCache::new(),
     });
+
+    // Build CORS origins from configured host/ports
+    let cors_origins: Vec<axum::http::HeaderValue> = [
+        format!("http://{host}:{port}"),
+        format!("http://localhost:{dev_port}"),
+    ]
+    .iter()
+    .filter_map(|o| o.parse().ok())
+    .collect();
 
     let app = Router::new()
         .route("/api/graph", get(get_graph))
@@ -48,18 +69,16 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .fallback_service(ServeDir::new("web/dist"))
         .layer(
             CorsLayer::new()
-                .allow_origin(AllowOrigin::exact(axum::http::HeaderValue::from_static(
-                    "http://127.0.0.1:9100",
-                )))
+                .allow_origin(AllowOrigin::list(cors_origins))
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
         .with_state(state.clone());
 
-    let listener = TcpListener::bind("127.0.0.1:9100")
+    let listener = TcpListener::bind(&bind_addr)
         .await
         .map_err(|e| osg_core::pw::PwError::ConnectionFailed(format!("bind failed: {e}")))?;
-    tracing::info!("Listening on http://127.0.0.1:9100");
+    tracing::info!("Listening on http://{bind_addr}");
 
     // Graceful shutdown: save state on Ctrl+C
     let shutdown_state = state;
