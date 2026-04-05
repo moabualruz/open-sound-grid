@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useMixerSettings } from "../stores/mixerSettings";
 import { useMonitor } from "../stores/monitorStore";
-import { Volume2, VolumeX, SlidersVertical, Headphones } from "lucide-solid";
+import { Volume2, VolumeX, SlidersVertical, Headphones, Plus } from "lucide-solid";
 import VuMeter from "./VuMeter";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
@@ -177,159 +177,168 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
 
   return (
     <div class="group h-full">
-      <div
-        style={{ "--mix-accent": props.mixColor }}
-        style={{ "--tw-ring-color": props.focused ? "var(--color-accent)" : undefined }}
-        class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
-          props.focused ? "ring-2" : ""
-        } ${
-          isMonitored()
-            ? "border-accent bg-bg-elevated ring-2 ring-accent/40"
-            : mutedByMonitor()
-              ? "border-border/30 bg-bg-primary/50 opacity-30"
-              : !isLinked()
-                ? "border-dashed border-border bg-bg-elevated"
+      <Show
+        when={isLinked()}
+        fallback={
+          /* Unlinked: minimal dashed cell — click anywhere to create the route */
+          <button
+            type="button"
+            onClick={ensureLinked}
+            title="Click to route this source to this mix"
+            aria-label="Create audio route"
+            class={`flex h-full w-full items-center justify-center rounded-lg border border-dashed transition-all duration-150 ${
+              props.focused ? "ring-2 ring-accent" : ""
+            } border-border/40 bg-bg-elevated text-text-muted/30 hover:border-border hover:text-text-muted/60`}
+          >
+            <Plus size={14} />
+          </button>
+        }
+      >
+        <div
+          style={{ "--mix-accent": props.mixColor }}
+          style={{ "--tw-ring-color": props.focused ? "var(--color-accent)" : undefined }}
+          class={`flex h-full items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150 ${
+            props.focused ? "ring-2" : ""
+          } ${
+            isMonitored()
+              ? "border-accent bg-bg-elevated ring-2 ring-accent/40"
+              : mutedByMonitor()
+                ? "border-border/30 bg-bg-primary/50 opacity-30"
                 : channelMuted()
                   ? "border-vu-hot/20 bg-vu-hot/5"
-                  : "border-border bg-bg-elevated hover:bg-bg-hover/50"
-        }`}
-      >
-        {/* Per-cell route toggle */}
-        <button
-          type="button"
-          onClick={toggleCellMute}
-          title={cellMuted() ? "Unmute cell" : "Mute cell"}
-          aria-label={cellMuted() ? "Unmute cell" : "Mute cell"}
-          class={`flex h-8 w-8 shrink-0 items-center justify-center rounded transition-colors duration-150 ${
-            !isLinked()
-              ? "text-text-muted/30 hover:text-text-muted"
-              : isMuted()
-                ? "text-vu-hot"
-                : "text-text-muted hover:text-text-primary"
+                  : "border-border bg-bg-elevated"
           }`}
         >
-          <Show when={isMuted()} fallback={<Volume2 size={14} />}>
-            <VolumeX size={14} />
-          </Show>
-        </button>
-
-        {/* Cell volume slider(s) */}
-        <Show
-          when={isStereo()}
-          fallback={
-            <div class="relative flex-1" onWheel={handleWheel}>
-              {/* Peak level fill (behind slider) */}
-              <div
-                class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                style={{
-                  width: `${Math.round(Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) * 100)}%`,
-                  background: "var(--color-vu-gradient)",
-                  "background-size": `${Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0 ? Math.round(100 / Math.max(props.peakLeft ?? 0.01, props.peakRight ?? 0.01)) : 100}% 100%`,
-                  opacity: isMuted() ? 0.08 : 0.3,
-                }}
-              />
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={cellVol()}
-                onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
-                aria-label="Cell volume"
-                aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
-                class="relative z-10 w-full"
-                style={{ "--value-pct": `${cellPct()}%` }}
-              />
-            </div>
-          }
-        >
-          <div class="flex flex-1 flex-col gap-1.5">
-            <div class="flex items-center gap-1">
-              <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
-              <div class="relative flex-1">
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.3,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={cellL()}
-                  onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
-                  aria-label="Cell volume left"
-                  class="relative z-10 w-full"
-                  style={{ "--value-pct": `${cellPctL()}%` }}
-                />
-              </div>
-              <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
-                {cellPctL()}
-                <Show when={cellPctL() !== effectivePctL()}>
-                  <span class="text-text-muted">→{effectivePctL()}</span>
-                </Show>
-              </span>
-            </div>
-            <div class="flex items-center gap-1">
-              <span class="w-2 text-[8px] font-bold text-text-muted">R</span>
-              <div class="relative flex-1">
-                <div
-                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
-                  style={{
-                    width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
-                    background: "var(--color-vu-gradient)",
-                    "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
-                    opacity: 0.3,
-                  }}
-                />
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={cellR()}
-                  onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
-                  aria-label="Cell volume right"
-                  class="relative z-10 w-full"
-                  style={{ "--value-pct": `${cellPctR()}%` }}
-                />
-              </div>
-              <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
-                {cellPctR()}
-                <Show when={cellPctR() !== effectivePctR()}>
-                  <span class="text-text-muted">→{effectivePctR()}</span>
-                </Show>
-              </span>
-            </div>
-          </div>
-        </Show>
-
-        {/* Percentage (mono only) */}
-        <Show when={!isStereo()}>
-          <div
-            class={`flex flex-col items-end font-mono text-[10px] leading-tight ${
-              isMuted() ? "text-text-muted/30" : "text-text-secondary"
+          {/* Per-cell route toggle */}
+          <button
+            type="button"
+            onClick={toggleCellMute}
+            title={cellMuted() ? "Unmute cell" : "Mute cell"}
+            aria-label={cellMuted() ? "Unmute cell" : "Mute cell"}
+            class={`shrink-0 transition-colors duration-150 ${
+              isMuted() ? "text-vu-hot" : "text-text-muted hover:text-text-primary"
             }`}
           >
-            <span>{cellPct()}</span>
-            <Show when={!isMuted() && cellPct() !== effectivePct()}>
-              <span class="text-text-muted">→{effectivePct()}</span>
+            <Show when={isMuted()} fallback={<Volume2 size={14} />}>
+              <VolumeX size={14} />
             </Show>
-          </div>
-        </Show>
+          </button>
 
-        {/* EQ button — visible on hover when route is active */}
-        <Show when={isLinked()}>
+          {/* Cell volume slider(s) */}
+          <Show
+            when={isStereo()}
+            fallback={
+              <div class="relative flex-1" onWheel={handleWheel}>
+                {/* Peak level fill (behind slider) */}
+                <div
+                  class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
+                  style={{
+                    width: `${Math.round(Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) * 100)}%`,
+                    background: "var(--color-vu-gradient)",
+                    "background-size": `${Math.max(props.peakLeft ?? 0, props.peakRight ?? 0) > 0 ? Math.round(100 / Math.max(props.peakLeft ?? 0.01, props.peakRight ?? 0.01)) : 100}% 100%`,
+                    opacity: isMuted() ? 0.08 : 0.3,
+                  }}
+                />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={cellVol()}
+                  onInput={(e) => handleInput(parseFloat(e.currentTarget.value))}
+                  aria-label="Cell volume"
+                  aria-valuetext={`${cellPct()}% (effective ${effectivePct()}%)`}
+                  class="relative z-10 w-full"
+                />
+              </div>
+            }
+          >
+            <div class="flex flex-1 flex-col gap-1.5">
+              <div class="flex items-center gap-1">
+                <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
+                <div class="relative flex-1">
+                  <div
+                    class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
+                    style={{
+                      width: `${Math.round((props.peakLeft ?? 0) * 100)}%`,
+                      background: "var(--color-vu-gradient)",
+                      "background-size": `${(props.peakLeft ?? 0) > 0 ? Math.round(100 / (props.peakLeft ?? 0.01)) : 100}% 100%`,
+                      opacity: 0.3,
+                    }}
+                  />
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={cellL()}
+                    onInput={(e) => handleStereoInput("left", parseFloat(e.currentTarget.value))}
+                    aria-label="Cell volume left"
+                    class="relative z-10 w-full"
+                  />
+                </div>
+                <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
+                  {cellPctL()}
+                  <Show when={cellPctL() !== effectivePctL()}>
+                    <span class="text-text-muted">→{effectivePctL()}</span>
+                  </Show>
+                </span>
+              </div>
+              <div class="flex items-center gap-1">
+                <span class="w-2 text-[8px] font-bold text-text-muted">R</span>
+                <div class="relative flex-1">
+                  <div
+                    class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
+                    style={{
+                      width: `${Math.round((props.peakRight ?? 0) * 100)}%`,
+                      background: "var(--color-vu-gradient)",
+                      "background-size": `${(props.peakRight ?? 0) > 0 ? Math.round(100 / (props.peakRight ?? 0.01)) : 100}% 100%`,
+                      opacity: 0.3,
+                    }}
+                  />
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={cellR()}
+                    onInput={(e) => handleStereoInput("right", parseFloat(e.currentTarget.value))}
+                    aria-label="Cell volume right"
+                    class="relative z-10 w-full"
+                  />
+                </div>
+                <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
+                  {cellPctR()}
+                  <Show when={cellPctR() !== effectivePctR()}>
+                    <span class="text-text-muted">→{effectivePctR()}</span>
+                  </Show>
+                </span>
+              </div>
+            </div>
+          </Show>
+
+          {/* Percentage (mono only) */}
+          <Show when={!isStereo()}>
+            <div
+              class={`flex flex-col items-end font-mono text-[10px] leading-tight ${
+                isMuted() ? "text-text-muted/30" : "text-text-secondary"
+              }`}
+            >
+              <span>{cellPct()}</span>
+              <Show when={!isMuted() && cellPct() !== effectivePct()}>
+                <span class="text-text-muted">→{effectivePct()}</span>
+              </Show>
+            </div>
+          </Show>
+
+          {/* EQ button — visible on hover when route is active */}
           <button
             type="button"
             onClick={() => props.onOpenEq?.()}
             class={`shrink-0 transition-colors duration-150 ${
-              isMonitored() ? "text-accent" : "text-text-muted/30 hover:text-accent"
+              isMonitored()
+                ? "text-accent"
+                : "text-text-muted/0 group-hover:text-text-muted/60 hover:!text-accent"
             }`}
             title="EQ & Effects"
             aria-label="EQ & Effects"
@@ -338,13 +347,13 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               <Headphones size={12} />
             </Show>
           </button>
-        </Show>
-      </div>
+        </div>
 
-      {/* VU meter — reads peak levels from the cell's PipeWire node */}
-      <div class="px-3 pb-1">
-        <VuMeter nodeId={props.link?.cellNodeId ?? undefined} />
-      </div>
+        {/* VU meter — reads peak levels from the cell's PipeWire node */}
+        <div class="px-3 pb-1">
+          <VuMeter nodeId={props.link?.cellNodeId ?? undefined} />
+        </div>
+      </Show>
     </div>
   );
 }

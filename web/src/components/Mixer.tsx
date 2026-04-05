@@ -37,6 +37,7 @@ export default function Mixer() {
     hiddenChannels,
     mixes,
     getPeaks,
+    getCellPeaks,
     descKey,
     persistChannelOrder,
     persistMixOrder,
@@ -243,7 +244,7 @@ export default function Mixer() {
               </div>
 
               {/* Matrix rows */}
-              <div class="flex flex-1 flex-col gap-1.5">
+              <div class="flex flex-col gap-1.5">
                 <DragReorder
                   items={channels()}
                   keyFn={(ch) => descKey(ch.desc)}
@@ -282,8 +283,8 @@ export default function Mixer() {
                                 sourceDescriptor={ch.desc}
                                 sinkDescriptor={sinkDesc}
                                 mixColor={getMixColor(sinkEp?.displayName ?? "")}
-                                peakLeft={getPeaks(ch.desc).left}
-                                peakRight={getPeaks(ch.desc).right}
+                                peakLeft={getCellPeaks(findLink(state.session.links, ch.desc, sinkDesc)?.cellNodeId).left}
+                                peakRight={getCellPeaks(findLink(state.session.links, ch.desc, sinkDesc)?.cellNodeId).right}
                                 onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
                                 focused={
                                   focusedCell()?.row === rowIdx() && focusedCell()?.col === colIdx()
