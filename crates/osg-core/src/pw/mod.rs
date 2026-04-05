@@ -18,7 +18,11 @@ mod volume_ops;
 
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock, mpsc},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
 };
 
@@ -26,6 +30,7 @@ use thiserror::Error;
 use tracing::error;
 use ulid::Ulid;
 
+use fft::SpectrumData;
 pub use filter::FilterHandle;
 pub use identifier::NodeIdentifier;
 pub use object::PortKind;
@@ -181,6 +186,7 @@ pub type Link = object::Link<()>;
 #[derive(Debug, Clone, Default)]
 pub struct FilterHandleStore {
     inner: Arc<RwLock<HashMap<String, FilterHandle>>>,
+    spectrum_enabled: Arc<AtomicBool>,
 }
 
 #[allow(clippy::unwrap_used)]
@@ -191,6 +197,9 @@ impl FilterHandleStore {
 
     /// Insert a handle, returning any previous one.
     pub fn insert(&self, key: String, handle: FilterHandle) -> Option<FilterHandle> {
+        handle
+            .spectrum()
+            .set_subscribed(self.spectrum_enabled.load(Ordering::Acquire));
         self.inner.write().unwrap().insert(key, handle)
     }
 
@@ -214,6 +223,26 @@ impl FilterHandleStore {
                 let (l, r) = h.peak();
                 (k.clone(), l, r)
             })
+            .collect()
+    }
+
+    /// Enable or disable spectrum computation for all active filters.
+    pub fn set_spectrum_enabled_for_all(&self, enabled: bool) {
+        self.spectrum_enabled.store(enabled, Ordering::Release);
+        let handles = self.inner.read().unwrap();
+        for handle in handles.values() {
+            handle.spectrum().set_subscribed(enabled);
+        }
+    }
+
+    /// Read all published spectra keyed by filter node ID.
+    pub fn read_all_spectra(&self) -> Vec<(String, Arc<SpectrumData>)> {
+        self.inner
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, handle)| handle.spectrum().has_published_data())
+            .map(|(key, handle)| (key.clone(), handle.spectrum().load()))
             .collect()
     }
 }

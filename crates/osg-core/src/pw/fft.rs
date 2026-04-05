@@ -29,6 +29,7 @@ const FREQ_MIN: f32 = 20.0;
 
 /// Maximum frequency for log-scaled bin mapping (Hz).
 const FREQ_MAX: f32 = 20_000.0;
+const SPECTRUM_FLOOR_DB: f32 = -100.0;
 
 // ---------------------------------------------------------------------------
 // Hann window (pre-computed at compile time is impractical, so lazy-init)
@@ -78,17 +79,14 @@ fn log_bin_mapping() -> [(usize, usize); SPECTRUM_BINS] {
 /// Immutable spectrum snapshot shared via `ArcSwap`.
 #[derive(Debug, Clone)]
 pub struct SpectrumData {
-    /// Left channel magnitude bins in dB (256 values).
-    pub left: [f32; SPECTRUM_BINS],
-    /// Right channel magnitude bins in dB (256 values).
-    pub right: [f32; SPECTRUM_BINS],
+    /// Magnitude bins in dB (256 values).
+    pub bins: [f32; SPECTRUM_BINS],
 }
 
 impl Default for SpectrumData {
     fn default() -> Self {
         Self {
-            left: [f32::NEG_INFINITY; SPECTRUM_BINS],
-            right: [f32::NEG_INFINITY; SPECTRUM_BINS],
+            bins: [SPECTRUM_FLOOR_DB; SPECTRUM_BINS],
         }
     }
 }
@@ -155,16 +153,24 @@ impl FftRingBuffer {
         }
     }
 
+    /// Push a single mono sample into the ring buffer.
+    /// Returns `true` once `FFT_SIZE` samples have been accumulated.
+    pub fn push_sample(&mut self, sample: f32) -> bool {
+        self.buffer[self.write_pos] = sample;
+        self.write_pos = (self.write_pos + 1) % FFT_SIZE;
+        self.samples_accumulated = (self.samples_accumulated + 1).min(FFT_SIZE);
+        self.samples_accumulated >= FFT_SIZE
+    }
+
     /// Push audio samples into the ring buffer.
     /// Returns `true` when the buffer has accumulated `FFT_SIZE` samples
     /// and is ready for FFT computation.
     pub fn push_samples(&mut self, samples: &[f32]) -> bool {
-        for &s in samples {
-            self.buffer[self.write_pos] = s;
-            self.write_pos = (self.write_pos + 1) % FFT_SIZE;
-            self.samples_accumulated += 1;
+        let mut ready = false;
+        for &sample in samples {
+            ready |= self.push_sample(sample);
         }
-        self.samples_accumulated >= FFT_SIZE
+        ready
     }
 
     /// Compute the FFT spectrum and return magnitude bins in dB.
@@ -200,7 +206,7 @@ impl FftRingBuffer {
         }
 
         // Compute magnitudes and map to log-scaled bins
-        let mut bins = [f32::NEG_INFINITY; SPECTRUM_BINS];
+        let mut bins = [SPECTRUM_FLOOR_DB; SPECTRUM_BINS];
         let norm = 2.0 / FFT_SIZE as f32; // Normalization factor
 
         for (i, &(start_bin, end_bin)) in self.bin_mapping.iter().enumerate() {
@@ -215,9 +221,9 @@ impl FftRingBuffer {
             }
             // Convert to dB (with floor at -100 dB)
             bins[i] = if max_mag > 0.0 {
-                (20.0 * max_mag.log10()).max(-100.0)
+                (20.0 * max_mag.log10()).max(SPECTRUM_FLOOR_DB)
             } else {
-                -100.0
+                SPECTRUM_FLOOR_DB
             };
         }
 
@@ -233,8 +239,7 @@ impl FftRingBuffer {
 /// The WS broadcast thread reads these and wraps in `Arc<SpectrumData>`.
 #[derive(Debug)]
 struct RawSpectrumBins {
-    left: [std::sync::atomic::AtomicU32; SPECTRUM_BINS],
-    right: [std::sync::atomic::AtomicU32; SPECTRUM_BINS],
+    bins: [std::sync::atomic::AtomicU32; SPECTRUM_BINS],
     /// Monotonic counter incremented on every publish; reader uses it to
     /// detect new data without allocating on the RT side.
     generation: std::sync::atomic::AtomicU64,
@@ -242,10 +247,9 @@ struct RawSpectrumBins {
 
 impl Default for RawSpectrumBins {
     fn default() -> Self {
-        const NEG_INF_BITS: u32 = 0xff80_0000; // f32::NEG_INFINITY
+        let floor_bits = SPECTRUM_FLOOR_DB.to_bits();
         Self {
-            left: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(NEG_INF_BITS)),
-            right: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(NEG_INF_BITS)),
+            bins: std::array::from_fn(|_| std::sync::atomic::AtomicU32::new(floor_bits)),
             generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
@@ -286,16 +290,18 @@ impl SpectrumHandle {
         self.subscribed.store(subscribed, Ordering::Relaxed);
     }
 
+    /// Check whether any spectrum has been published yet.
+    pub fn has_published_data(&self) -> bool {
+        self.raw.generation.load(Ordering::Acquire) > 0
+    }
+
     /// Publish new spectrum data (called from RT thread).
     ///
     /// Writes raw f32 bins via atomic stores — zero allocation, lock-free.
     /// The reader side (`load`) materialises the `Arc<SpectrumData>`.
     pub fn publish(&self, data: SpectrumData) {
-        for (i, &v) in data.left.iter().enumerate() {
-            self.raw.left[i].store(v.to_bits(), Ordering::Relaxed);
-        }
-        for (i, &v) in data.right.iter().enumerate() {
-            self.raw.right[i].store(v.to_bits(), Ordering::Relaxed);
+        for (i, &value) in data.bins.iter().enumerate() {
+            self.raw.bins[i].store(value.to_bits(), Ordering::Relaxed);
         }
         // Release fence so the reader sees all bin writes before the new generation.
         self.raw.generation.fetch_add(1, Ordering::Release);
@@ -310,11 +316,8 @@ impl SpectrumHandle {
         let last_gen = self.reader_gen.load(Ordering::Relaxed);
         if current_gen != last_gen {
             let mut sd = SpectrumData::default();
-            for (i, atom) in self.raw.left.iter().enumerate() {
-                sd.left[i] = f32::from_bits(atom.load(Ordering::Relaxed));
-            }
-            for (i, atom) in self.raw.right.iter().enumerate() {
-                sd.right[i] = f32::from_bits(atom.load(Ordering::Relaxed));
+            for (i, atom) in self.raw.bins.iter().enumerate() {
+                sd.bins[i] = f32::from_bits(atom.load(Ordering::Relaxed));
             }
             let arc = Arc::new(sd);
             self.cached.store(arc.clone());
@@ -323,108 +326,5 @@ impl SpectrumHandle {
         } else {
             self.cached.load_full()
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fft_dc_signal_energy_in_low_bins() {
-        let mut rb = FftRingBuffer::new();
-        let dc_signal = [0.5_f32; FFT_SIZE];
-        assert!(rb.push_samples(&dc_signal));
-        let bins = rb.compute_spectrum().expect("should produce spectrum");
-        // DC energy should be concentrated in the low-frequency bins.
-        // Hann window spreads energy slightly, so check that average of
-        // bottom quarter is well above average of top quarter.
-        let low_avg: f32 =
-            bins[..SPECTRUM_BINS / 4].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
-        let high_avg: f32 =
-            bins[SPECTRUM_BINS * 3 / 4..].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
-        assert!(
-            low_avg > high_avg + 10.0,
-            "DC energy should be in low bins: low_avg={low_avg}, high_avg={high_avg}"
-        );
-    }
-
-    #[test]
-    fn fft_sine_1khz_peak_in_correct_bin() {
-        let mut rb = FftRingBuffer::new();
-        let mut signal = [0.0_f32; FFT_SIZE];
-        for (i, s) in signal.iter_mut().enumerate() {
-            *s = (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / SAMPLE_RATE).sin();
-        }
-        assert!(rb.push_samples(&signal));
-        let bins = rb.compute_spectrum().expect("should produce spectrum");
-        // Find the peak bin
-        let peak_bin = bins
-            .iter()
-            .enumerate()
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
-            .map(|(i, _)| i)
-            .unwrap();
-        // 1kHz should map to roughly the middle range of log-scaled bins
-        // log(1000) is between log(20) and log(20000), about 57% through
-        let expected_approx = (SPECTRUM_BINS as f32 * 0.57) as usize;
-        let tolerance = SPECTRUM_BINS / 10; // ~10% tolerance
-        assert!(
-            peak_bin.abs_diff(expected_approx) < tolerance,
-            "1kHz peak at bin {peak_bin}, expected near {expected_approx} (±{tolerance})"
-        );
-    }
-
-    #[test]
-    fn fft_silence_all_bins_near_floor() {
-        let mut rb = FftRingBuffer::new();
-        let silence = [0.0_f32; FFT_SIZE];
-        assert!(rb.push_samples(&silence));
-        let bins = rb.compute_spectrum().expect("should produce spectrum");
-        for (i, &val) in bins.iter().enumerate() {
-            assert!(
-                val <= -99.0,
-                "silence bin {i} should be at noise floor, got {val} dB"
-            );
-        }
-    }
-
-    #[test]
-    fn ring_buffer_accumulation_and_full_detection() {
-        let mut rb = FftRingBuffer::new();
-        // Push less than FFT_SIZE — should not be full
-        let half = [0.0_f32; FFT_SIZE / 2];
-        assert!(!rb.push_samples(&half), "should not be full at half");
-        assert!(
-            rb.compute_spectrum().is_none(),
-            "should return None when not full"
-        );
-        // Push the rest — should be full
-        assert!(rb.push_samples(&half), "should be full now");
-        assert!(rb.compute_spectrum().is_some(), "should compute after full");
-        // After compute, counter resets — should not be full again
-        assert!(
-            rb.compute_spectrum().is_none(),
-            "should be None after reset"
-        );
-    }
-
-    #[test]
-    fn magnitude_scaling_is_db() {
-        let mut rb = FftRingBuffer::new();
-        // Full-scale sine at 1kHz
-        let mut signal = [0.0_f32; FFT_SIZE];
-        for (i, s) in signal.iter_mut().enumerate() {
-            *s = (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / SAMPLE_RATE).sin();
-        }
-        assert!(rb.push_samples(&signal));
-        let bins = rb.compute_spectrum().expect("should produce spectrum");
-        let peak_val = bins.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        // Full-scale sine should have peak near 0 dBFS (within windowing loss)
-        // Hann window loses ~6dB, so expect roughly -6 to 0 dB
-        assert!(
-            peak_val > -12.0 && peak_val <= 0.0,
-            "peak should be in dB scale near 0 dBFS, got {peak_val}"
-        );
     }
 }

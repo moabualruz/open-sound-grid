@@ -104,10 +104,8 @@ fn spectrum_handle_subscribe_flag() {
 fn spectrum_handle_publish_and_load() {
     let handle = SpectrumHandle::default();
     let mut data = SpectrumData::default();
-    data.left[0] = -6.0;
-    data.right[0] = -12.0;
+    data.bins[0] = -6.0;
     handle.publish(data);
     let loaded = handle.load();
-    assert!((loaded.left[0] - (-6.0)).abs() < f32::EPSILON);
-    assert!((loaded.right[0] - (-12.0)).abs() < f32::EPSILON);
+    assert!((loaded.bins[0] - (-6.0)).abs() < f32::EPSILON);
 }

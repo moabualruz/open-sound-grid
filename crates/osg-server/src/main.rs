@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use axum::{
     Router,
@@ -13,6 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 use osg_core::OsgCore;
 use osg_core::commands::Command;
+use osg_server::spectrum::SpectrumMessage;
 
 mod icons;
 
@@ -20,9 +24,11 @@ mod icons;
 struct AppState {
     core: OsgCore,
     icon_cache: icons::IconCache,
+    spectrum_subscribers: AtomicUsize,
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> Result<(), osg_core::CoreError> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
@@ -47,6 +53,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
     let state = Arc::new(AppState {
         core,
         icon_cache: icons::IconCache::new(),
+        spectrum_subscribers: AtomicUsize::new(0),
     });
 
     // Build CORS origins from configured host/ports
@@ -66,6 +73,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .route("/ws/session", get(ws_session))
         .route("/ws/commands", get(ws_commands))
         .route("/ws/levels", get(ws_levels))
+        .route("/ws/spectrum", get(ws_spectrum))
         .fallback_service(ServeDir::new("web/dist"))
         .layer(
             CorsLayer::new()
@@ -265,5 +273,57 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
             }
             Err(_) => break,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: FFT spectrum (read-only, 15fps broadcast)
+// ---------------------------------------------------------------------------
+
+async fn ws_spectrum(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_spectrum(socket, state))
+}
+
+async fn handle_ws_spectrum(mut socket: ws::WebSocket, state: Arc<AppState>) {
+    let filter_store = state.core.filter_store().clone();
+    let previous = state.spectrum_subscribers.fetch_add(1, Ordering::AcqRel);
+    if previous == 0 {
+        filter_store.set_spectrum_enabled_for_all(true);
+    }
+
+    let mut interval = tokio::time::interval(std::time::Duration::from_nanos(66_666_667));
+
+    loop {
+        tokio::select! {
+            maybe_msg = socket.recv() => match maybe_msg {
+                Some(Ok(ws::Message::Close(_))) | None | Some(Err(_)) => break,
+                Some(Ok(_)) => {}
+            },
+            _ = interval.tick() => {
+                let spectra = filter_store.read_all_spectra();
+                let mut send_failed = false;
+                for (node_id, spectrum) in spectra {
+                    let payload = SpectrumMessage::new(node_id, spectrum.bins);
+                    let Ok(json) = serde_json::to_string(&payload) else {
+                        continue;
+                    };
+                    if socket.send(ws::Message::Text(json.into())).await.is_err() {
+                        send_failed = true;
+                        break;
+                    }
+                }
+                if send_failed {
+                    break;
+                }
+            }
+        }
+    }
+
+    let remaining = state.spectrum_subscribers.fetch_sub(1, Ordering::AcqRel) - 1;
+    if remaining == 0 {
+        filter_store.set_spectrum_enabled_for_all(false);
     }
 }

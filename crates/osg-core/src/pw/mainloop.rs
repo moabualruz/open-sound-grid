@@ -50,8 +50,9 @@ fn copy_filter_peaks_to_store(
             // Cell filter keys: "{ch_ulid}-to-{mix_ulid}"
             // Store peak under the cell sink's PW node ID for VU metering.
             if let Some((ch_ulid, mix_ulid)) = key.split_once("-to-")
-                && let Some(&cell_pw_id) =
-                    store.cell_node_ids.get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
+                && let Some(&cell_pw_id) = store
+                    .cell_node_ids
+                    .get(&(ch_ulid.to_owned(), mix_ulid.to_owned()))
             {
                 peak_store.get_or_insert(cell_pw_id).store(l, r);
             }
@@ -451,10 +452,12 @@ pub(super) fn init_mainloop(
             let peak_tx = to_pw_tx.clone();
             std::thread::Builder::new()
                 .name("osg-peak-tick".into())
-                .spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_millis(33));
-                    if peak_tx.send(ToPipewireMessage::PeakTick).is_err() {
-                        break;
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(33));
+                        if peak_tx.send(ToPipewireMessage::PeakTick).is_err() {
+                            break;
+                        }
                     }
                 })
                 .ok();

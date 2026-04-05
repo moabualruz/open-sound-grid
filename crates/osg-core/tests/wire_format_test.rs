@@ -601,53 +601,23 @@ fn set_mix_order_empty_order_round_trips() {
     assert!(matches!(decoded, Command::SetMixOrder { order } if order.is_empty()));
 }
 
-// Spectrum subscribe/unsubscribe wire format
+// Spectrum wire format
 // ---------------------------------------------------------------------------
-
-#[test]
-fn spectrum_subscribe_message_deserializes() {
-    let msg = r#"{"subscribe":["osg.filter.abc","osg.filter.def"]}"#;
-    let val: serde_json::Value = serde_json::from_str(msg).expect("valid JSON");
-    let keys = val["subscribe"].as_array().expect("subscribe array");
-    assert_eq!(keys.len(), 2);
-    assert_eq!(keys[0].as_str().unwrap(), "osg.filter.abc");
-    assert_eq!(keys[1].as_str().unwrap(), "osg.filter.def");
-}
-
-#[test]
-fn spectrum_unsubscribe_message_deserializes() {
-    let msg = r#"{"unsubscribe":["osg.filter.abc"]}"#;
-    let val: serde_json::Value = serde_json::from_str(msg).expect("valid JSON");
-    let keys = val["unsubscribe"].as_array().expect("unsubscribe array");
-    assert_eq!(keys.len(), 1);
-    assert_eq!(keys[0].as_str().unwrap(), "osg.filter.abc");
-}
 
 #[test]
 fn spectrum_response_wire_format() {
     use osg_core::pw::fft::SPECTRUM_BINS;
-    // Verify the expected output shape: { "spectra": { "nodeId": { "left": [...], "right": [...] } } }
-    let left = vec![0.0_f32; SPECTRUM_BINS];
-    let right = vec![-100.0_f32; SPECTRUM_BINS];
+    // Verify the expected output shape: { "nodeId": "...", "bins": [...] }
+    let bins = vec![0.0_f32; SPECTRUM_BINS];
     let payload = serde_json::json!({
-        "spectra": {
-            "osg.filter.abc": {
-                "left": left,
-                "right": right,
-            }
-        }
+        "nodeId": "channel-a-to-mix-b",
+        "bins": bins,
     });
     let json = serde_json::to_string(&payload).expect("serialize");
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("deserialize");
-    let spectra = parsed["spectra"]["osg.filter.abc"]
-        .as_object()
-        .expect("node object");
+    assert_eq!(parsed["nodeId"].as_str(), Some("channel-a-to-mix-b"));
     assert_eq!(
-        spectra["left"].as_array().expect("left array").len(),
-        SPECTRUM_BINS
-    );
-    assert_eq!(
-        spectra["right"].as_array().expect("right array").len(),
+        parsed["bins"].as_array().expect("bins array").len(),
         SPECTRUM_BINS
     );
 }
