@@ -5,7 +5,7 @@ import { useMixerSettings } from "../stores/mixerSettings";
 import { useMonitor } from "../stores/monitorStore";
 import { Volume2, VolumeX, SlidersVertical, Headphones, Plus } from "lucide-solid";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
-import MeterSlider from "./MeterSlider";
+import VuSlider from "./VuSlider";
 import { useSmoothedPeak } from "../hooks/useSmoothedPeak";
 import type { EndpointDescriptor, Endpoint, MixerLink } from "../types/session";
 
@@ -228,7 +228,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
             when={isStereo()}
             fallback={
               <div class="flex-1" onWheel={handleWheel}>
-                <MeterSlider
+                <VuSlider
                   value={cellVol()}
                   peakLeft={peak.left()}
                   peakRight={peak.right()}
@@ -236,6 +236,7 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
                   muted={isMuted()}
                   label="Cell volume"
                   valueText={`${cellPct()}% (effective ${effectivePct()}%)`}
+                  accentColor={props.mixColor}
                 />
               </div>
             }
@@ -244,13 +245,14 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               <div class="flex items-center gap-1">
                 <span class="w-2 text-[8px] font-bold text-text-muted">L</span>
                 <div class="flex-1">
-                  <MeterSlider
+                  <VuSlider
                     value={cellL()}
                     peakLeft={peak.left()}
                     peakRight={peak.left()}
                     onInput={(v) => handleStereoInput("left", v)}
                     muted={isMuted()}
                     label="Cell volume left"
+                    accentColor={props.mixColor}
                   />
                 </div>
                 <span class="w-10 text-right font-mono text-[9px] text-text-secondary">
@@ -263,13 +265,14 @@ export default function MatrixCell(props: MatrixCellProps): JSX.Element {
               <div class="flex items-center gap-1">
                 <span class="w-2 text-[8px] font-bold text-text-muted">R</span>
                 <div class="flex-1">
-                  <MeterSlider
+                  <VuSlider
                     value={cellR()}
                     peakLeft={peak.right()}
                     peakRight={peak.right()}
                     onInput={(v) => handleStereoInput("right", v)}
                     muted={isMuted()}
                     label="Cell volume right"
+                    accentColor={props.mixColor}
                   />
                 </div>
                 <span class="w-10 text-right font-mono text-[9px] text-text-secondary">

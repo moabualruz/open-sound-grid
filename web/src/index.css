@@ -142,8 +142,9 @@ input[type="range"] {
   border-radius: 3px;
   background: linear-gradient(
     to right,
-    color-mix(in srgb, var(--color-accent) 40%, transparent) 0%,
-    color-mix(in srgb, var(--color-accent) 40%, transparent) var(--value-pct, 0%),
+    color-mix(in srgb, var(--slider-accent, var(--color-accent)) 30%, transparent) 0%,
+    color-mix(in srgb, var(--slider-accent, var(--color-accent)) 30%, transparent)
+      var(--value-pct, 0%),
     var(--color-bg-hover) var(--value-pct, 0%),
     var(--color-bg-hover) 100%
   );
@@ -157,7 +158,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--slider-accent, var(--color-accent));
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
   transition:
@@ -178,7 +179,7 @@ input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--color-accent);
+  background: var(--slider-accent, var(--color-accent));
   border: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;

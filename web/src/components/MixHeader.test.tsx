@@ -1,7 +1,7 @@
 /**
  * Tests for MixHeader — the column header card for each mix destination.
  *
- * Mocks: sessionStore, graphStore, VuSlider, useVolumeDebounce.
+ * Mocks: sessionStore, graphStore, useVolumeDebounce.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
@@ -122,9 +122,9 @@ describe("MixHeader — rendering", () => {
     expect(bar).toBeTruthy();
   });
 
-  it("renders the MeterSlider (master volume)", () => {
+  it("renders the VuSlider (master volume)", () => {
     const { getByTestId } = renderHeader();
-    expect(getByTestId("meter-slider")).toBeTruthy();
+    expect(getByTestId("vu-slider")).toBeTruthy();
   });
 
   it("renders Remove mix button", () => {
@@ -145,9 +145,9 @@ describe("MixHeader — volume slider", () => {
     mockGraphNodes = {};
   });
 
-  it("MeterSlider input sends setVolume command", () => {
+  it("VuSlider input sends setVolume command", () => {
     const { getByTestId } = renderHeader({ volume: 0.8 });
-    const slider = getByTestId("meter-input") as HTMLInputElement;
+    const slider = getByTestId("vu-input") as HTMLInputElement;
     fireEvent.input(slider, { target: { value: "0.5" } });
     const calls = (mockSend.mock.calls as MockSendCall[]).filter(([cmd]) => cmd.type === "setVolume");
     expect(calls.length).toBeGreaterThanOrEqual(1);

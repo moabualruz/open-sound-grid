@@ -1,10 +1,10 @@
-import { Show, For, createSignal, createEffect } from "solid-js";
+import { Show, For, createSignal, createEffect, createMemo } from "solid-js";
 import type { JSX } from "solid-js";
 import { useSession } from "../stores/sessionStore";
 import { useGraph } from "../stores/graphStore";
 import { useVolumeDebounce } from "../hooks/useVolumeDebounce";
-import MeterSlider from "./MeterSlider";
-import { useSmoothedAggregatePeak } from "../hooks/useSmoothedPeak";
+import VuSlider from "./VuSlider";
+import { useSmoothedPeak } from "../hooks/useSmoothedPeak";
 import {
   Headphones,
   Radio,
@@ -95,19 +95,15 @@ export function getOutputDevices(
 }
 
 export default function MixHeader(props: MixHeaderProps): JSX.Element {
-  const { state, send } = useSession();
+  const { send } = useSession();
   const graphState = useGraph();
 
-  const mixPeak = useSmoothedAggregatePeak(() => {
-    if (!("channel" in props.descriptor)) return [];
-    const chId = props.descriptor.channel;
-    const ch = state.session.channels[chId];
-    // Prefer the direct output node; fall back to cell sinks feeding this mix
-    if (ch?.outputNodeId) return [ch.outputNodeId];
-    return (state.session.links ?? [])
-      .filter((link) => "channel" in link.end && link.end.channel === chId)
-      .map((link) => link.cellNodeId);
-  });
+  const mixGroupNodeId = createMemo(() =>
+    "channel" in props.descriptor
+      ? (graphState.graph.groupNodes?.[props.descriptor.channel]?.id ?? null)
+      : null,
+  );
+  const mixPeak = useSmoothedPeak(mixGroupNodeId);
 
   const [editing, setEditing] = createSignal(false);
   const [editValue, setEditValue] = createSignal("");
@@ -344,7 +340,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
           </Show>
         </button>
         <div class="flex-1">
-          <MeterSlider
+          <VuSlider
             value={localVol()}
             peakLeft={mixPeak.left()}
             peakRight={mixPeak.right()}
@@ -352,6 +348,7 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
             muted={props.endpoint.volumeLockedMuted === "mutedUnlocked" || props.endpoint.volumeLockedMuted === "mutedLocked"}
             label={`${label()} master volume`}
             valueText={`${volPct()}%`}
+            accentColor={props.color}
           />
         </div>
         <span class="w-7 shrink-0 text-right font-mono text-[10px] text-text-muted">

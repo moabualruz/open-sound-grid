@@ -1,6 +1,6 @@
 import type { JSX } from "solid-js";
 
-export interface MeterSliderProps {
+export interface VuSliderProps {
   /** Slider position, 0-1. */
   value: number;
   /** Smoothed peak level for left channel (0-1). Already smoothed by the caller. */
@@ -17,29 +17,33 @@ export interface MeterSliderProps {
   label: string;
   /** Optional aria-valuetext forwarded to the <input>. */
   valueText?: string;
+  /** Per-surface accent color used for the slider track/thumb. */
+  accentColor?: string;
 }
 
-/** VU color based on peak level: green <70%, amber 70-90%, red >90%. */
-function vuColor(level: number): string {
-  if (level > 0.9) return "var(--color-vu-hot)";
-  if (level > 0.7) return "var(--color-vu-warm)";
-  return "var(--color-vu-safe)";
+function vuFillStyle(level: number, muted: boolean): JSX.CSSProperties {
+  const width = `${Math.round(Math.max(0, Math.min(1, level)) * 100)}%`;
+  return {
+    width,
+    opacity: muted ? "0.12" : "0.7",
+    background:
+      "linear-gradient(to right, var(--color-vu-safe) 0 70%, var(--color-vu-warm) 70% 90%, var(--color-vu-hot) 90% 100%)",
+    transition:
+      "width 90ms linear, opacity 150ms var(--ease-out-quart), filter 150ms var(--ease-out-quart)",
+  };
 }
 
 /**
- * Combined volume slider + VU meter.
+ * Combined volume slider + VU background track.
  * Pure display component — all smoothing is done upstream via useSmoothedPeak.
  */
-export default function MeterSlider(props: MeterSliderProps): JSX.Element {
-  const cappedL = () => Math.min(props.peakLeft, props.value);
-  const cappedR = () => Math.min(props.peakRight, props.value);
-  const cappedMono = () => Math.min(Math.max(props.peakLeft, props.peakRight), props.value);
-
-  const vuOpacity = () => (props.muted ? 0.1 : 0.5);
+export default function VuSlider(props: VuSliderProps): JSX.Element {
+  const monoPeak = () => Math.max(props.peakLeft, props.peakRight);
   const valuePct = () => `${Math.round(props.value * 100)}%`;
+  const accentColor = () => props.accentColor ?? "var(--color-accent)";
 
   return (
-    <div class="relative flex w-full items-center" data-testid="meter-slider">
+    <div class="relative flex w-full items-center" data-testid="vu-slider">
       <div
         aria-hidden="true"
         class="pointer-events-none absolute inset-0 flex flex-col justify-center gap-px"
@@ -48,23 +52,15 @@ export default function MeterSlider(props: MeterSliderProps): JSX.Element {
           <>
             <div class="h-[5px] w-full overflow-hidden rounded-full bg-transparent">
               <div
-                class="h-full rounded-full transition-colors duration-100"
-                style={{
-                  width: `${Math.round(cappedL() * 100)}%`,
-                  "background-color": vuColor(props.peakLeft),
-                  opacity: vuOpacity(),
-                }}
+                class="h-full rounded-full"
+                style={vuFillStyle(props.peakLeft, !!props.muted)}
                 data-testid="vu-fill-left"
               />
             </div>
             <div class="h-[5px] w-full overflow-hidden rounded-full bg-transparent">
               <div
-                class="h-full rounded-full transition-colors duration-100"
-                style={{
-                  width: `${Math.round(cappedR() * 100)}%`,
-                  "background-color": vuColor(props.peakRight),
-                  opacity: vuOpacity(),
-                }}
+                class="h-full rounded-full"
+                style={vuFillStyle(props.peakRight, !!props.muted)}
                 data-testid="vu-fill-right"
               />
             </div>
@@ -72,12 +68,8 @@ export default function MeterSlider(props: MeterSliderProps): JSX.Element {
         ) : (
           <div class="h-2.5 w-full overflow-hidden rounded-full bg-transparent">
             <div
-              class="h-full rounded-full transition-colors duration-100"
-              style={{
-                width: `${Math.round(cappedMono() * 100)}%`,
-                "background-color": vuColor(cappedMono()),
-                opacity: vuOpacity(),
-              }}
+              class="h-full rounded-full"
+              style={vuFillStyle(monoPeak(), !!props.muted)}
               data-testid="vu-fill"
             />
           </div>
@@ -95,8 +87,11 @@ export default function MeterSlider(props: MeterSliderProps): JSX.Element {
         aria-label={props.label}
         aria-valuetext={props.valueText}
         class="relative z-10 w-full"
-        style={{ "--value-pct": valuePct() }}
-        data-testid="meter-input"
+        style={{
+          "--value-pct": valuePct(),
+          "--slider-accent": accentColor(),
+        }}
+        data-testid="vu-input"
       />
     </div>
   );

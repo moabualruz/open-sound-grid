@@ -9,6 +9,8 @@ export interface NodeIdentifier {
   nodeNick: string | null;
   nodeDescription: string | null;
   objectPath: string | null;
+  applicationName?: string | null;
+  binaryName?: string | null;
 }
 
 export type EndpointId =
