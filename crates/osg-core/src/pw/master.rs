@@ -7,7 +7,7 @@ use pipewire::{
     core::CoreRc, keys::*, metadata::Metadata, properties::properties, proxy::ProxyT,
     registry::RegistryRc,
 };
-use tracing::debug;
+use tracing::{debug, warn};
 use ulid::Ulid;
 
 use super::{
@@ -59,8 +59,13 @@ impl Master {
                 let sender = self.sender.clone();
                 move |info| {
                     tracing::trace!("info event: {info:?}");
-                    store.borrow_mut().set_osg_client_id(info.id());
-                    let _ = sender.send(ToPipewireMessage::Update);
+                    if let Ok(mut s) = store.try_borrow_mut() {
+                        s.set_osg_client_id(info.id());
+                        drop(s);
+                        let _ = sender.send(ToPipewireMessage::Update);
+                    } else {
+                        warn!("[PW] re-entrant borrow in core info callback, skipping");
+                    }
                 }
             })
             .done(|id, seq| {
@@ -88,7 +93,13 @@ impl Master {
                 let settings_metadata = self.settings_metadata.clone();
                 let metadata_listeners = self.metadata_listeners.clone();
                 move |global| {
-                    let result = { store.borrow_mut().add_object(&registry, global) };
+                    let result = match store.try_borrow_mut() {
+                        Ok(mut s) => s.add_object(&registry, global),
+                        Err(_) => {
+                            warn!("[PW] re-entrant borrow in registry global callback, skipping");
+                            return;
+                        }
+                    };
                     match result {
                         Ok(_) => {
                             let _ = sender.send(ToPipewireMessage::Update);
@@ -129,9 +140,13 @@ impl Master {
                 let store = self.store.clone();
                 let sender = self.sender.clone();
                 move |global| {
-                    let mut store_borrow = store.borrow_mut();
-                    store_borrow.remove_object(global);
-                    let _ = sender.send(ToPipewireMessage::Update);
+                    if let Ok(mut store_borrow) = store.try_borrow_mut() {
+                        store_borrow.remove_object(global);
+                        drop(store_borrow);
+                        let _ = sender.send(ToPipewireMessage::Update);
+                    } else {
+                        warn!("[PW] re-entrant borrow in registry remove callback, skipping");
+                    }
                 }
             })
             .register()

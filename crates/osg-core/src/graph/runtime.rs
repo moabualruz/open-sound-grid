@@ -62,7 +62,18 @@ pub struct RuntimeState {
     // ---- Per-Link runtime fields (keyed by LinkKey) -----------------------
     /// True while a link command is in-flight to PipeWire.
     pub link_pending: HashMap<LinkKey, bool>,
+
+    // ---- Reconciliation safety ---------------------------------------------
+    /// Number of consecutive reconciliation passes that produced events.
+    /// Reset to 0 when a pass produces no events (stable). If this exceeds
+    /// `MAX_CONSECUTIVE_RECONCILIATIONS`, the next pass returns empty to
+    /// break potential oscillation loops.
+    pub consecutive_reconciliations: u32,
 }
+
+/// Maximum consecutive reconciliation passes before forcing a skip.
+/// Prevents infinite correction loops when PW events echo back diffs.
+pub const MAX_CONSECUTIVE_RECONCILIATIONS: u32 = 8;
 
 impl RuntimeState {
     /// Remove all runtime state associated with an endpoint.

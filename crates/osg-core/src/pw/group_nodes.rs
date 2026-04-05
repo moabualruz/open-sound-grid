@@ -26,7 +26,12 @@ pub fn init_node_listeners(
                     let store = store.clone();
                     let sender = sender.clone();
                     move |info| {
-                        store.borrow_mut().update_node_info(info);
+                        let Ok(mut s) = store.try_borrow_mut() else {
+                            warn!("[PW] re-entrant borrow in info callback for node, skipping");
+                            return;
+                        };
+                        s.update_node_info(info);
+                        drop(s);
                         let _ = sender.send(ToPipewireMessage::Update);
                     }
                 })
@@ -112,18 +117,28 @@ pub fn init_metadata_listener(
                         .ok()
                         .and_then(|v| v.get("name")?.as_str().map(String::from))
                 };
+                let update = |field: &str, name: Option<String>| {
+                    let Ok(mut s) = store.try_borrow_mut() else {
+                        warn!("[PW] re-entrant borrow in metadata {field} callback, skipping");
+                        return;
+                    };
+                    match field {
+                        "sink" => s.default_sink_name = name,
+                        _ => s.default_source_name = name,
+                    }
+                    drop(s);
+                    let _ = sender.send(ToPipewireMessage::Update);
+                };
                 match key {
                     Some("default.audio.sink") => {
                         let name = value.and_then(parse_name);
                         debug!("default.audio.sink changed: {name:?}");
-                        store.borrow_mut().default_sink_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
+                        update("sink", name);
                     }
                     Some("default.audio.source") => {
                         let name = value.and_then(parse_name);
                         debug!("default.audio.source changed: {name:?}");
-                        store.borrow_mut().default_source_name = name;
-                        let _ = sender.send(ToPipewireMessage::Update);
+                        update("source", name);
                     }
                     _ => {}
                 }

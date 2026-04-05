@@ -43,16 +43,16 @@ export default function EqPresetManager(props: EqPresetManagerProps) {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
-    input.onchange = () => {
+    input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      file.text().then((text) => {
-        const data = JSON.parse(text);
-        if (data.bands) s().setBands(() => data.bands);
-        if (data.bass != null) s().setBass(data.bass);
-        if (data.voice != null) s().setVoice(data.voice);
-        if (data.treble != null) s().setTreble(data.treble);
-      });
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const state = s();
+      if (data.bands) state.setBands(() => data.bands);
+      if (data.bass != null) state.setBass(data.bass);
+      if (data.voice != null) state.setVoice(data.voice);
+      if (data.treble != null) state.setTreble(data.treble);
     };
     input.click();
   };

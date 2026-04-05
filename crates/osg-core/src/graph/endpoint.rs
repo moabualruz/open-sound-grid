@@ -142,10 +142,25 @@ impl Endpoint {
         self
     }
 
+    /// Maximum volume value (150% or +3.5 dB).
+    pub const MAX_VOLUME: f32 = 1.5;
+
     pub fn with_volume(mut self, volume: f32, mixed: bool) -> Self {
-        self.volume = volume;
+        self.volume = volume.clamp(0.0, Self::MAX_VOLUME);
         self.volume_mixed = mixed;
         self
+    }
+
+    /// Set the mono volume, clamped to [0.0, 1.5].
+    pub fn set_volume(&mut self, volume: f32) {
+        self.volume = volume.clamp(0.0, Self::MAX_VOLUME);
+    }
+
+    /// Set stereo volume, clamped to [0.0, 1.5].
+    pub fn set_stereo_volume(&mut self, left: f32, right: f32) {
+        self.volume_left = left.clamp(0.0, Self::MAX_VOLUME);
+        self.volume_right = right.clamp(0.0, Self::MAX_VOLUME);
+        self.volume = (self.volume_left + self.volume_right) / 2.0;
     }
 
     pub fn with_mute_unlocked(mut self, muted: bool) -> Self {

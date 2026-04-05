@@ -16,6 +16,9 @@ mod diff_properties;
 mod helpers;
 mod resolve_endpoint;
 
+use tracing::warn;
+
+use crate::graph::runtime::MAX_CONSECUTIVE_RECONCILIATIONS;
 use crate::graph::{MixerEvent, MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::AudioGraph;
 
@@ -31,18 +34,30 @@ pub struct ReconciliationService;
 impl ReconciliationService {
     /// Compare desired state against PipeWire reality and produce corrective commands.
     ///
-    /// Note: This function is called from the event loop, not recursively.
-    /// There is no depth tracking needed here — oscillation (corrections causing
-    /// new diffs causing more corrections) is prevented at the caller level by
-    /// the debounce timing on the reconciliation channel. If oscillation becomes
-    /// a concern, the caller should track consecutive identical corrections.
+    /// Tracks consecutive non-empty reconciliation passes via `RuntimeState`.
+    /// If the counter exceeds `MAX_CONSECUTIVE_RECONCILIATIONS`, returns empty
+    /// to break potential oscillation loops where PW events echo back diffs.
     pub fn reconcile(
         state: &mut MixerSession,
         graph: &AudioGraph,
         settings: &ReconcileSettings,
         rt: &mut RuntimeState,
     ) -> Vec<MixerEvent> {
-        state.diff(graph, settings, rt)
+        if rt.consecutive_reconciliations >= MAX_CONSECUTIVE_RECONCILIATIONS {
+            warn!(
+                "[Reconcile] skipping — {} consecutive passes exceeded limit",
+                rt.consecutive_reconciliations
+            );
+            rt.consecutive_reconciliations = 0;
+            return vec![];
+        }
+        let events = state.diff(graph, settings, rt);
+        if events.is_empty() {
+            rt.consecutive_reconciliations = 0;
+        } else {
+            rt.consecutive_reconciliations += 1;
+        }
+        events
     }
 }
 

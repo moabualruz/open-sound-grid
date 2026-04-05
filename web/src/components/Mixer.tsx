@@ -148,7 +148,11 @@ export default function Mixer() {
               class="outline-none"
             >
               {/* Mix column headers */}
-              <div class="mb-2 grid items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+              <div
+                class="mb-2 grid items-stretch gap-2"
+                style={{ "grid-template-columns": gridCols() }}
+                role="row"
+              >
                 <div class="flex items-stretch justify-end" role="columnheader">
                   <MixCreator maxMixes={8} currentCount={mixes().length} />
                 </div>
@@ -189,7 +193,11 @@ export default function Mixer() {
                   onReorder={persistChannelOrder}
                 >
                   {(ch, rowIdx, dragHandle) => (
-                    <div class="grid min-h-[4.5rem] items-stretch gap-2" style={{ "grid-template-columns": gridCols() }} role="row">
+                    <div
+                      class="grid min-h-[4.5rem] items-stretch gap-2"
+                      style={{ "grid-template-columns": gridCols() }}
+                      role="row"
+                    >
                       <ChannelLabel
                         descriptor={ch.desc}
                         endpoint={ch.ep}

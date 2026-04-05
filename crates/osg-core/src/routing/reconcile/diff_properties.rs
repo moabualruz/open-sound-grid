@@ -71,7 +71,9 @@ impl MixerSession {
                 // and don't want the reconciler to overwrite pre_mute_volume.
                 endpoint.volume_locked_muted =
                     VolumeLockMuteState::from_bools_unlocked(nodes.iter().map(|n| &n.mute));
-                endpoint.volume = average_volumes(nodes.iter().flat_map(|n| &n.channel_volumes));
+                endpoint.set_volume(average_volumes(
+                    nodes.iter().flat_map(|n| &n.channel_volumes),
+                ));
                 for node in nodes {
                     endpoint.volume_mixed = volumes_mixed(&node.channel_volumes);
                 }

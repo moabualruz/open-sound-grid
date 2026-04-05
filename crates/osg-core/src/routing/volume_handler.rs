@@ -3,7 +3,7 @@
 // Handles: SetVolume, SetStereoVolume, SetMute, SetVolumeLocked
 
 use crate::graph::events::MixerEvent;
-use crate::graph::{EndpointDescriptor, MixerSession, ReconcileSettings, RuntimeState};
+use crate::graph::{Endpoint, EndpointDescriptor, MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::AudioGraph;
 use crate::routing::handler::CommandHandler;
 use crate::routing::messages::{StateMsg, StateOutputMsg};
@@ -89,9 +89,9 @@ impl MixerSession {
         let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
             return false;
         };
-        endpoint.volume = volume;
-        endpoint.volume_left = volume;
-        endpoint.volume_right = volume;
+        endpoint.set_volume(volume);
+        endpoint.volume_left = volume.clamp(0.0, Endpoint::MAX_VOLUME);
+        endpoint.volume_right = volume.clamp(0.0, Endpoint::MAX_VOLUME);
         endpoint.volume_mixed = false;
 
         if let Some(nodes) = nodes {
@@ -144,10 +144,8 @@ impl MixerSession {
         let Some(endpoint) = self.endpoints.get_mut(&ep_desc) else {
             return;
         };
-        endpoint.volume = (left + right) / 2.0;
-        endpoint.volume_left = left;
-        endpoint.volume_right = right;
-        endpoint.volume_mixed = (left - right).abs() > f32::EPSILON;
+        endpoint.set_stereo_volume(left, right);
+        endpoint.volume_mixed = (endpoint.volume_left - endpoint.volume_right).abs() > f32::EPSILON;
 
         if let Some(nodes) = nodes {
             let msgs: Vec<_> = nodes
