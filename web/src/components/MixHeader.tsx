@@ -101,8 +101,10 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
   const [editValue, setEditValue] = createSignal("");
   const [showOutputPicker, setShowOutputPicker] = createSignal(false);
   const [dropdownPos, setDropdownPos] = createSignal({ top: 0, left: 0 });
+  const [activeDescendant, setActiveDescendant] = createSignal<string | undefined>(undefined);
   const [localVol, setLocalVol] = createSignal(1);
   let userDragging = false;
+  let dropdownRef: HTMLDivElement | undefined;
 
   const sendVolDebounced = useVolumeDebounce((v) => {
     send({ type: "setVolume", endpoint: props.descriptor, volume: v });
@@ -126,6 +128,53 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
     const rect = btn.getBoundingClientRect();
     setDropdownPos({ top: rect.bottom + 4, left: rect.left });
     setShowOutputPicker((v) => !v);
+    setActiveDescendant(undefined);
+  }
+
+  function closeOutputPicker() {
+    setShowOutputPicker(false);
+    setActiveDescendant(undefined);
+  }
+
+  function handleDropdownKeyDown(e: KeyboardEvent) {
+    if (!showOutputPicker()) return;
+    const devices = availableDevices();
+    // Build option ids: "none" + device ids by index
+    const optionIds = ["output-opt-none", ...devices.map((_, i) => `output-opt-${i}`)];
+    const currentId = activeDescendant();
+    const currentIndex = currentId ? optionIds.indexOf(currentId) : -1;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const next = currentIndex < optionIds.length - 1 ? currentIndex + 1 : 0;
+      setActiveDescendant(optionIds[next]);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const prev = currentIndex > 0 ? currentIndex - 1 : optionIds.length - 1;
+      setActiveDescendant(optionIds[prev]);
+    } else if (e.key === "Enter" && currentId) {
+      e.preventDefault();
+      if (currentId === "output-opt-none") {
+        props.onSelectOutput(null);
+      } else {
+        const idx = optionIds.indexOf(currentId) - 1; // subtract 1 for "none"
+        const dev = devices[idx];
+        if (dev) props.onSelectOutput(dev.deviceId);
+      }
+      closeOutputPicker();
+    } else if (e.key === "Tab") {
+      // Trap Tab within the dropdown
+      e.preventDefault();
+      if (e.shiftKey) {
+        const prev = currentIndex > 0 ? currentIndex - 1 : optionIds.length - 1;
+        setActiveDescendant(optionIds[prev]);
+      } else {
+        const next = currentIndex < optionIds.length - 1 ? currentIndex + 1 : 0;
+        setActiveDescendant(optionIds[next]);
+      }
+    } else if (e.key === "Escape") {
+      closeOutputPicker();
+    }
   }
 
   const label = () => props.endpoint.customName ?? props.endpoint.displayName;
@@ -168,7 +217,13 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
         if (target.closest("button") || target.closest("input") || target.closest("select")) return;
         props.onToggleExpand?.();
       }}
-      title={props.onToggleExpand ? (props.expanded ? "Collapse effects view" : "Expand effects view") : undefined}
+      title={
+        props.onToggleExpand
+          ? props.expanded
+            ? "Collapse effects view"
+            : "Expand effects view"
+          : undefined
+      }
     >
       <div class="h-[3px] w-full rounded-t-lg" style={{ "background-color": props.color }} />
       <div class="flex items-center gap-1.5 px-2 py-2">
@@ -263,37 +318,48 @@ export default function MixHeader(props: MixHeaderProps): JSX.Element {
       </div>
 
       <Show when={showOutputPicker()}>
-        <div class="fixed inset-0 z-40" onClick={() => setShowOutputPicker(false)} />
+        <div class="fixed inset-0 z-40" onClick={closeOutputPicker} />
         <div
-          class="fixed z-50 w-max min-w-56 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg-elevated shadow-xl"
+          ref={dropdownRef}
+          role="listbox"
+          aria-label="Output Device"
+          aria-activedescendant={activeDescendant()}
+          tabIndex={-1}
+          class="fixed z-50 w-max min-w-56 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-bg-elevated shadow-xl focus:outline-none"
           style={{ top: `${dropdownPos().top}px`, left: `${dropdownPos().left}px` }}
-          onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && setShowOutputPicker(false)}
+          onKeyDown={handleDropdownKeyDown}
         >
           <div class="p-2">
             <div class="px-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
               Output Device
             </div>
             <button
+              id="output-opt-none"
+              role="option"
+              aria-selected={!props.outputDevice}
               onClick={() => {
                 props.onSelectOutput(null);
-                setShowOutputPicker(false);
+                closeOutputPicker();
               }}
               class={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-150 hover:bg-bg-hover ${
-                !props.outputDevice ? "text-accent" : "text-text-secondary"
-              }`}
+                activeDescendant() === "output-opt-none" ? "bg-bg-hover" : ""
+              } ${!props.outputDevice ? "text-accent" : "text-text-secondary"}`}
             >
               None
             </button>
             <For each={availableDevices()}>
-              {(dev) => (
+              {(dev, i) => (
                 <button
+                  id={`output-opt-${i()}`}
+                  role="option"
+                  aria-selected={props.outputDevice === dev.deviceId}
                   onClick={() => {
                     props.onSelectOutput(dev.deviceId);
-                    setShowOutputPicker(false);
+                    closeOutputPicker();
                   }}
                   class={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors duration-150 hover:bg-bg-hover ${
-                    props.outputDevice === dev.deviceId ? "text-accent" : "text-text-secondary"
-                  }`}
+                    activeDescendant() === `output-opt-${i()}` ? "bg-bg-hover" : ""
+                  } ${props.outputDevice === dev.deviceId ? "text-accent" : "text-text-secondary"}`}
                 >
                   <Speaker size={14} class="shrink-0 text-text-muted" />
                   <span class="flex-1">{dev.nodeName}</span>

@@ -121,6 +121,21 @@ export default function ChannelLabel(props: ChannelLabelProps) {
     sendStereoDebounced(value);
   }
 
+  function handleWheel(e: WheelEvent) {
+    e.preventDefault();
+    const step = e.deltaY > 0 ? -0.01 : 0.01;
+    const next = Math.max(0, Math.min(1, local() + step));
+    handleInput(next);
+  }
+
+  function handleWheelStereo(channel: "left" | "right", e: WheelEvent) {
+    e.preventDefault();
+    const step = e.deltaY > 0 ? -0.01 : 0.01;
+    const current = channel === "left" ? localL() : localR();
+    const next = Math.max(0, Math.min(1, current + step));
+    handleStereoInput(channel, next);
+  }
+
   const pct = () => Math.round(local() * 100);
   const pctL = () => Math.round(localL() * 100);
   const pctR = () => Math.round(localR() * 100);
@@ -207,7 +222,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           when={isStereo()}
           fallback={
             <div class="flex items-center gap-1">
-              <div class="relative flex-1">
+              <div class="relative flex-1" onWheel={handleWheel}>
                 {/* Peak level (behind slider) */}
                 <div
                   class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
@@ -237,7 +252,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
           <div class="flex flex-col gap-1.5">
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">L</span>
-              <div class="relative flex-1">
+              <div class="relative flex-1" onWheel={(e) => handleWheelStereo("left", e)}>
                 <div
                   class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                   style={{
@@ -262,7 +277,7 @@ export default function ChannelLabel(props: ChannelLabelProps) {
             </div>
             <div class="flex items-center gap-1">
               <span class="w-2 text-[9px] font-bold text-text-muted">R</span>
-              <div class="relative flex-1">
+              <div class="relative flex-1" onWheel={(e) => handleWheelStereo("right", e)}>
                 <div
                   class="pointer-events-none absolute top-1/2 left-0 h-2.5 -translate-y-1/2 rounded-full transition-all duration-75"
                   style={{

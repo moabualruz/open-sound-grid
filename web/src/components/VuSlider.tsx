@@ -34,6 +34,17 @@ const RELEASE_MS = 300;
 const PEAK_HOLD_MS = 1500;
 const PEAK_DECAY_MS = 400;
 
+const prefersReducedMotion = (): boolean => {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    );
+  } catch {
+    return false;
+  }
+};
+
 export default function VuSlider(props: VuSliderProps): JSX.Element {
   const [smoothedPeak, setSmoothedPeak] = createSignal(0);
   const [peakHold, setPeakHold] = createSignal(0);
@@ -48,6 +59,17 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
     lastTimestamp = timestamp;
 
     const target = props.peak;
+
+    if (prefersReducedMotion()) {
+      // Skip smoothing — snap directly to current peak, no animation
+      setSmoothedPeak(target);
+      setPeakHold(target);
+      peakHoldTime = timestamp;
+      peakDecayStart = 0;
+      rafId = requestAnimationFrame(tick);
+      return;
+    }
+
     const current = smoothedPeak();
 
     // Exponential smoothing: different coefficients for attack vs release
@@ -95,10 +117,7 @@ export default function VuSlider(props: VuSliderProps): JSX.Element {
   const holdPct = () => Math.round(peakHold() * 100);
 
   return (
-    <div
-      class="relative flex w-full items-center"
-      data-testid="vu-slider"
-    >
+    <div class="relative flex w-full items-center" data-testid="vu-slider">
       {/* VU fill — decorative, aria-hidden */}
       <div
         aria-hidden="true"

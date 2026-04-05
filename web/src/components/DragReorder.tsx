@@ -49,8 +49,28 @@ export default function DragReorder<T>(props: DragReorderProps<T>): JSX.Element 
         const isDragging = () => dragIdx() === index();
         const isOver = () => overIdx() === index() && dragIdx() !== null && dragIdx() !== index();
 
+        function handleKeyDown(e: KeyboardEvent) {
+          const idx = index();
+          const len = props.items.length;
+          if (e.shiftKey && e.key === "ArrowUp" && idx > 0) {
+            e.preventDefault();
+            const arr = [...props.items];
+            const [moved] = arr.splice(idx, 1);
+            arr.splice(idx - 1, 0, moved);
+            props.onReorder(arr);
+          } else if (e.shiftKey && e.key === "ArrowDown" && idx < len - 1) {
+            e.preventDefault();
+            const arr = [...props.items];
+            const [moved] = arr.splice(idx, 1);
+            arr.splice(idx + 1, 0, moved);
+            props.onReorder(arr);
+          }
+        }
+
         const dragHandle = () => (
           <div
+            role="button"
+            tabIndex={0}
             draggable={true}
             onDragStart={(e: DragEvent) => {
               e.dataTransfer?.setData("text/plain", String(index()));
@@ -58,8 +78,9 @@ export default function DragReorder<T>(props: DragReorderProps<T>): JSX.Element 
               handleDragStart(index());
             }}
             onDragEnd={reset}
-            class="cursor-grab active:cursor-grabbing px-1 py-2"
-            aria-label="Drag to reorder"
+            onKeyDown={handleKeyDown}
+            class="cursor-grab active:cursor-grabbing px-1 py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded"
+            aria-label="Reorder"
           >
             <svg
               width="10"
