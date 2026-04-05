@@ -93,6 +93,7 @@ function makeChannel(overrides: Partial<Channel> = {}): Channel {
 function renderLabel(
   endpointOverrides: Partial<Endpoint> = {},
   channel?: Channel,
+  extraProps: { onOpenEffects?: () => void } = {},
 ) {
   return render(() => (
     <ChannelLabel
@@ -100,6 +101,7 @@ function renderLabel(
       endpoint={makeEndpoint(endpointOverrides)}
       channel={channel}
       apps={[]}
+      onOpenEffects={extraProps.onOpenEffects}
     />
   ));
 }
@@ -337,5 +339,62 @@ describe("ChannelLabel — inline rename (custom name channels only)", () => {
     const nameSpan = container.querySelector("span.flex-1") as HTMLElement;
     fireEvent.dblClick(nameSpan);
     expect(container.querySelector('input[type="text"]')).toBeNull();
+  });
+});
+
+describe("ChannelLabel — context menu", () => {
+  beforeEach(() => {
+    mockSend = vi.fn();
+    mockStereoMode = "mono";
+  });
+
+  it("right-click shows context menu actions", () => {
+    const { container, getByRole } = renderLabel({}, makeChannel());
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    expect(getByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Effects" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Hide" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Disable" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Remove" })).toBeTruthy();
+  });
+
+  it("context menu Hide sends setEndpointVisible(false)", () => {
+    const { container, getByRole } = renderLabel({}, makeChannel());
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Hide" }));
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "setEndpointVisible",
+    );
+    expect(calls.length).toBe(1);
+    expect((calls[0][0] as Extract<Command, { type: "setEndpointVisible" }>).visible).toBe(false);
+  });
+
+  it("context menu Remove sends removeEndpoint", () => {
+    const { container, getByRole } = renderLabel({}, makeChannel());
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Remove" }));
+    const calls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "removeEndpoint",
+    );
+    expect(calls.length).toBe(1);
+    expect((calls[0][0] as Extract<Command, { type: "removeEndpoint" }>).endpoint).toEqual({
+      channel: "ch1",
+    });
+  });
+
+  it("context menu Effects calls onOpenEffects", () => {
+    const onOpenEffects = vi.fn();
+    const { container, getByRole } = renderLabel({}, makeChannel(), { onOpenEffects });
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Effects" }));
+    expect(onOpenEffects).toHaveBeenCalledOnce();
+  });
+
+  it("Escape closes the context menu", () => {
+    const { container, queryByRole } = renderLabel({}, makeChannel());
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    expect(queryByRole("menu")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(queryByRole("menu")).toBeNull();
   });
 });

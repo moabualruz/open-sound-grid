@@ -73,4 +73,38 @@ describe("VuSlider", () => {
     expect(leftWidth).toBe(80);
     expect(rightWidth).toBe(30);
   });
+
+  it("double-click swaps the slider for an exact-value input", () => {
+    const { getByTestId } = render(() => (
+      <VuSlider value={0.42} peakLeft={0.2} peakRight={0.1} onInput={() => {}} label="Test" />
+    ));
+    fireEvent.dblClick(getByTestId("vu-slider"));
+    expect((getByTestId("vu-exact-input") as HTMLInputElement).value).toBe("42");
+  });
+
+  it("Enter on exact-value input clamps and sends onInput", () => {
+    const handler = vi.fn();
+    const { getByTestId, queryByTestId } = render(() => (
+      <VuSlider value={0.5} peakLeft={0} peakRight={0} onInput={handler} label="Test" />
+    ));
+    fireEvent.dblClick(getByTestId("vu-slider"));
+    const input = getByTestId("vu-exact-input") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "150" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(handler).toHaveBeenCalledWith(1);
+    expect(queryByTestId("vu-exact-input")).toBeNull();
+  });
+
+  it("Escape on exact-value input cancels without sending onInput", () => {
+    const handler = vi.fn();
+    const { getByTestId, queryByTestId } = render(() => (
+      <VuSlider value={0.5} peakLeft={0} peakRight={0} onInput={handler} label="Test" />
+    ));
+    fireEvent.dblClick(getByTestId("vu-slider"));
+    const input = getByTestId("vu-exact-input") as HTMLInputElement;
+    fireEvent.input(input, { target: { value: "12" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(handler).not.toHaveBeenCalled();
+    expect(queryByTestId("vu-exact-input")).toBeNull();
+  });
 });

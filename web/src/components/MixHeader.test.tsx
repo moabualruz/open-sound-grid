@@ -165,7 +165,7 @@ describe("MixHeader — output device picker", () => {
   });
 
   it("clicking output label opens the picker dropdown", () => {
-    const { container, getByText } = renderHeader();
+    const { getByText } = renderHeader();
     const outputBtn = getByText("No output").closest("button") as HTMLButtonElement;
     fireEvent.click(outputBtn);
     // Dropdown heading should appear
@@ -274,5 +274,43 @@ describe("MixHeader — inline rename (custom-named mixes)", () => {
     const nameSpan = container.querySelector("span.truncate") as HTMLElement;
     fireEvent.dblClick(nameSpan);
     expect(container.querySelector('input[type="text"]')).toBeNull();
+  });
+});
+
+describe("MixHeader — context menu", () => {
+  beforeEach(() => {
+    mockSend = vi.fn();
+    mockGraphDevices = {};
+    mockGraphNodes = {};
+  });
+
+  it("right-click shows mix context menu actions", () => {
+    const { container, getByRole } = renderHeader({ displayName: "My Mix" });
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    expect(getByRole("menuitem", { name: "Rename" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Change Output" })).toBeTruthy();
+    expect(getByRole("menuitem", { name: "Remove" })).toBeTruthy();
+  });
+
+  it("context menu Rename triggers the existing rename flow", () => {
+    const { container, getByRole } = renderHeader({ displayName: "My Mix" });
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Rename" }));
+    expect(container.querySelector('input[type="text"]')).toBeTruthy();
+  });
+
+  it("context menu Change Output opens the output picker", () => {
+    const { container, getByRole, getByText } = renderHeader({ displayName: "My Mix" });
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Change Output" }));
+    expect(getByText("Output Device")).toBeTruthy();
+  });
+
+  it("context menu Remove calls onRemove", () => {
+    const onRemove = vi.fn();
+    const { container, getByRole } = renderHeader({ displayName: "My Mix" }, { onRemove });
+    fireEvent.contextMenu(container.firstElementChild as HTMLElement);
+    fireEvent.click(getByRole("menuitem", { name: "Remove" }));
+    expect(onRemove).toHaveBeenCalledOnce();
   });
 });
