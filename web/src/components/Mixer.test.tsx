@@ -21,6 +21,9 @@ let mockSend: ReturnType<typeof vi.fn>;
 let mockSession: MixerSession;
 let mockConnected: boolean;
 let mockGraphConnected: boolean;
+let mockReconnecting: boolean;
+let mockReconnectAttempt: number;
+let mockNextRetryMs: number;
 
 const EMPTY_SESSION: MixerSession = {
   welcomeDismissed: false,
@@ -35,6 +38,8 @@ const EMPTY_SESSION: MixerSession = {
   channelOrder: [],
   mixOrder: [],
   defaultOutputNodeId: null,
+  canUndo: false,
+  canRedo: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -46,8 +51,9 @@ vi.mock("../stores/sessionStore", () => ({
     state: {
       session: mockSession,
       connected: mockConnected,
-      reconnecting: false,
-      reconnectAttempt: 0,
+      reconnecting: mockReconnecting,
+      reconnectAttempt: mockReconnectAttempt,
+      nextRetryMs: mockNextRetryMs,
     },
     send: mockSend,
   }),
@@ -159,6 +165,9 @@ describe("Mixer — basic rendering", () => {
     mockSession = { ...EMPTY_SESSION };
     mockConnected = true;
     mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
   });
 
   it("renders the Open Sound Grid heading", () => {
@@ -187,6 +196,9 @@ describe("Mixer — welcome wizard", () => {
     mockSend = vi.fn();
     mockConnected = true;
     mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
   });
 
   it("shows WelcomeWizard when no channels and welcomeDismissed=false", () => {
@@ -239,12 +251,46 @@ describe("Mixer — disconnected state", () => {
   });
 });
 
+describe("Mixer — reconnecting banner", () => {
+  beforeEach(() => {
+    mockSend = vi.fn();
+    mockSession = { ...EMPTY_SESSION };
+    mockConnected = false;
+    mockGraphConnected = false;
+    mockReconnecting = true;
+    mockReconnectAttempt = 2;
+    mockNextRetryMs = 4000;
+  });
+
+  it("shows reconnecting banner with attempt and retry delay", () => {
+    const { getByRole } = render(() => <Mixer />);
+    const banner = getByRole("status");
+    expect(banner.textContent).toContain("attempt 3");
+    expect(banner.textContent).toContain("retry in 4s");
+  });
+
+  it("hides reconnecting banner when not reconnecting", () => {
+    mockReconnecting = false;
+    const { queryByRole } = render(() => <Mixer />);
+    // The status bar footer also has role="status" implicitly via aria-live,
+    // so we check there is no element with the reconnecting text.
+    const statusElements = document.querySelectorAll('[role="status"]');
+    const reconnectBanner = Array.from(statusElements).find((el) =>
+      el.textContent?.includes("Reconnecting"),
+    );
+    expect(reconnectBanner).toBeUndefined();
+  });
+});
+
 describe("Mixer — connected status bar", () => {
   beforeEach(() => {
     mockSend = vi.fn();
     mockSession = { ...EMPTY_SESSION };
     mockConnected = true;
     mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
   });
 
   it("shows Connected to PipeWire in status bar when connected", () => {
@@ -264,6 +310,9 @@ describe("Mixer — keyboard shortcuts (undo/redo)", () => {
     mockSession = { ...EMPTY_SESSION };
     mockConnected = true;
     mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
   });
 
   afterEach(() => {
@@ -305,12 +354,81 @@ describe("Mixer — keyboard shortcuts (undo/redo)", () => {
   });
 });
 
+describe("Mixer — undo/redo toolbar buttons", () => {
+  beforeEach(() => {
+    mockSend = vi.fn();
+    mockSession = { ...EMPTY_SESSION };
+    mockConnected = true;
+    mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
+  });
+
+  it("renders undo and redo buttons in the toolbar", () => {
+    const { getByRole } = render(() => <Mixer />);
+    expect(getByRole("button", { name: /undo/i })).toBeTruthy();
+    expect(getByRole("button", { name: /redo/i })).toBeTruthy();
+  });
+
+  it("undo button is disabled when canUndo is false", () => {
+    mockSession = { ...EMPTY_SESSION, canUndo: false };
+    const { getByRole } = render(() => <Mixer />);
+    const btn = getByRole("button", { name: /^undo$/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("undo button is enabled when canUndo is true", () => {
+    mockSession = { ...EMPTY_SESSION, canUndo: true };
+    const { getByRole } = render(() => <Mixer />);
+    const btn = getByRole("button", { name: /^undo$/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("redo button is disabled when canRedo is false", () => {
+    mockSession = { ...EMPTY_SESSION, canRedo: false };
+    const { getByRole } = render(() => <Mixer />);
+    const btn = getByRole("button", { name: /^redo$/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("redo button is enabled when canRedo is true", () => {
+    mockSession = { ...EMPTY_SESSION, canRedo: true };
+    const { getByRole } = render(() => <Mixer />);
+    const btn = getByRole("button", { name: /^redo$/i }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("clicking undo button sends undo command", () => {
+    mockSession = { ...EMPTY_SESSION, canUndo: true };
+    const { getByRole } = render(() => <Mixer />);
+    fireEvent.click(getByRole("button", { name: /^undo$/i }));
+    const calls = mockSend.mock.calls.filter(
+      (args: unknown[]) => (args[0] as any).type === "undo",
+    );
+    expect(calls.length).toBe(1);
+  });
+
+  it("clicking redo button sends redo command", () => {
+    mockSession = { ...EMPTY_SESSION, canRedo: true };
+    const { getByRole } = render(() => <Mixer />);
+    fireEvent.click(getByRole("button", { name: /^redo$/i }));
+    const calls = mockSend.mock.calls.filter(
+      (args: unknown[]) => (args[0] as any).type === "redo",
+    );
+    expect(calls.length).toBe(1);
+  });
+});
+
 describe("Mixer — grid structure", () => {
   beforeEach(() => {
     mockSend = vi.fn();
     mockSession = { ...EMPTY_SESSION };
     mockConnected = true;
     mockGraphConnected = true;
+    mockReconnecting = false;
+    mockReconnectAttempt = 0;
+    mockNextRetryMs = 0;
   });
 
   it("renders a grid with role=grid and aria-label", () => {

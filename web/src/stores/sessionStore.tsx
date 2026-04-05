@@ -23,6 +23,8 @@ const EMPTY_SESSION: MixerSession = {
   channelOrder: [],
   mixOrder: [],
   defaultOutputNodeId: null,
+  canUndo: false,
+  canRedo: false,
 };
 
 interface SessionState {
@@ -30,6 +32,7 @@ interface SessionState {
   connected: boolean;
   reconnecting: boolean;
   reconnectAttempt: number;
+  nextRetryMs: number;
 }
 
 interface SessionApi {
@@ -45,6 +48,7 @@ export function SessionProvider(props: ParentProps) {
     connected: false,
     reconnecting: false,
     reconnectAttempt: 0,
+    nextRetryMs: 0,
   });
 
   let sessionWs: WebSocket | null = null;
@@ -56,6 +60,7 @@ export function SessionProvider(props: ParentProps) {
     const delay = computeBackoffDelay(attempt);
     setState("reconnecting", true);
     setState("reconnectAttempt", attempt);
+    setState("nextRetryMs", delay);
     reconnectTimer = setTimeout(() => connect(attempt + 1), delay);
   }
 

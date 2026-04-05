@@ -11,7 +11,7 @@ import EmptyState from "./EmptyState";
 import SettingsPanel from "./SettingsPanel";
 import WelcomeWizard from "./WelcomeWizard";
 import DragReorder from "./DragReorder";
-import { Settings, EyeOff } from "lucide-solid";
+import { Settings, EyeOff, Undo2, Redo2 } from "lucide-solid";
 import EqPage from "../eq/EqPage";
 import type { EqPageTarget } from "../eq/EqPage";
 import type { Endpoint, EndpointDescriptor } from "../types/session";
@@ -129,7 +129,8 @@ export default function Mixer() {
           role="status"
           class="flex items-center justify-center gap-2 bg-vu-hot/10 px-4 py-1.5 text-xs text-vu-hot"
         >
-          Reconnecting to PipeWire… (attempt {state.reconnectAttempt})
+          Reconnecting to PipeWire… attempt {state.reconnectAttempt + 1}
+          {state.nextRetryMs > 0 && ` · retry in ${(state.nextRetryMs / 1000).toFixed(0)}s`}
         </div>
       </Show>
 
@@ -164,6 +165,32 @@ export default function Mixer() {
           </select>
         </div>
         <div class="flex items-center gap-2">
+          <button
+            class="flex items-center gap-1 rounded p-1.5 transition-colors"
+            style={{
+              color: "var(--color-text-muted)",
+              opacity: state.session.canUndo ? 1 : 0.35,
+            }}
+            onClick={() => send({ type: "undo" })}
+            disabled={!state.session.canUndo}
+            aria-label="Undo"
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo2 size={16} />
+          </button>
+          <button
+            class="flex items-center gap-1 rounded p-1.5 transition-colors"
+            style={{
+              color: "var(--color-text-muted)",
+              opacity: state.session.canRedo ? 1 : 0.35,
+            }}
+            onClick={() => send({ type: "redo" })}
+            disabled={!state.session.canRedo}
+            aria-label="Redo"
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <Redo2 size={16} />
+          </button>
           <button
             class="flex items-center gap-1 rounded p-1.5 transition-colors"
             style={{ color: "var(--color-text-muted)" }}
