@@ -196,6 +196,10 @@ export default function WelcomeWizard(props: WelcomeWizardProps): JSX.Element {
   function handleCreateMixer() {
     const checked = checkedApps();
 
+    if (Object.values(state.session.channels).every((channel) => channel.kind !== "sink")) {
+      send({ type: "createChannel", name: "Monitor", kind: "sink" });
+    }
+
     // 1. Create a channel for each checked app
     for (const app of apps()) {
       if (!checked.has(app.id)) continue;

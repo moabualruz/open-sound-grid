@@ -20,6 +20,7 @@ interface MockSessionState {
 
 const EMPTY_SESSION: MixerSession = {
   welcomeDismissed: false,
+  lastPresetName: null,
   activeSources: [],
   activeSinks: [],
   endpoints: [],
@@ -224,10 +225,16 @@ describe("WelcomeWizard — Create Mixer", () => {
     const createChannelCalls = (mockSend.mock.calls as MockSendCall[]).filter(
       ([cmd]) => cmd.type === "createChannel",
     );
-    expect(createChannelCalls.length).toBe(2);
+    expect(createChannelCalls.length).toBe(3);
+    expect(createChannelCalls[0]?.[0]).toMatchObject({
+      type: "createChannel",
+      name: "Monitor",
+      kind: "sink",
+    });
     const names = createChannelCalls.map(([cmd]) =>
       cmd.type === "createChannel" ? cmd.name : "",
     );
+    expect(names).toContain("Monitor");
     expect(names).toContain("Firefox");
     expect(names).toContain("Spotify");
   });
@@ -281,8 +288,51 @@ describe("WelcomeWizard — Create Mixer", () => {
     const names = createChannelCalls.map(([cmd]) =>
       cmd.type === "createChannel" ? cmd.name : "",
     );
+    expect(names).toContain("Monitor");
     expect(names).toContain("Firefox");
     expect(names).not.toContain("Spotify");
+  });
+
+  it("does not create a default Monitor mix when a mix already exists", () => {
+    mockState = makeState({
+      channels: {
+        mix1: {
+          id: "mix1",
+          kind: "sink",
+          outputNodeId: null,
+          assignedApps: [],
+          autoApp: false,
+          allowAppAssignment: true,
+        },
+      },
+      apps: {
+        ff: {
+          id: "ff",
+          kind: "source",
+          name: "Firefox",
+          binary: "firefox",
+          iconName: "",
+          exceptions: [],
+        },
+      },
+    });
+
+    const { container } = render(() => <WelcomeWizard onDone={vi.fn()} />);
+    const createBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Create mixer"]',
+    );
+    fireEvent.click(createBtn!);
+
+    const createChannelCalls = (mockSend.mock.calls as MockSendCall[]).filter(
+      ([cmd]) => cmd.type === "createChannel",
+    );
+
+    expect(createChannelCalls).toHaveLength(1);
+    expect(createChannelCalls[0]?.[0]).toMatchObject({
+      type: "createChannel",
+      name: "Firefox",
+      kind: "duplex",
+    });
   });
 });
 

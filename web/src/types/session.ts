@@ -83,6 +83,7 @@ export interface App {
 
 export interface MixerSession {
   welcomeDismissed: boolean;
+  lastPresetName?: string | null;
   activeSources: EndpointDescriptor[];
   activeSinks: EndpointDescriptor[];
   endpoints: [EndpointDescriptor, Endpoint][];

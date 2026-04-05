@@ -20,6 +20,9 @@ pub struct MixerSession {
     /// Whether the user has dismissed the first-launch welcome wizard.
     #[serde(default)]
     pub welcome_dismissed: bool,
+    /// Last named preset loaded into this session, if any.
+    #[serde(default)]
+    pub last_preset_name: Option<String>,
     #[serde(default)]
     pub active_sources: Vec<EndpointDescriptor>,
     #[serde(default)]

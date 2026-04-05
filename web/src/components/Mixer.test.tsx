@@ -10,8 +10,9 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import { For } from "solid-js";
+import type { JSX } from "solid-js";
 import type { MixerSession } from "../types/session";
-import type { Command } from "../types/commands";
 
 // ---------------------------------------------------------------------------
 // Shared mutable mock state
@@ -27,6 +28,7 @@ let mockNextRetryMs: number;
 
 const EMPTY_SESSION: MixerSession = {
   welcomeDismissed: false,
+  lastPresetName: null,
   activeSources: [],
   activeSinks: [],
   endpoints: [],
@@ -101,7 +103,7 @@ vi.mock("../hooks/useMixerViewModel", () => ({
     persistChannelOrder: vi.fn(),
     persistMixOrder: vi.fn(),
   }),
-  getMixColor: (name: string) => "#5090e0",
+  getMixColor: (_name: string) => "#5090e0",
   findEndpoint: () => undefined,
   findLink: () => null,
 }));
@@ -129,15 +131,18 @@ vi.mock("./useKeyboardNav", () => ({
 
 vi.mock("./MixHeader", () => ({ default: () => <div data-testid="mix-header" /> }));
 vi.mock("./ChannelLabel", () => ({ default: () => <div data-testid="channel-label" /> }));
+vi.mock("./CompactMode", () => ({ default: () => <div data-testid="compact-mode" /> }));
 vi.mock("./MatrixCell", () => ({ default: () => <div data-testid="matrix-cell" /> }));
 vi.mock("./ChannelCreator", () => ({ default: () => <div data-testid="channel-creator" /> }));
 vi.mock("./MixCreator", () => ({ default: () => <div data-testid="mix-creator" /> }));
 vi.mock("./MixEffectsRow", () => ({ default: () => <div data-testid="mix-effects-row" /> }));
-vi.mock("./WelcomeWizard", () => ({ default: (props: { onDone: () => void }) => <div data-testid="welcome-wizard"><button onClick={props.onDone}>Done</button></div> }));
+vi.mock("./WelcomeWizard", () => ({ default: (props: { onDone: () => void }) => <div data-testid="welcome-wizard"><button onClick={() => props.onDone()}>Done</button></div> }));
 vi.mock("./EmptyState", () => ({ default: (props: { kind: string }) => <div data-testid={`empty-state-${props.kind}`} /> }));
 vi.mock("./DragReorder", () => ({
   default: (props: { items: unknown[]; children: (item: unknown, idx: () => number, handle: () => unknown) => unknown }) => (
-    <>{props.items.map((item, i) => props.children(item, () => i, () => <span />))}</>
+    <For each={props.items}>
+      {(item, i) => props.children(item, i, () => <span />) as JSX.Element}
+    </For>
   ),
 }));
 vi.mock("./SettingsPanel", () => ({ default: () => <div data-testid="settings-panel" /> }));
@@ -154,6 +159,12 @@ vi.mock("../hooks/useVolumeDebounce", () => ({
 }));
 
 import Mixer from "./Mixer";
+
+function commandType(args: unknown[]): string | undefined {
+  const firstArg = args[0];
+  if (!firstArg || typeof firstArg !== "object" || !("type" in firstArg)) return undefined;
+  return (firstArg as { type: string }).type;
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -188,6 +199,16 @@ describe("Mixer — basic rendering", () => {
   it("renders the settings button in the header", () => {
     const { getByRole } = render(() => <Mixer />);
     expect(getByRole("button", { name: /settings/i })).toBeTruthy();
+  });
+
+  it("does not render the dead grid preset dropdown", () => {
+    const { queryByRole } = render(() => <Mixer />);
+    expect(queryByRole("combobox")).toBeNull();
+  });
+
+  it("renders the compact mode toggle in the header", () => {
+    const { getByRole } = render(() => <Mixer />);
+    expect(getByRole("button", { name: /enable compact mode/i })).toBeTruthy();
   });
 });
 
@@ -271,7 +292,7 @@ describe("Mixer — reconnecting banner", () => {
 
   it("hides reconnecting banner when not reconnecting", () => {
     mockReconnecting = false;
-    const { queryByRole } = render(() => <Mixer />);
+    render(() => <Mixer />);
     // The status bar footer also has role="status" implicitly via aria-live,
     // so we check there is no element with the reconnecting text.
     const statusElements = document.querySelectorAll('[role="status"]');
@@ -302,6 +323,12 @@ describe("Mixer — connected status bar", () => {
     const { getByText } = render(() => <Mixer />);
     expect(getByText("0 channels")).toBeTruthy();
   });
+
+  it("shows the loaded preset name when the session provides one", () => {
+    mockSession = { ...EMPTY_SESSION, lastPresetName: "Gaming" };
+    const { getByText } = render(() => <Mixer />);
+    expect(getByText("Preset: Gaming")).toBeTruthy();
+  });
 });
 
 describe("Mixer — keyboard shortcuts (undo/redo)", () => {
@@ -322,19 +349,14 @@ describe("Mixer — keyboard shortcuts (undo/redo)", () => {
   it("Ctrl+Z sends undo command", () => {
     render(() => <Mixer />);
     fireEvent.keyDown(document, { key: "z", ctrlKey: true });
-    // "undo" is not in the typed Command union (pre-existing source bug) — cast to any
-    const calls = mockSend.mock.calls.filter(
-      (args: unknown[]) => (args[0] as any).type === "undo",
-    );
+    const calls = mockSend.mock.calls.filter((args: unknown[]) => commandType(args) === "undo");
     expect(calls.length).toBe(1);
   });
 
   it("Ctrl+Shift+Z sends redo command", () => {
     render(() => <Mixer />);
     fireEvent.keyDown(document, { key: "z", ctrlKey: true, shiftKey: true });
-    const calls = mockSend.mock.calls.filter(
-      (args: unknown[]) => (args[0] as any).type === "redo",
-    );
+    const calls = mockSend.mock.calls.filter((args: unknown[]) => commandType(args) === "redo");
     expect(calls.length).toBe(1);
   });
 
@@ -347,9 +369,7 @@ describe("Mixer — keyboard shortcuts (undo/redo)", () => {
     ));
     const input = container.querySelector('input[data-testid="text-input"]') as HTMLInputElement;
     fireEvent.keyDown(input, { key: "z", ctrlKey: true });
-    const calls = mockSend.mock.calls.filter(
-      (args: unknown[]) => (args[0] as any).type === "undo",
-    );
+    const calls = mockSend.mock.calls.filter((args: unknown[]) => commandType(args) === "undo");
     expect(calls.length).toBe(0);
   });
 });
@@ -403,9 +423,7 @@ describe("Mixer — undo/redo toolbar buttons", () => {
     mockSession = { ...EMPTY_SESSION, canUndo: true };
     const { getByRole } = render(() => <Mixer />);
     fireEvent.click(getByRole("button", { name: /^undo$/i }));
-    const calls = mockSend.mock.calls.filter(
-      (args: unknown[]) => (args[0] as any).type === "undo",
-    );
+    const calls = mockSend.mock.calls.filter((args: unknown[]) => commandType(args) === "undo");
     expect(calls.length).toBe(1);
   });
 
@@ -413,9 +431,7 @@ describe("Mixer — undo/redo toolbar buttons", () => {
     mockSession = { ...EMPTY_SESSION, canRedo: true };
     const { getByRole } = render(() => <Mixer />);
     fireEvent.click(getByRole("button", { name: /^redo$/i }));
-    const calls = mockSend.mock.calls.filter(
-      (args: unknown[]) => (args[0] as any).type === "redo",
-    );
+    const calls = mockSend.mock.calls.filter((args: unknown[]) => commandType(args) === "redo");
     expect(calls.length).toBe(1);
   });
 });
@@ -441,5 +457,12 @@ describe("Mixer — grid structure", () => {
     const { container } = render(() => <Mixer />);
     const rows = container.querySelectorAll('[role="row"]');
     expect(rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("switches to compact mode when the toolbar toggle is clicked", () => {
+    const { getByRole, getByTestId, queryByRole } = render(() => <Mixer />);
+    fireEvent.click(getByRole("button", { name: /enable compact mode/i }));
+    expect(getByTestId("compact-mode")).toBeTruthy();
+    expect(queryByRole("grid", { name: /mixer matrix/i })).toBeNull();
   });
 });

@@ -1,24 +1,36 @@
-import { For, Show, createSignal, onMount, onCleanup } from "solid-js";
-import MixEffectsRow from "./MixEffectsRow";
-import { useSession } from "../stores/sessionStore";
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { Eye, EyeOff, Maximize2, Minimize2, Power, Redo2, Settings, Undo2 } from "lucide-solid";
+import type { EqPageTarget } from "../eq/EqPage";
+import EqPage from "../eq/EqPage";
+import type { Channel, Endpoint, EndpointDescriptor } from "../types/session";
 import { useGraph } from "../stores/graphStore";
-import MixHeader from "./MixHeader";
-import MixCreator from "./MixCreator";
-import ChannelLabel from "./ChannelLabel";
-import MatrixCell from "./MatrixCell";
+import { useSession } from "../stores/sessionStore";
+import { useMixerViewModel } from "../hooks/useMixerViewModel";
 import ChannelCreator from "./ChannelCreator";
+import ChannelLabel from "./ChannelLabel";
+import CompactMode from "./CompactMode";
+import DragReorder from "./DragReorder";
 import EmptyState from "./EmptyState";
+import MatrixCell from "./MatrixCell";
+import MixCreator from "./MixCreator";
+import MixEffectsRow from "./MixEffectsRow";
+import MixHeader from "./MixHeader";
 import SettingsPanel from "./SettingsPanel";
 import WelcomeWizard from "./WelcomeWizard";
-import DragReorder from "./DragReorder";
-import { Settings, Eye, EyeOff, Power, Undo2, Redo2 } from "lucide-solid";
-import EqPage from "../eq/EqPage";
-import type { EqPageTarget } from "../eq/EqPage";
-import type { Endpoint, EndpointDescriptor } from "../types/session";
-import { getMixColor, findEndpoint, findLink } from "./mixerUtils";
+import { findEndpoint, findLink, getMixColor } from "./mixerUtils";
 import { useKeyboardNav } from "./useKeyboardNav";
 import { useMixOutputs } from "./useMixOutputs";
-import { useMixerViewModel } from "../hooks/useMixerViewModel";
+
+function channelAccentColor(sourceType?: Channel["sourceType"]): string {
+  switch (sourceType) {
+    case "hardwareMic":
+      return "var(--color-source-mic)";
+    case "appStream":
+      return "var(--color-source-app)";
+    default:
+      return "var(--color-source-cell)";
+  }
+}
 
 export default function Mixer() {
   const { state, send } = useSession();
@@ -26,6 +38,10 @@ export default function Mixer() {
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [eqTarget, setEqTarget] = createSignal<EqPageTarget | null>(null);
   const [wizardDismissed, setWizardDismissed] = createSignal(false);
+  const [hiddenSectionOpen, setHiddenSectionOpen] = createSignal(false);
+  const [expandedMixKey, setExpandedMixKey] = createSignal<string | null>(null);
+  const [compactMode, setCompactMode] = createSignal(false);
+  const [compactMixKey, setCompactMixKey] = createSignal<string | null>(null);
 
   const showWelcomeWizard = () =>
     !wizardDismissed() &&
@@ -41,11 +57,6 @@ export default function Mixer() {
     persistMixOrder,
   } = useMixerViewModel();
 
-  const [hiddenSectionOpen, setHiddenSectionOpen] = createSignal(false);
-
-  // --- Mix expand accordion (only one mix expanded at a time) ---
-  const [expandedMixKey, setExpandedMixKey] = createSignal<string | null>(null);
-
   function toggleMixExpand(mixKey: string) {
     setExpandedMixKey((current) => (current === mixKey ? null : mixKey));
   }
@@ -57,18 +68,13 @@ export default function Mixer() {
     send,
   );
 
-  // --- Undo/Redo keyboard handler ---
-  function handleUndoRedo(e: KeyboardEvent) {
-    const target = e.target as HTMLElement;
+  function handleUndoRedo(event: KeyboardEvent) {
+    const target = event.target as HTMLElement;
     if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-    if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
-      if (e.shiftKey) {
-        e.preventDefault();
-        send({ type: "redo" });
-      } else {
-        e.preventDefault();
-        send({ type: "undo" });
-      }
+
+    if (event.key === "z" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      send({ type: event.shiftKey ? "redo" : "undo" });
     }
   }
 
@@ -80,22 +86,23 @@ export default function Mixer() {
     document.addEventListener("keydown", handleUndoRedo);
     window.addEventListener("osg:open-settings", handleOpenSettings);
   });
+
   onCleanup(() => {
     document.removeEventListener("keydown", handleUndoRedo);
     window.removeEventListener("osg:open-settings", handleOpenSettings);
   });
 
-  // --- EQ page navigation ---
   function openCellEq(source: EndpointDescriptor, sink: EndpointDescriptor) {
-    const srcEp = findEndpoint(state.session.endpoints, source);
-    const sinkEp = findEndpoint(state.session.endpoints, sink);
-    const srcName = srcEp?.customName ?? srcEp?.displayName ?? "?";
-    const sinkName = sinkEp?.customName ?? sinkEp?.displayName ?? "?";
+    const sourceEndpoint = findEndpoint(state.session.endpoints, source);
+    const sinkEndpoint = findEndpoint(state.session.endpoints, sink);
+    const sourceName = sourceEndpoint?.customName ?? sourceEndpoint?.displayName ?? "?";
+    const sinkName = sinkEndpoint?.customName ?? sinkEndpoint?.displayName ?? "?";
     const link = findLink(state.session.links, source, sink);
     const isMic =
       "channel" in source && state.session.channels[source.channel]?.sourceType === "hardwareMic";
+
     setEqTarget({
-      label: `${srcName} → ${sinkName}`,
+      label: `${sourceName} → ${sinkName}`,
       sourceType: isMic ? "mic" : "cell",
       color: "var(--color-source-cell)",
       cellSource: source,
@@ -103,22 +110,40 @@ export default function Mixer() {
       initialEq: link?.cellEq,
       initialEffects: link?.cellEffects,
       sinkDescriptor: sink,
+      spectrumNodeKey:
+        "channel" in source && "channel" in sink
+          ? `${source.channel}-to-${sink.channel}`
+          : undefined,
     });
   }
 
-  function openMixEq(ep: Endpoint, desc: EndpointDescriptor) {
+  function openMixEq(endpoint: Endpoint, descriptor: EndpointDescriptor) {
     setEqTarget({
-      label: ep.customName ?? ep.displayName,
+      label: endpoint.customName ?? endpoint.displayName,
       sourceType: "mix",
-      color: getMixColor(ep.displayName),
-      endpoint: desc,
-      initialEq: ep.eq,
-      initialEffects: ep.effects,
-      sinkDescriptor: desc,
+      color: getMixColor(endpoint.displayName),
+      endpoint: descriptor,
+      initialEq: endpoint.eq,
+      initialEffects: endpoint.effects,
+      sinkDescriptor: descriptor,
+      spectrumNodeKey: "channel" in descriptor ? `mix.${descriptor.channel}` : undefined,
     });
   }
 
-  // --- Keyboard navigation ---
+  function openChannelEffects(endpoint: Endpoint, descriptor: EndpointDescriptor) {
+    const channel = "channel" in descriptor ? state.session.channels[descriptor.channel] : undefined;
+    setEqTarget({
+      label: endpoint.customName ?? endpoint.displayName,
+      sourceType: channel?.sourceType === "hardwareMic" ? "mic" : "app",
+      color: channelAccentColor(channel?.sourceType),
+      endpoint: descriptor,
+      initialEq: endpoint.eq,
+      initialEffects: endpoint.effects,
+      sinkDescriptor: descriptor,
+      spectrumNodeKey: "channel" in descriptor ? `source.${descriptor.channel}` : undefined,
+    });
+  }
+
   const { focusedCell, setFocusedCell, registerCellActions, handleGridKeyDown } = useKeyboardNav(
     channels,
     mixes,
@@ -126,13 +151,25 @@ export default function Mixer() {
     openCellEq,
   );
 
-  const gridCols = () => `12rem repeat(${mixes().length}, minmax(10rem, 1fr))`;
+  createEffect(() => {
+    const availableMixes = mixes();
+    const current = compactMixKey();
 
+    if (availableMixes.length === 0) {
+      if (current !== null) setCompactMixKey(null);
+      return;
+    }
+
+    if (!current || !availableMixes.some((mix) => descKey(mix.desc) === current)) {
+      setCompactMixKey(descKey(availableMixes[0].desc));
+    }
+  });
+
+  const gridCols = () => `12rem repeat(${mixes().length}, minmax(10rem, 1fr))`;
   let gridRef: HTMLDivElement | undefined;
 
   return (
     <div class="flex h-screen flex-col">
-      {/* Reconnecting banner */}
       <Show when={state.reconnecting}>
         <div
           aria-live="assertive"
@@ -144,7 +181,6 @@ export default function Mixer() {
         </div>
       </Show>
 
-      {/* Top bar */}
       <header
         class="flex items-center justify-between border-b px-5 py-2"
         style={{
@@ -159,21 +195,8 @@ export default function Mixer() {
           >
             Open Sound Grid
           </h1>
-          {/* Grid presets */}
-          <select
-            class="rounded px-2 py-1 text-xs"
-            style={{
-              "background-color": "var(--color-bg-primary)",
-              color: "var(--color-text-secondary)",
-              border: "1px solid var(--color-border)",
-            }}
-          >
-            <option>Default Grid</option>
-            <option>Gaming</option>
-            <option>Streaming</option>
-            <option>Music Production</option>
-          </select>
         </div>
+
         <div class="flex items-center gap-2">
           <button
             class="flex items-center gap-1 rounded p-1.5 transition-colors"
@@ -203,6 +226,17 @@ export default function Mixer() {
           </button>
           <button
             class="flex items-center gap-1 rounded p-1.5 transition-colors"
+            style={{ color: compactMode() ? "var(--color-accent)" : "var(--color-text-muted)" }}
+            onClick={() => setCompactMode((value) => !value)}
+            aria-label={compactMode() ? "Exit compact mode" : "Enable compact mode"}
+            title={compactMode() ? "Exit compact mode" : "Enable compact mode"}
+          >
+            <Show when={compactMode()} fallback={<Minimize2 size={16} />}>
+              <Maximize2 size={16} />
+            </Show>
+          </button>
+          <button
+            class="flex items-center gap-1 rounded p-1.5 transition-colors"
             style={{ color: "var(--color-text-muted)" }}
             onClick={() => setSettingsOpen(true)}
             aria-label="Settings"
@@ -212,9 +246,7 @@ export default function Mixer() {
         </div>
       </header>
 
-      {/* Main content area — either grid or EQ page */}
       <div class="relative flex-1 overflow-hidden">
-        {/* Matrix grid view */}
         <div
           class="absolute inset-0 overflow-auto p-4 transition-transform duration-250"
           style={{
@@ -224,213 +256,230 @@ export default function Mixer() {
           }}
         >
           <Show when={state.connected} fallback={<EmptyState kind="disconnected" />}>
-            <div
-              ref={gridRef}
-              role="grid"
-              aria-label="Mixer matrix"
-              tabIndex={0}
-              onKeyDown={handleGridKeyDown}
-              class="outline-none"
-            >
-              {/* Mix column headers */}
-              <div
-                class="mb-2 grid items-stretch gap-2"
-                style={{ "grid-template-columns": gridCols() }}
-                role="row"
-              >
-                <div class="flex items-stretch justify-end" role="columnheader">
-                  <MixCreator maxMixes={8} currentCount={mixes().length} />
-                </div>
-                <DragReorder
-                  items={mixes()}
-                  keyFn={(m) => descKey(m.desc)}
-                  onReorder={persistMixOrder}
-                  direction="horizontal"
+            <Show
+              when={compactMode()}
+              fallback={
+                <div
+                  ref={gridRef}
+                  role="grid"
+                  aria-label="Mixer matrix"
+                  tabIndex={0}
+                  onKeyDown={handleGridKeyDown}
+                  class="outline-none"
                 >
-                  {(mix, _idx, dragHandle) => {
-                    const mixKey = descKey(mix.desc);
-                    return (
-                      <div class="flex flex-col" role="columnheader">
-                        <MixHeader
-                          descriptor={mix.desc}
-                          endpoint={mix.ep}
-                          color={getMixColor(mix.ep.displayName)}
-                          outputDevice={mixOutputs[mixKey] ?? null}
-                          usedDeviceIds={usedDeviceIds()}
-                          onRemove={() =>
-                            send({ type: "setEndpointVisible", endpoint: mix.desc, visible: false })
-                          }
-                          onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
-                          onOpenEq={() => openMixEq(mix.ep, mix.desc)}
-                          dragHandle={dragHandle}
-                          expanded={expandedMixKey() === mixKey}
-                          onToggleExpand={() => toggleMixExpand(mixKey)}
-                        />
-                      </div>
-                    );
-                  }}
-                </DragReorder>
-              </div>
-
-              {/* Matrix rows */}
-              <div class="flex flex-col gap-1.5">
-                <DragReorder
-                  items={channels()}
-                  keyFn={(ch) => descKey(ch.desc)}
-                  onReorder={persistChannelOrder}
-                >
-                  {(ch, rowIdx, dragHandle) => (
-                    <>
-                      <div
-                        class="grid min-h-[4.5rem] items-stretch gap-2"
-                        style={{ "grid-template-columns": gridCols() }}
-                        role="row"
-                      >
-                        <ChannelLabel
-                          descriptor={ch.desc}
-                          endpoint={ch.ep}
-                          channel={
-                            "channel" in ch.desc
-                              ? state.session.channels[ch.desc.channel]
-                              : undefined
-                          }
-                          apps={Object.values(state.session.apps)}
-                          dragHandle={dragHandle}
-                        />
-                        <For each={mixes()}>
-                          {({ desc: sinkDesc, ep: sinkEp }, colIdx) => (
-                            <div
-                              role="gridcell"
-                              aria-label={`${ch.ep.customName ?? ch.ep.displayName} to ${sinkEp?.customName ?? sinkEp?.displayName ?? "mix"}`}
-                              onClick={() => setFocusedCell({ row: rowIdx(), col: colIdx() })}
-                            >
-                              <MatrixCell
-                                link={findLink(state.session.links, ch.desc, sinkDesc)}
-                                sourceEndpoint={ch.ep}
-                                sourceDescriptor={ch.desc}
-                                sinkDescriptor={sinkDesc}
-                                mixColor={getMixColor(sinkEp?.displayName ?? "")}
-                                onOpenEq={() => openCellEq(ch.desc, sinkDesc)}
-                                focused={
-                                  focusedCell()?.row === rowIdx() && focusedCell()?.col === colIdx()
-                                }
-                                onActionsReady={(actions) =>
-                                  registerCellActions(rowIdx(), colIdx(), actions)
-                                }
-                              />
-                            </div>
-                          )}
-                        </For>
-                      </div>
-
-                      {/* Effects sub-row — shown below each channel row when a mix is expanded */}
-                      <Show when={expandedMixKey() !== null}>
-                        {(() => {
-                          const expandedKey = expandedMixKey()!;
-                          const expandedMix = mixes().find((m) => descKey(m.desc) === expandedKey);
-                          if (!expandedMix) return null;
-                          const mixColor = getMixColor(expandedMix.ep.displayName);
-                          const link = findLink(state.session.links, ch.desc, expandedMix.desc);
-                          return (
-                            <MixEffectsRow
-                              cells={[
-                                {
-                                  sourceDescriptor: ch.desc,
-                                  cellEq: link?.cellEq,
-                                  cellEffects: link?.cellEffects,
-                                  linked: link !== null,
-                                },
-                              ]}
-                              mixColor={mixColor}
-                              gridTemplateColumns={`12rem 1fr`}
-                              onOpenCellEq={() => openCellEq(ch.desc, expandedMix.desc)}
-                            />
-                          );
-                        })()}
-                      </Show>
-                    </>
-                  )}
-                </DragReorder>
-
-                {/* Create channel */}
-                <div class="flex gap-2">
-                  <div class="w-48 shrink-0">
-                    <ChannelCreator />
-                  </div>
-                </div>
-
-                {/* Hidden channels collapsible section */}
-                <Show when={hiddenChannels().length > 0}>
-                  <div class="mt-2 border-t pt-2" style={{ "border-color": "var(--color-border)" }}>
-                    <button
-                      class="flex items-center gap-1.5 text-[11px] transition-colors"
-                      style={{ color: "var(--color-text-muted)" }}
-                      onClick={() => setHiddenSectionOpen((v) => !v)}
-                      aria-expanded={hiddenSectionOpen()}
-                      aria-label="Toggle hidden channels"
+                  <div
+                    class="mb-2 grid items-stretch gap-2"
+                    style={{ "grid-template-columns": gridCols() }}
+                    role="row"
+                  >
+                    <div class="flex items-stretch justify-end" role="columnheader">
+                      <MixCreator maxMixes={8} currentCount={mixes().length} />
+                    </div>
+                    <DragReorder
+                      items={mixes()}
+                      keyFn={(mix) => descKey(mix.desc)}
+                      onReorder={persistMixOrder}
+                      direction="horizontal"
                     >
-                      <EyeOff size={12} />
-                      <span>
-                        {hiddenChannels().length} hidden channel
-                        {hiddenChannels().length !== 1 ? "s" : ""}
-                      </span>
-                      <span class="ml-1">{hiddenSectionOpen() ? "▲" : "▼"}</span>
-                    </button>
-                    <Show when={hiddenSectionOpen()}>
-                      <div class="mt-2 flex flex-wrap gap-2">
-                        <For each={hiddenChannels()}>
-                          {(ch) => (
-                            <div
-                              class={`flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] ${
-                                ch.ep.disabled ? "opacity-40" : "opacity-60"
-                              }`}
-                              style={{
-                                "border-color": "var(--color-border)",
-                                "background-color": "var(--color-bg-elevated)",
-                                color: "var(--color-text-muted)",
-                              }}
-                            >
-                              <span>{ch.ep.customName ?? ch.ep.displayName}</span>
-                              <Show when={ch.ep.disabled}>
-                                <span class="text-vu-hot" title="Disabled">
-                                  <Power size={10} />
-                                </span>
-                              </Show>
-                              <button
-                                onClick={() =>
-                                  send({
-                                    type: "setEndpointVisible",
-                                    endpoint: ch.desc,
-                                    visible: true,
-                                  })
-                                }
-                                class="transition-colors hover:text-text-primary"
-                                title="Show channel"
-                                aria-label={`Show ${ch.ep.customName ?? ch.ep.displayName}`}
-                              >
-                                <Eye size={11} />
-                              </button>
-                            </div>
-                          )}
-                        </For>
+                      {(mix, _index, dragHandle) => {
+                        const mixKey = descKey(mix.desc);
+                        return (
+                          <div class="flex flex-col" role="columnheader">
+                            <MixHeader
+                              descriptor={mix.desc}
+                              endpoint={mix.ep}
+                              color={getMixColor(mix.ep.displayName)}
+                              outputDevice={mixOutputs[mixKey] ?? null}
+                              usedDeviceIds={usedDeviceIds()}
+                              onRemove={() => send({ type: "removeEndpoint", endpoint: mix.desc })}
+                              onSelectOutput={(deviceId) => setMixOutput(mixKey, deviceId)}
+                              onOpenEq={() => openMixEq(mix.ep, mix.desc)}
+                              dragHandle={dragHandle}
+                              expanded={expandedMixKey() === mixKey}
+                              onToggleExpand={() => toggleMixExpand(mixKey)}
+                            />
+                          </div>
+                        );
+                      }}
+                    </DragReorder>
+                  </div>
+
+                  <div class="flex flex-col gap-1.5">
+                    <DragReorder
+                      items={channels()}
+                      keyFn={(channel) => descKey(channel.desc)}
+                      onReorder={persistChannelOrder}
+                    >
+                      {(channel, rowIdx, dragHandle) => (
+                        <>
+                          <div
+                            class="grid min-h-[4.5rem] items-stretch gap-2"
+                            style={{ "grid-template-columns": gridCols() }}
+                            role="row"
+                          >
+                            <ChannelLabel
+                              descriptor={channel.desc}
+                              endpoint={channel.ep}
+                              channel={
+                                "channel" in channel.desc
+                                  ? state.session.channels[channel.desc.channel]
+                                  : undefined
+                              }
+                              apps={Object.values(state.session.apps)}
+                              dragHandle={dragHandle}
+                              onOpenEffects={() => openChannelEffects(channel.ep, channel.desc)}
+                            />
+                            <For each={mixes()}>
+                              {({ desc: sinkDesc, ep: sinkEndpoint }, colIdx) => (
+                                <div
+                                  role="gridcell"
+                                  aria-label={`${channel.ep.customName ?? channel.ep.displayName} to ${sinkEndpoint?.customName ?? sinkEndpoint?.displayName ?? "mix"}`}
+                                  onClick={() => setFocusedCell({ row: rowIdx(), col: colIdx() })}
+                                >
+                                  <MatrixCell
+                                    link={findLink(state.session.links, channel.desc, sinkDesc)}
+                                    sourceEndpoint={channel.ep}
+                                    sourceDescriptor={channel.desc}
+                                    sinkDescriptor={sinkDesc}
+                                    mixColor={getMixColor(sinkEndpoint?.displayName ?? "")}
+                                    onOpenEq={() => openCellEq(channel.desc, sinkDesc)}
+                                    focused={
+                                      focusedCell()?.row === rowIdx() &&
+                                      focusedCell()?.col === colIdx()
+                                    }
+                                    onActionsReady={(actions) =>
+                                      registerCellActions(rowIdx(), colIdx(), actions)
+                                    }
+                                  />
+                                </div>
+                              )}
+                            </For>
+                          </div>
+
+                          <Show when={expandedMixKey() !== null}>
+                            {(() => {
+                              const currentMixKey = expandedMixKey()!;
+                              const expandedMix = mixes().find((mix) => descKey(mix.desc) === currentMixKey);
+                              if (!expandedMix) return null;
+
+                              const mixColor = getMixColor(expandedMix.ep.displayName);
+                              const link = findLink(state.session.links, channel.desc, expandedMix.desc);
+
+                              return (
+                                <MixEffectsRow
+                                  cells={[
+                                    {
+                                      sourceDescriptor: channel.desc,
+                                      cellEq: link?.cellEq,
+                                      cellEffects: link?.cellEffects,
+                                      linked: link !== null,
+                                    },
+                                  ]}
+                                  mixColor={mixColor}
+                                  gridTemplateColumns="12rem 1fr"
+                                  onOpenCellEq={() => openCellEq(channel.desc, expandedMix.desc)}
+                                />
+                              );
+                            })()}
+                          </Show>
+                        </>
+                      )}
+                    </DragReorder>
+
+                    <div class="flex gap-2">
+                      <div class="w-48 shrink-0">
+                        <ChannelCreator />
+                      </div>
+                    </div>
+
+                    <Show when={hiddenChannels().length > 0}>
+                      <div class="mt-2 border-t pt-2" style={{ "border-color": "var(--color-border)" }}>
+                        <button
+                          class="flex items-center gap-1.5 text-[11px] transition-colors"
+                          style={{ color: "var(--color-text-muted)" }}
+                          onClick={() => setHiddenSectionOpen((value) => !value)}
+                          aria-expanded={hiddenSectionOpen()}
+                          aria-label="Toggle hidden channels"
+                        >
+                          <EyeOff size={12} />
+                          <span>
+                            {hiddenChannels().length} hidden channel
+                            {hiddenChannels().length !== 1 ? "s" : ""}
+                          </span>
+                          <span class="ml-1">{hiddenSectionOpen() ? "▲" : "▼"}</span>
+                        </button>
+                        <Show when={hiddenSectionOpen()}>
+                          <div class="mt-2 flex flex-wrap gap-2">
+                            <For each={hiddenChannels()}>
+                              {(channel) => (
+                                <div
+                                  class={`flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] ${
+                                    channel.ep.disabled ? "opacity-40" : "opacity-60"
+                                  }`}
+                                  style={{
+                                    "border-color": "var(--color-border)",
+                                    "background-color": "var(--color-bg-elevated)",
+                                    color: "var(--color-text-muted)",
+                                  }}
+                                >
+                                  <span>{channel.ep.customName ?? channel.ep.displayName}</span>
+                                  <Show when={channel.ep.disabled}>
+                                    <span class="text-vu-hot" title="Disabled">
+                                      <Power size={10} />
+                                    </span>
+                                  </Show>
+                                  <button
+                                    onClick={() =>
+                                      send({
+                                        type: "setEndpointVisible",
+                                        endpoint: channel.desc,
+                                        visible: true,
+                                      })
+                                    }
+                                    class="transition-colors hover:text-text-primary"
+                                    title="Show channel"
+                                    aria-label={`Show ${channel.ep.customName ?? channel.ep.displayName}`}
+                                  >
+                                    <Eye size={11} />
+                                  </button>
+                                </div>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
                       </div>
                     </Show>
-                  </div>
-                </Show>
 
-                {/* Empty states */}
-                <Show when={channels().length === 0 && mixes().length > 0}>
-                  <EmptyState kind="no-channels" />
-                </Show>
-                <Show when={mixes().length === 0}>
-                  <EmptyState kind="no-mixes" />
-                </Show>
-              </div>
-            </div>
+                    <Show when={channels().length === 0 && mixes().length > 0}>
+                      <EmptyState kind="no-channels" />
+                    </Show>
+                    <Show when={mixes().length === 0}>
+                      <EmptyState kind="no-mixes" />
+                    </Show>
+                  </div>
+                </div>
+              }
+            >
+              <CompactMode
+                channels={channels()}
+                channelsById={state.session.channels}
+                links={state.session.links}
+                mixes={mixes()}
+                selectedMixKey={compactMixKey()}
+                onSelectMixKey={setCompactMixKey}
+                descKey={descKey}
+                mixOutputs={mixOutputs}
+                usedDeviceIds={usedDeviceIds()}
+                onSelectOutput={setMixOutput}
+                onOpenCellEq={openCellEq}
+                onOpenChannelEffects={openChannelEffects}
+                onOpenMixEq={openMixEq}
+                onRemoveMix={(descriptor) => send({ type: "removeEndpoint", endpoint: descriptor })}
+              />
+            </Show>
           </Show>
         </div>
 
-        {/* EQ page view — slides in from the right */}
         <div
           class="absolute inset-0 transition-transform duration-250"
           style={{
@@ -444,7 +493,6 @@ export default function Mixer() {
         </div>
       </div>
 
-      {/* Status bar */}
       <footer
         aria-live="polite"
         class="flex items-center justify-between border-t px-5 py-1 text-[11px]"
@@ -461,6 +509,9 @@ export default function Mixer() {
           {state.connected ? "Connected to PipeWire" : "Disconnected"}
         </span>
         <div class="flex items-center gap-4">
+          <Show when={state.session.lastPresetName}>
+            {(presetName) => <span>Preset: {presetName()}</span>}
+          </Show>
           <span>{channels().length} channels</span>
           <span>{mixes().length} mixes</span>
           <span>{Object.keys(graphState.graph.nodes).length} nodes</span>
