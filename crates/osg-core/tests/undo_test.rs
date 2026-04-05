@@ -191,3 +191,77 @@ fn command_redo_round_trips() {
     let json2 = serde_json::to_string(&rt).unwrap();
     assert_eq!(json, json2);
 }
+
+// ---------------------------------------------------------------------------
+// Test 9: can_undo / can_redo report correct state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn can_undo_can_redo_reflect_stack_state() {
+    let mut stack = UndoStack::new();
+
+    assert!(!stack.can_undo(), "empty stack: can_undo should be false");
+    assert!(!stack.can_redo(), "empty stack: can_redo should be false");
+
+    stack.push(MixerSession::default());
+    assert!(stack.can_undo(), "after push: can_undo should be true");
+    assert!(!stack.can_redo(), "after push: can_redo should be false");
+
+    let current = MixerSession::default();
+    let _restored = stack.undo(current).unwrap();
+    assert!(
+        !stack.can_undo(),
+        "after undo all: can_undo should be false"
+    );
+    assert!(stack.can_redo(), "after undo: can_redo should be true");
+
+    let _redone = stack.redo(MixerSession::default()).unwrap();
+    assert!(stack.can_undo(), "after redo: can_undo should be true");
+    assert!(
+        !stack.can_redo(),
+        "after redo all: can_redo should be false"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: acceptance — create 3 channels, undo 3x, redo 3x
+// ---------------------------------------------------------------------------
+
+#[test]
+fn create_three_channels_undo_three_redo_three() {
+    let mut stack = UndoStack::new();
+    let mut state = MixerSession::default();
+
+    // Create 3 channels, snapshotting before each
+    for i in 0..3 {
+        stack.push(state.clone());
+        push_channels(&mut state, 1);
+        assert_eq!(state.channels.len(), i + 1);
+    }
+
+    // Undo 3 times — all channels removed
+    for i in (0..3).rev() {
+        let restored = stack.undo(state.clone()).expect("undo should succeed");
+        assert_eq!(
+            restored.channels.len(),
+            i,
+            "after undo, expected {i} channels"
+        );
+        state = restored;
+    }
+    assert_eq!(state.channels.len(), 0, "after 3 undos, no channels");
+    assert!(stack.undo(state.clone()).is_none(), "no more undos");
+
+    // Redo 3 times — all channels restored one by one
+    for i in 1..=3 {
+        let redone = stack.redo(state.clone()).expect("redo should succeed");
+        assert_eq!(
+            redone.channels.len(),
+            i,
+            "after redo, expected {i} channels"
+        );
+        state = redone;
+    }
+    assert_eq!(state.channels.len(), 3, "after 3 redos, 3 channels");
+    assert!(stack.redo(state.clone()).is_none(), "no more redos");
+}

@@ -94,4 +94,6 @@ export interface MixerSession {
   channelOrder: EndpointDescriptor[];
   mixOrder: EndpointDescriptor[];
   defaultOutputNodeId: number | null;
+  canUndo: boolean;
+  canRedo: boolean;
 }

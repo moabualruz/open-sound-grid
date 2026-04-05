@@ -47,6 +47,12 @@ pub struct MixerSession {
     /// User-defined display order for sink mixes (columns).
     #[serde(default)]
     pub mix_order: Vec<EndpointDescriptor>,
+    /// Whether the undo stack has entries (transient — not persisted to disk).
+    #[serde(default)]
+    pub can_undo: bool,
+    /// Whether the redo stack has entries (transient — not persisted to disk).
+    #[serde(default)]
+    pub can_redo: bool,
 }
 
 // ---------------------------------------------------------------------------

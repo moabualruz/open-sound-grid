@@ -32,6 +32,8 @@ const EMPTY_SESSION: MixerSession = {
   channelOrder: [],
   mixOrder: [],
   defaultOutputNodeId: null,
+  canUndo: false,
+  canRedo: false,
 };
 
 vi.mock("../stores/sessionStore", () => ({

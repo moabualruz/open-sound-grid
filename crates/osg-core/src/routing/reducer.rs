@@ -283,6 +283,10 @@ pub async fn run_reducer(
                         }
                     }
 
+                    // Expose undo/redo availability to the frontend.
+                    state.can_undo = undo_stack.can_undo();
+                    state.can_redo = undo_stack.can_redo();
+
                     let _ = state_tx.send(Arc::new(state));
 
                     // Reset auto-save timer on every mutation

@@ -31,6 +31,8 @@ const EMPTY_SESSION: MixerSession = {
   channelOrder: [],
   mixOrder: [],
   defaultOutputNodeId: null,
+  canUndo: false,
+  canRedo: false,
 };
 
 // Mutable test state shared by helpers

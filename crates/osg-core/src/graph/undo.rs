@@ -62,4 +62,14 @@ impl UndoStack {
         }
         Some(snapshot)
     }
+
+    /// Returns `true` when there is at least one snapshot to undo.
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    /// Returns `true` when there is at least one snapshot to redo.
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
 }
