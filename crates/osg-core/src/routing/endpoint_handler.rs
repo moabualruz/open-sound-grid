@@ -27,6 +27,7 @@ impl CommandHandler for EndpointCommandHandler {
                 | StateMsg::RenameEndpoint(..)
                 | StateMsg::ChangeChannelKind(..)
                 | StateMsg::SetEndpointVisible(..)
+                | StateMsg::SetEndpointDisabled(..)
                 | StateMsg::DismissWelcome
         )
     }
@@ -62,6 +63,16 @@ impl CommandHandler for EndpointCommandHandler {
                 session.handle_set_endpoint_visible(
                     descriptor,
                     visible,
+                    graph,
+                    settings,
+                    &mut events,
+                );
+                None
+            }
+            StateMsg::SetEndpointDisabled(descriptor, disabled) => {
+                session.handle_set_endpoint_disabled(
+                    descriptor,
+                    disabled,
                     graph,
                     settings,
                     &mut events,
@@ -386,6 +397,36 @@ impl MixerSession {
             });
             ch.kind = kind;
             rt.set_channel_pending(id, false);
+        }
+    }
+
+    /// Disable or re-enable an endpoint.
+    ///
+    /// Disabled endpoints are muted on PipeWire and excluded from routing in
+    /// the reconciler. The endpoint is retained in state so it can be
+    /// re-enabled later.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_set_endpoint_disabled(
+        &mut self,
+        descriptor: EndpointDescriptor,
+        disabled: bool,
+        graph: &AudioGraph,
+        settings: &ReconcileSettings,
+        events: &mut Vec<MixerEvent>,
+    ) {
+        let nodes = self.resolve_endpoint(descriptor, graph, settings);
+        if let Some(endpoint) = self.endpoints.get_mut(&descriptor) {
+            endpoint.disabled = disabled;
+            if disabled {
+                endpoint.volume_locked_muted = endpoint.volume_locked_muted.with_mute(true);
+            }
+        }
+        // Propagate mute state to PipeWire nodes.
+        if let Some(nodes) = nodes {
+            events.extend(nodes.into_iter().map(|n| MixerEvent::MuteChanged {
+                node_id: n.id,
+                muted: disabled,
+            }));
         }
     }
 

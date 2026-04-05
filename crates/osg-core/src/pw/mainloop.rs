@@ -92,7 +92,13 @@ pub(super) fn init_mainloop(
                     // Instance-aware orphan cleanup: reap osg.* nodes from
                     // crashed previous instances (different or missing osg.instance).
                     if !*startup_cleanup_done.borrow() {
-                        *startup_cleanup_done.borrow_mut() = true;
+                        match startup_cleanup_done.try_borrow_mut() {
+                            Ok(mut done) => *done = true,
+                            Err(_) => {
+                                warn!("[PW] re-entrant borrow on startup_cleanup_done, skipping");
+                                return;
+                            }
+                        }
                         let s = store.borrow();
                         let current_instance = s.instance_id;
                         let orphans: Vec<u32> = s
@@ -255,10 +261,15 @@ pub(super) fn init_mainloop(
                     match filter_result {
                         Ok(osg_filter) => {
                             filter_store.insert(filter_key.clone(), osg_filter.handle().clone());
-                            active_filters
-                                .borrow_mut()
-                                .insert(filter_key.clone(), osg_filter);
-                            debug!("[PW] created resident cell filter '{filter_key}'");
+                            match active_filters.try_borrow_mut() {
+                                Ok(mut filters) => {
+                                    filters.insert(filter_key.clone(), osg_filter);
+                                    debug!("[PW] created resident cell filter '{filter_key}'");
+                                }
+                                Err(_) => {
+                                    warn!("[PW] re-entrant borrow inserting cell filter '{filter_key}', skipping");
+                                }
+                            }
                         }
                         Err(e) => warn!("[PW] failed to create cell filter '{filter_key}': {e}"),
                     }
@@ -320,10 +331,15 @@ pub(super) fn init_mainloop(
                     match result {
                         Ok(osg_filter) => {
                             filter_store.insert(filter_key.clone(), osg_filter.handle().clone());
-                            active_filters
-                                .borrow_mut()
-                                .insert(filter_key.clone(), osg_filter);
-                            debug!("[PW] created inline filter '{filter_key}' ({name})");
+                            match active_filters.try_borrow_mut() {
+                                Ok(mut filters) => {
+                                    filters.insert(filter_key.clone(), osg_filter);
+                                    debug!("[PW] created inline filter '{filter_key}' ({name})");
+                                }
+                                Err(_) => {
+                                    warn!("[PW] re-entrant borrow inserting inline filter '{filter_key}', skipping");
+                                }
+                            }
                         }
                         Err(e) => {
                             warn!("[PW] failed to create filter '{filter_key}': {e}");
@@ -331,9 +347,16 @@ pub(super) fn init_mainloop(
                     }
                 }
                 ToPipewireMessage::RemoveFilter { filter_key } => {
-                    if active_filters.borrow_mut().remove(&filter_key).is_some() {
-                        filter_store.remove(&filter_key);
-                        debug!("[PW] removed filter '{filter_key}'");
+                    match active_filters.try_borrow_mut() {
+                        Ok(mut filters) => {
+                            if filters.remove(&filter_key).is_some() {
+                                filter_store.remove(&filter_key);
+                                debug!("[PW] removed filter '{filter_key}'");
+                            }
+                        }
+                        Err(_) => {
+                            warn!("[PW] re-entrant borrow removing filter '{filter_key}', skipping");
+                        }
                     }
                 }
                 ToPipewireMessage::UpdateFilterEq { filter_key, eq } => {

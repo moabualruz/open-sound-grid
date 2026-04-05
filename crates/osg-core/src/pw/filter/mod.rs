@@ -11,13 +11,13 @@ pub mod filter_handle;
 pub mod process;
 
 // Re-export everything from filter_handle so existing paths (super::filter::X) still resolve.
+pub use crate::pw::fft::{SPECTRUM_BINS, SpectrumData, SpectrumHandle};
 pub(crate) use filter_handle::EnvelopeState;
 pub use filter_handle::{
     CompiledEq, CompressorParams, DeEsserParams, EffectsParams, FilterHandle, GateParams,
     LimiterParams, MAX_MACRO_BANDS, SmartVolumeParams, SpatialAudioParams, pack_peaks,
     unpack_peaks,
 };
-pub use crate::pw::fft::{SpectrumData, SpectrumHandle, SPECTRUM_BINS};
 pub use process::process_block;
 
 use crate::pw::biquad::BiquadState;

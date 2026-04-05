@@ -56,6 +56,9 @@ pub enum StateMsg {
     SetCellEffects(EndpointDescriptor, EndpointDescriptor, EffectsConfig),
     /// Dismiss the first-launch welcome wizard (sets welcome_dismissed = true).
     DismissWelcome,
+    /// Disable/enable an endpoint (persists across sessions; disabled endpoints
+    /// are muted and excluded from routing, but kept in state).
+    SetEndpointDisabled(EndpointDescriptor, bool),
     /// Undo the last destructive operation.
     Undo,
     /// Redo the last undone operation.

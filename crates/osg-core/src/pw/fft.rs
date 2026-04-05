@@ -191,7 +191,8 @@ impl FftRingBuffer {
 
         // Compute real FFT using pre-allocated plan (P0-1: no allocation on RT thread).
         // P1-1: process() overwrites scratch_output; no need to zero it first.
-        if self.fft_plan
+        if self
+            .fft_plan
             .process(&mut self.scratch_input, &mut self.scratch_output)
             .is_err()
         {
@@ -338,8 +339,10 @@ mod tests {
         // DC energy should be concentrated in the low-frequency bins.
         // Hann window spreads energy slightly, so check that average of
         // bottom quarter is well above average of top quarter.
-        let low_avg: f32 = bins[..SPECTRUM_BINS / 4].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
-        let high_avg: f32 = bins[SPECTRUM_BINS * 3 / 4..].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
+        let low_avg: f32 =
+            bins[..SPECTRUM_BINS / 4].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
+        let high_avg: f32 =
+            bins[SPECTRUM_BINS * 3 / 4..].iter().sum::<f32>() / (SPECTRUM_BINS / 4) as f32;
         assert!(
             low_avg > high_avg + 10.0,
             "DC energy should be in low bins: low_avg={low_avg}, high_avg={high_avg}"
@@ -398,10 +401,7 @@ mod tests {
         );
         // Push the rest — should be full
         assert!(rb.push_samples(&half), "should be full now");
-        assert!(
-            rb.compute_spectrum().is_some(),
-            "should compute after full"
-        );
+        assert!(rb.compute_spectrum().is_some(), "should compute after full");
         // After compute, counter resets — should not be full again
         assert!(
             rb.compute_spectrum().is_none(),

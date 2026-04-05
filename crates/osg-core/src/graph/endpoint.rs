@@ -91,6 +91,10 @@ pub struct Endpoint {
     /// Hidden endpoints are preserved but not shown in the UI's active lists.
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Disabled endpoints are muted and excluded from routing but retained in
+    /// state. Persists across sessions.
+    #[serde(default)]
+    pub disabled: bool,
     /// Parametric EQ configuration for this endpoint.
     #[serde(default)]
     pub eq: EqConfig,
@@ -122,6 +126,7 @@ impl Endpoint {
             volume_mixed: false,
             volume_locked_muted: VolumeLockMuteState::UnmutedUnlocked,
             visible: true,
+            disabled: false,
             eq: EqConfig::default(),
             effects: EffectsConfig::default(),
         }

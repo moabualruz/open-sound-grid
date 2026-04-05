@@ -11,8 +11,8 @@ use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tracing::{error, warn};
 
 use crate::config::{PersistentSettings, PersistentState};
-use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
 use crate::graph::undo::UndoStack;
+use crate::graph::{MixerSession, ReconcileSettings, RuntimeState};
 use crate::pw::{AudioGraph, ToPipewireMessage};
 use crate::routing::RoutingError;
 use crate::routing::event_translator;
@@ -250,8 +250,13 @@ pub async fn run_reducer(
                         // Normal command: dispatch through registry.
                         let mut state = state_tx.borrow().as_ref().clone();
                         runtime.generation = runtime.generation.wrapping_add(1);
-                        let (output_msg, domain_events) =
-                            registry.dispatch(&mut state, msg, &graph, &mut runtime, &current_settings);
+                        let (output_msg, domain_events) = registry.dispatch(
+                            &mut state,
+                            msg,
+                            &graph,
+                            &mut runtime,
+                            &current_settings,
+                        );
                         let domain_pw = event_translator::translate_all(&domain_events);
                         for m in domain_pw {
                             if pw_sender.send(m).is_err() {

@@ -151,6 +151,13 @@ pub enum Command {
     /// Dismiss the first-launch welcome wizard (persists welcome_dismissed = true).
     DismissWelcome,
 
+    /// Disable/enable an endpoint (persisted; disabled endpoints are muted and
+    /// excluded from routing but retained in state).
+    SetEndpointDisabled {
+        endpoint: EndpointDescriptor,
+        disabled: bool,
+    },
+
     /// Undo the last destructive operation.
     Undo,
 
@@ -234,6 +241,9 @@ impl Command {
                 effects,
             } => StateMsg::SetCellEffects(source, target, effects),
             Self::DismissWelcome => StateMsg::DismissWelcome,
+            Self::SetEndpointDisabled { endpoint, disabled } => {
+                StateMsg::SetEndpointDisabled(endpoint, disabled)
+            }
             Self::Undo => StateMsg::Undo,
             Self::Redo => StateMsg::Redo,
         }
