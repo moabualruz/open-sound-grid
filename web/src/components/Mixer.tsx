@@ -85,6 +85,24 @@ export default function Mixer() {
 
   return (
     <div class="flex h-screen flex-col">
+      {/* Reconnecting banner */}
+      <Show when={state.reconnecting}>
+        <div
+          class="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium"
+          style={{
+            "background-color": "var(--color-vu-hot, #ef4444)",
+            color: "#fff",
+          }}
+          role="status"
+          aria-live="polite"
+        >
+          <span>Reconnecting...</span>
+          <span>
+            (attempt {state.reconnectAttempt + 1})
+          </span>
+        </div>
+      </Show>
+
       {/* Top bar */}
       <header
         class="flex items-center justify-between border-b px-5 py-2"
