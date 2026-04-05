@@ -17,9 +17,11 @@ pub use filter_handle::{
     LimiterParams, MAX_MACRO_BANDS, SmartVolumeParams, SpatialAudioParams, pack_peaks,
     unpack_peaks,
 };
+pub use crate::pw::fft::{SpectrumData, SpectrumHandle, SPECTRUM_BINS};
 pub use process::process_block;
 
 use crate::pw::biquad::BiquadState;
+use crate::pw::fft::FftRingBuffer;
 use filter_handle::MAX_BANDS;
 use process::on_process;
 
@@ -31,6 +33,8 @@ pub(super) struct CallbackData {
     pub(super) states_r: Vec<BiquadState>,
     pub(super) env_l: EnvelopeState,
     pub(super) env_r: EnvelopeState,
+    pub(super) fft_l: FftRingBuffer,
+    pub(super) fft_r: FftRingBuffer,
     pub(super) in_port_l: *mut std::os::raw::c_void,
     pub(super) in_port_r: *mut std::os::raw::c_void,
     pub(super) out_port_l: *mut std::os::raw::c_void,
@@ -74,6 +78,8 @@ impl OsgFilter {
             states_r: vec![BiquadState::default(); MAX_BANDS],
             env_l: EnvelopeState::default(),
             env_r: EnvelopeState::default(),
+            fft_l: FftRingBuffer::new(),
+            fft_r: FftRingBuffer::new(),
             in_port_l: ptr::null_mut(),
             in_port_r: ptr::null_mut(),
             out_port_l: ptr::null_mut(),

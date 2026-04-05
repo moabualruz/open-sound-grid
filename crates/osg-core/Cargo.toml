@@ -26,3 +26,4 @@ dirs = { workspace = true }
 arc-swap = "1.9.0"
 pipewire-sys = "0.9"
 libspa-sys = "0.9"
+realfft = { workspace = true }

@@ -3,6 +3,7 @@
 pub mod biquad;
 mod cell;
 mod effects_dsp;
+pub mod fft;
 pub mod filter;
 mod group_nodes;
 pub mod identifier;

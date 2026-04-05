@@ -10,6 +10,7 @@ use crate::pw::effects_dsp::{
     apply_boost, apply_compressor, apply_de_esser, apply_gate, apply_limiter, apply_smart_volume,
     apply_spatial,
 };
+use crate::pw::fft::SpectrumData;
 
 /// Process a block of mono audio through the EQ biquad cascade.
 pub fn process_block(
@@ -161,4 +162,33 @@ pub(super) unsafe extern "C" fn on_process(
         peak_r = out_slice_r.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
     }
     d.handle.store_peaks(peak_l, peak_r);
+
+    // FFT spectrum accumulation — only when a client is subscribed.
+    if d.handle.spectrum().is_subscribed() {
+        let mut left_bins = None;
+        let mut right_bins = None;
+
+        if !out_l.is_null() && l_has_signal {
+            let out_slice_l = std::slice::from_raw_parts(out_l, n);
+            if d.fft_l.push_samples(out_slice_l) {
+                left_bins = d.fft_l.compute_spectrum();
+            }
+        }
+        if !out_r.is_null() && r_has_signal {
+            let out_slice_r = std::slice::from_raw_parts(out_r, n);
+            if d.fft_r.push_samples(out_slice_r) {
+                right_bins = d.fft_r.compute_spectrum();
+            }
+        }
+
+        // Publish when either channel produced new bins
+        if left_bins.is_some() || right_bins.is_some() {
+            let current = d.handle.spectrum().load();
+            let data = SpectrumData {
+                left: left_bins.unwrap_or(current.left),
+                right: right_bins.unwrap_or(current.right),
+            };
+            d.handle.spectrum().publish(data);
+        }
+    }
 }

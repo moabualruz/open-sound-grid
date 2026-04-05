@@ -38,6 +38,7 @@ async fn main() -> Result<(), osg_core::CoreError> {
         .route("/ws/session", get(ws_session))
         .route("/ws/commands", get(ws_commands))
         .route("/ws/levels", get(ws_levels))
+        .route("/ws/spectrum", get(ws_spectrum))
         .fallback_service(ServeDir::new("web/dist"))
         .layer(CorsLayer::permissive())
         .with_state(state.clone());
@@ -223,6 +224,114 @@ async fn handle_ws_levels(mut socket: ws::WebSocket, state: Arc<AppState>) {
                 }
             }
             Err(_) => break,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: FFT spectrum (subscribe/unsubscribe, 15fps broadcast)
+// ---------------------------------------------------------------------------
+
+async fn ws_spectrum(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_spectrum(socket, state))
+}
+
+/// Spectrum subscribe message from client.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum SpectrumMsg {
+    Subscribe {
+        subscribe: Vec<String>,
+    },
+    Unsubscribe {
+        unsubscribe: Vec<String>,
+    },
+}
+
+fn apply_spectrum_msg(
+    msg: SpectrumMsg,
+    filter_store: &osg_core::pw::FilterHandleStore,
+    subscribed_keys: &mut Vec<String>,
+) {
+    match msg {
+        SpectrumMsg::Subscribe { subscribe } => {
+            for key in &subscribe {
+                if let Some(handle) = filter_store.get(key) {
+                    handle.spectrum().set_subscribed(true);
+                    if !subscribed_keys.contains(key) {
+                        subscribed_keys.push(key.clone());
+                    }
+                }
+            }
+        }
+        SpectrumMsg::Unsubscribe { unsubscribe } => {
+            for key in &unsubscribe {
+                if let Some(handle) = filter_store.get(key) {
+                    handle.spectrum().set_subscribed(false);
+                }
+                subscribed_keys.retain(|k| k != key);
+            }
+        }
+    }
+}
+
+fn build_spectrum_payload(
+    filter_store: &osg_core::pw::FilterHandleStore,
+    subscribed_keys: &[String],
+) -> Option<String> {
+    let mut spectra = serde_json::Map::new();
+    for key in subscribed_keys {
+        if let Some(handle) = filter_store.get(key) {
+            let data = handle.spectrum().load();
+            let entry = serde_json::json!({
+                "left": data.left.as_slice(),
+                "right": data.right.as_slice(),
+            });
+            spectra.insert(key.clone(), entry);
+        }
+    }
+    if spectra.is_empty() {
+        return None;
+    }
+    let payload = serde_json::json!({ "spectra": spectra });
+    serde_json::to_string(&payload).ok()
+}
+
+async fn handle_ws_spectrum(mut socket: ws::WebSocket, state: Arc<AppState>) {
+    let filter_store = state.core.filter_store().clone();
+    let mut subscribed_keys: Vec<String> = Vec::new();
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(67)); // ~15 fps
+
+    loop {
+        tokio::select! {
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(ws::Message::Text(text))) => {
+                        if let Ok(spec_msg) = serde_json::from_str::<SpectrumMsg>(&text) {
+                            apply_spectrum_msg(spec_msg, &filter_store, &mut subscribed_keys);
+                        }
+                    }
+                    Some(Ok(ws::Message::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+            _ = interval.tick(), if !subscribed_keys.is_empty() => {
+                if let Some(json) = build_spectrum_payload(&filter_store, &subscribed_keys)
+                    && socket.send(ws::Message::Text(json.into())).await.is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    // Cleanup: clear subscription flags when last subscriber disconnects
+    for key in &subscribed_keys {
+        if let Some(handle) = filter_store.get(key) {
+            handle.spectrum().set_subscribed(false);
         }
     }
 }
