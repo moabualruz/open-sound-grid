@@ -23,7 +23,7 @@ itertools = { workspace = true }
 ulid = { workspace = true }
 oneshot = { workspace = true }
 dirs = { workspace = true }
-arc-swap = "1.9.0"
+arc-swap = "1.9.1"
 pipewire-sys = "0.9"
 libspa-sys = "0.9"
 realfft = { workspace = true }
