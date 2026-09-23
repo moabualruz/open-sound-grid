@@ -10,7 +10,7 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, generic]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -18,7 +18,7 @@ jobs:
           toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
+        run: command -v apt-get >/dev/null || exit 0; sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
       - name: cargo fmt check
         run: cargo fmt --all --check
       - name: cargo clippy
