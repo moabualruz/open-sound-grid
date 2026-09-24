@@ -183,7 +183,7 @@ impl NodeIdentifier {
                 .unwrap_or_default();
             if kind == PortKind::Source && self.is_monitor {
                 // Uses unicode "fullwidth" brackets which I personally think look nicer
-                format!("\u{FF3B}Monitor\u{FF3D}{}", name)
+                format!("\u{FF3B}Monitor\u{FF3D}{name}")
             } else {
                 name
             }
