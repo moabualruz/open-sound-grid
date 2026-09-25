@@ -30,8 +30,8 @@ fn mute_changed_translates_to_node_mute() {
 
 #[test]
 fn create_group_node_translates_correctly() {
-    let ulid = Ulid::new();
-    let instance_id = Ulid::new();
+    let ulid = Ulid::generate();
+    let instance_id = Ulid::generate();
     let event = MixerEvent::CreateGroupNode {
         name: "Monitor".to_string(),
         ulid,
@@ -101,7 +101,7 @@ fn translate_all_handles_multiple_events() {
 
 #[test]
 fn create_cell_node_translates_all_fields() {
-    let instance_id = Ulid::new();
+    let instance_id = Ulid::generate();
     let event = MixerEvent::CreateCellNode {
         name: "Music→Monitor".to_string(),
         cell_id: "osg.cell.abc-to-xyz".to_string(),
@@ -125,7 +125,7 @@ fn create_cell_node_translates_all_fields() {
 
 #[test]
 fn create_staging_sink_translates() {
-    let instance_id = Ulid::new();
+    let instance_id = Ulid::generate();
     let event = MixerEvent::CreateStagingSink { instance_id };
     let msgs = event_translator::translate(&event);
     assert_eq!(msgs.len(), 1);
