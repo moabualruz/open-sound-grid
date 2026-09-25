@@ -11,7 +11,7 @@ pub struct PersistentNodeId(Ulid);
 #[allow(clippy::new_without_default)]
 impl PersistentNodeId {
     pub fn new() -> Self {
-        Self(Ulid::new())
+        Self(Ulid::generate())
     }
 
     pub fn inner(&self) -> Ulid {
@@ -27,7 +27,7 @@ pub struct ChannelId(Ulid);
 #[allow(clippy::new_without_default)]
 impl ChannelId {
     pub fn new() -> Self {
-        Self(Ulid::new())
+        Self(Ulid::generate())
     }
 
     pub fn inner(&self) -> Ulid {
@@ -43,7 +43,7 @@ pub struct AppId(Ulid);
 #[allow(clippy::new_without_default)]
 impl AppId {
     pub fn new() -> Self {
-        Self(Ulid::new())
+        Self(Ulid::generate())
     }
 }
 
