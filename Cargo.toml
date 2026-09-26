@@ -62,7 +62,7 @@ ulid = { version = "1.2", features = ["serde"] }
 oneshot = { version = "0.2", features = ["std"] }
 
 # System
-dirs = "6.0"
+dirs = "7.0"
 
 # Web server (osg-server only)
 axum = { version = "0.8", features = ["ws"] }
