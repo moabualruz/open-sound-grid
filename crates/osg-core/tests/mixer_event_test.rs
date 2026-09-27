@@ -16,8 +16,8 @@ fn mixer_event_volume_is_serializable() {
 
 #[test]
 fn mixer_event_create_group_node_serializable() {
-    let ulid = Ulid::new();
-    let instance_id = Ulid::new();
+    let ulid = Ulid::generate();
+    let instance_id = Ulid::generate();
     let event = MixerEvent::CreateGroupNode {
         name: "Music".to_string(),
         ulid,
@@ -60,7 +60,7 @@ fn mixer_event_exit_serializable() {
 
 #[test]
 fn mixer_event_create_cell_node_serializable() {
-    let instance_id = Ulid::new();
+    let instance_id = Ulid::generate();
     let event = MixerEvent::CreateCellNode {
         name: "cell-music-headphones".to_string(),
         cell_id: "osg.cell.abc-to-def".to_string(),

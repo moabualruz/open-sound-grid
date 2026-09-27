@@ -75,7 +75,7 @@ impl OsgCore {
 
         // Generate a unique instance ID for this process lifetime.
         // Stamped on all PW nodes for ownership tracking.
-        let instance_id = ulid::Ulid::new();
+        let instance_id = ulid::Ulid::generate();
 
         // ADR-007: Create staging sink — always-alive, vol=0, for glitch-free rerouting
         let _ = pw_sender.send(ToPipewireMessage::CreateStagingSink { instance_id });

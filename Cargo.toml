@@ -56,19 +56,19 @@ pipewire = "0.9"
 indexmap = { version = "2.14", features = ["serde"] }
 slotmap = { version = "1.1", features = ["serde"] }
 itertools = "0.15"
-ulid = { version = "1.2", features = ["serde"] }
+ulid = { version = "3.0", features = ["serde"] }
 
 # Channels
 oneshot = { version = "0.2", features = ["std"] }
 
 # System
-dirs = "6.0"
+dirs = "7.0"
 
 # Web server (osg-server only)
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["fs", "cors"] }
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 # DSP
 realfft = "3.4"
