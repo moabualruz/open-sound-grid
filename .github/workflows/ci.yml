@@ -4,17 +4,27 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: pr-${{ github.repository_id }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
   test:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Test
-    runs-on: [self-hosted, linux, x64, generic]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify runner trust boundary
+        env:
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: ruby scripts/test_ci_runner_trust.rb
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
